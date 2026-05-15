@@ -3,6 +3,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const { createLogger } = require('../utils/logger');
 const templates = require('./templates-service');
+const { emitState } = require('./event-bus');
 
 const logger = createLogger('Session');
 
@@ -161,6 +162,7 @@ function startSession(profileId) {
     muted: false, connected: false,
   }));
   logger.info(`session started from profile "${profile.name}"`);
+  emitState(getState());
   return getState();
 }
 
@@ -172,6 +174,7 @@ function stopSession() {
   sessionState.pumpOn = false;
   sessionState.currentActionTemplateId = null;
   logger.info('session stopped');
+  emitState(getState());
   return getState();
 }
 
@@ -181,6 +184,7 @@ function emergencyStop() {
   sessionState.pumpOn = false;
   sessionState.currentActionTemplateId = null;
   logger.info('E-STOP triggered');
+  emitState(getState());
   return getState();
 }
 
@@ -191,6 +195,7 @@ function setPaused(paused) {
     sessionState.pumpOn = false;
     sessionState.currentActionTemplateId = null;
   }
+  emitState(getState());
   return getState();
 }
 
@@ -201,6 +206,7 @@ function updateParticipantFlags(email, patch) {
   if (typeof patch.canControl === 'boolean') p.canControl = patch.canControl;
   if (typeof patch.canBroadcast === 'boolean') p.canBroadcast = patch.canBroadcast;
   if (typeof patch.muted === 'boolean') p.muted = patch.muted;
+  emitState(getState());
   return getState();
 }
 
