@@ -48,8 +48,13 @@ function push({ fromEmail, fromNickname, text, type = 'user', image = null, encr
   } else if (text) {
     msg.encrypted = encryptText(String(text).slice(0, 2000));
   }
-  if (image && typeof image.dataUrl === 'string' && image.dataUrl.startsWith('data:image/')) {
-    msg.image = { dataUrl: image.dataUrl.slice(0, 1_500_000) };
+  if (image && typeof image.encrypted === 'string') {
+    // Client-supplied ciphertext (visitor-side image, future).
+    msg.image = { encrypted: image.encrypted.slice(0, 2_500_000) };
+    msg.type = 'image';
+  } else if (image && typeof image.dataUrl === 'string' && image.dataUrl.startsWith('data:image/')) {
+    // Server-side: owner posted plaintext data URL over loopback; encrypt before broadcast.
+    msg.image = { encrypted: encryptText(image.dataUrl.slice(0, 1_500_000)) };
     msg.type = 'image';
   }
   messages.push(msg);

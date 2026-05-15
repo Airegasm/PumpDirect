@@ -507,14 +507,23 @@ function renderVisitorPage(req) {
           if (!window.__chat.ready()) { window.__chat.bufferIfNotReady(m); return; }
           text = (await window.__chat.decrypt(m.encrypted)) || '[encrypted — key mismatch]';
         }
+        let imageDataUrl = null;
+        if (m.type === 'image' && m.image) {
+          if (m.image.encrypted) {
+            if (!window.__chat.ready()) { window.__chat.bufferIfNotReady(m); return; }
+            imageDataUrl = await window.__chat.decrypt(m.image.encrypted);
+          } else if (m.image.dataUrl) {
+            imageDataUrl = m.image.dataUrl;
+          }
+        }
         const row = document.createElement('div');
         row.className = 'chat-row' + (m.type === 'system' ? ' system' : '');
         const time = new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         if (m.type === 'system') {
           row.innerHTML = escapeHtml(text) + ' <span style="opacity:0.6">· ' + time + '</span>';
-        } else if (m.type === 'image' && m.image && m.image.dataUrl) {
+        } else if (m.type === 'image' && imageDataUrl) {
           row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' +
-            '<img src="' + m.image.dataUrl + '" alt="snapshot" style="max-width:100%;width:280px;height:auto;border-radius:8px;display:block;margin-top:6px">';
+            '<img src="' + imageDataUrl + '" alt="snapshot" style="max-width:100%;width:280px;height:auto;border-radius:8px;display:block;margin-top:6px">';
         } else {
           row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' + escapeHtml(text);
         }

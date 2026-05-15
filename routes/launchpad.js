@@ -351,19 +351,29 @@ router.get('/', (req, res) => {
       async function renderChatMessage(m) {
         const log = document.getElementById('chat-log');
         if (!log) return;
-        // Decrypt text payload if needed.
+        // Both text and image payloads are AES-256-GCM ciphertext under the per-session key.
+        // Buffer until the key arrives over the WS (it lands before chat-history, but be defensive).
         let text = m.text || '';
         if (m.encrypted) {
           if (!window.__chat.ready()) { window.__chat.bufferIfNotReady(m); return; }
           text = (await window.__chat.decrypt(m.encrypted)) || '[encrypted — key mismatch]';
         }
+        let imageDataUrl = null;
+        if (m.type === 'image' && m.image) {
+          if (m.image.encrypted) {
+            if (!window.__chat.ready()) { window.__chat.bufferIfNotReady(m); return; }
+            imageDataUrl = await window.__chat.decrypt(m.image.encrypted);
+          } else if (m.image.dataUrl) {
+            imageDataUrl = m.image.dataUrl;  // legacy plaintext path
+          }
+        }
         const row = document.createElement('div');
         const time = new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         if (m.type === 'system') {
           row.innerHTML = '<span class="muted" style="font-style:italic;font-size:0.95rem">' + escapeHtml(text) + ' <span style="opacity:0.6">· ' + time + '</span></span>';
-        } else if (m.type === 'image' && m.image && m.image.dataUrl) {
+        } else if (m.type === 'image' && imageDataUrl) {
           row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' +
-            '<img src="' + m.image.dataUrl + '" alt="snapshot" style="max-width:100%;width:320px;height:auto;border-radius:8px;display:block;margin-top:6px">';
+            '<img src="' + imageDataUrl + '" alt="snapshot" style="max-width:100%;width:320px;height:auto;border-radius:8px;display:block;margin-top:6px">';
         } else {
           row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' + escapeHtml(text);
         }

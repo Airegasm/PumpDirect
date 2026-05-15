@@ -18,7 +18,7 @@ End-to-end posture for the two real-time channels:
 |---|---|---|
 | **Webcam streams** (Live mode, controller broadcasts) | **End-to-end DTLS-SRTP** (WebRTC standard) | Only the two browser endpoints. The server, Cloudflare's edge, and your network all see encrypted RTP. |
 | **Chat messages** | **End-to-end AES-256-GCM** with a per-session symmetric key | Only the endpoints. The server holds the key (since the owner is hosting and must encrypt system messages), but on the public wire — including at Cloudflare's TLS-terminating edge — messages are ciphertext. |
-| **Image messages** (snapshot mode) | Not encrypted | Currently sent as a base64 data URL inside chat; full E2EE would require key-protected blobs, on the roadmap. Treat snapshots as sensitive plaintext. |
+| **Image messages** (snapshot mode) | **End-to-end AES-256-GCM** under the same per-session key | Identical envelope to text messages — the JPEG data URL is encrypted before broadcast; only participants can decrypt for display. |
 | **WebRTC signaling** (SDP, ICE candidates) | TLS in transit (WSS over the tunnel) | The server relays them; CF edge sees them. Signaling does not contain media. |
 
 The chat E2EE key is **re-rotated on every session start** — ciphertext stored from a previous session can no longer be decrypted by anyone, including the host. There is no persistent on-disk chat history; everything is in memory.
