@@ -29,18 +29,35 @@ function _sleep(ms, signal) {
   });
 }
 
-async function _pumpOn(primary) {
-  await control.turnOn(primary);
-  if (!pumpOnSince) pumpOnSince = Date.now();
-  _setPump(true);
+// device may be primary or any other configured device. Only primary toggles
+// global pumpOn / capacity tracking; other devices fire independently.
+async function _pumpOn(device) {
+  if (!device) return;
+  await control.turnOn(device);
+  const primary = devices.primary();
+  const isPrimary = !!(primary && device.id === primary.id);
+  if (isPrimary) {
+    if (!pumpOnSince) pumpOnSince = Date.now();
+    _setPump(true);
+  }
   _publish();
 }
 
-async function _pumpOff(primary) {
-  try { await control.turnOff(primary); } catch (e) { logger.error('turnOff failed', e.message); }
-  pumpOnSince = null;
-  _setPump(false);
+async function _pumpOff(device) {
+  if (!device) return;
+  try { await control.turnOff(device); } catch (e) { logger.error('turnOff failed', e.message); }
+  const primary = devices.primary();
+  const isPrimary = !!(primary && device.id === primary.id);
+  if (isPrimary) {
+    pumpOnSince = null;
+    _setPump(false);
+  }
   _publish();
+}
+
+function _resolveStepDevice(step, fallbackPrimary) {
+  if (!step.deviceId || step.deviceId === 'primary') return fallbackPrimary;
+  return devices.get(step.deviceId) || fallbackPrimary;
 }
 
 const live = {
@@ -148,13 +165,15 @@ async function _runSteps(steps, primary, signal, repeatContext = null) {
   for (const step of steps) {
     if (signal.aborted) return;
     if (step.type === 'on') {
+      const target = _resolveStepDevice(step, primary);
       _setStep({ type: 'on', durationMs: step.durationMs, startedAt: Date.now() });
-      await _pumpOn(primary);
+      await _pumpOn(target);
       await _sleep(step.durationMs, signal);
-      await _pumpOff(primary);
+      await _pumpOff(target);
     } else if (step.type === 'off') {
+      const target = _resolveStepDevice(step, primary);
       _setStep({ type: 'off', durationMs: step.durationMs, startedAt: Date.now() });
-      await _pumpOff(primary);
+      await _pumpOff(target);
       await _sleep(step.durationMs, signal);
     } else if (step.type === 'repeat') {
       for (let i = 0; i < step.times; i++) {

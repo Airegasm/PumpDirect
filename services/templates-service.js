@@ -67,6 +67,9 @@ function validateSteps(steps, depth = 0) {
       if (!Number.isFinite(s.durationMs) || s.durationMs <= 0) {
         throw new Error(`${s.type} step needs positive durationMs`);
       }
+      if (s.deviceId != null && typeof s.deviceId !== 'string') {
+        throw new Error('deviceId must be a string or omitted (defaults to primary)');
+      }
     } else if (s.type === 'repeat') {
       if (!Number.isInteger(s.times) || s.times <= 0) throw new Error('repeat needs positive integer "times"');
       validateSteps(s.steps, depth + 1);
@@ -79,7 +82,9 @@ function validateSteps(steps, depth = 0) {
 function normalizeSteps(steps) {
   return steps.map(s => {
     if (s.type === 'repeat') return { type: 'repeat', times: s.times, steps: normalizeSteps(s.steps) };
-    return { type: s.type, durationMs: s.durationMs };
+    const out = { type: s.type, durationMs: s.durationMs };
+    if (s.deviceId && s.deviceId !== 'primary') out.deviceId = s.deviceId;
+    return out;
   });
 }
 

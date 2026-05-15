@@ -1,5 +1,6 @@
 const express = require('express');
 const templates = require('../services/templates-service');
+const devicesSvc = require('../services/devices-service');
 const { ownerLayout, escape } = require('../views/layout');
 const { createLogger } = require('../utils/logger');
 
@@ -138,6 +139,15 @@ router.get('/templates', (req, res) => {
 
     <script>
       const ALL_ACTIONS = ${JSON.stringify(data.actionTemplates.map(a => ({ id: a.id, name: a.name })))};
+      const ALL_DEVICES = ${JSON.stringify((() => {
+        const list = devicesSvc.loadAll();
+        const primary = list.find(d => d.isPrimary);
+        const out = [{ value: 'primary', label: primary ? `Primary (${primary.label})` : 'Primary pump (none calibrated yet)' }];
+        for (const d of list) {
+          if (!d.isPrimary) out.push({ value: d.id, label: d.label });
+        }
+        return out;
+      })())};
       const ACTIVE_PROFILE_ID = ${JSON.stringify(activeProfile.id)};
       let modalSaveFn = null;
 
@@ -256,43 +266,147 @@ router.get('/templates', (req, res) => {
         location.reload();
       }
 
-      // ---- action templates ----
+      // ---- action templates (visual step editor) ----
+      let __actionTree = [];
+      let __actionEditorId = 0;
+      function _nextId() { return ++__actionEditorId; }
+      function _newStep(type) {
+        if (type === 'repeat') return { _id: _nextId(), type: 'repeat', times: 3, steps: [] };
+        return { _id: _nextId(), type, durationMs: 2000, deviceId: 'primary' };
+      }
+      function _cloneWithIds(steps) {
+        return (steps || []).map(s => {
+          if (s.type === 'repeat') return { _id: _nextId(), type: 'repeat', times: s.times || 1, steps: _cloneWithIds(s.steps) };
+          return { _id: _nextId(), type: s.type, durationMs: s.durationMs, deviceId: s.deviceId || 'primary' };
+        });
+      }
+      function _findStep(id, steps = __actionTree) {
+        for (const s of steps) {
+          if (s._id === id) return { node: s, parent: steps };
+          if (s.type === 'repeat') {
+            const found = _findStep(id, s.steps);
+            if (found) return found;
+          }
+        }
+        return null;
+      }
+      function _removeActionStep(id) {
+        const r = _findStep(id);
+        if (!r) return;
+        r.parent.splice(r.parent.indexOf(r.node), 1);
+        _renderActionTree();
+      }
+      function _addStepTo(parentId, type) {
+        if (parentId === null) {
+          __actionTree.push(_newStep(type));
+        } else {
+          const r = _findStep(parentId);
+          if (r && r.node.type === 'repeat') r.node.steps.push(_newStep(type));
+        }
+        _renderActionTree();
+      }
+      function _updateStepField(id, key, value) {
+        const r = _findStep(id);
+        if (!r) return;
+        if (key === 'durationMs') r.node.durationMs = Math.max(1, Math.round(parseFloat(value) * 1000)) || 1000;
+        else if (key === 'times') r.node.times = Math.max(1, parseInt(value, 10) || 1);
+        else if (key === 'type') r.node.type = value;
+        else r.node[key] = value;
+      }
+      function _renderDeviceSelect(step) {
+        return '<select onchange="_updateStepField(' + step._id + ', \\'deviceId\\', this.value)" style="min-width:160px">' +
+          ALL_DEVICES.map(d => '<option value="' + d.value + '"' + (step.deviceId === d.value ? ' selected' : '') + '>' + d.label + '</option>').join('') +
+          '</select>';
+      }
+      function _renderActionStep(step) {
+        if (step.type === 'repeat') {
+          return '<div class="ae-row ae-repeat">' +
+            '<div class="ae-head">' +
+              '<strong>Repeat</strong> ' +
+              '<input type="number" min="1" value="' + step.times + '" onchange="_updateStepField(' + step._id + ', \\'times\\', this.value)" style="width:70px"> times' +
+              '<button class="ae-x" onclick="_removeActionStep(' + step._id + ')" title="remove">×</button>' +
+            '</div>' +
+            '<div class="ae-nested">' +
+              step.steps.map(_renderActionStep).join('') +
+              '<div class="ae-add">' +
+                '<button onclick="_addStepTo(' + step._id + ', \\'on\\')">+ Device On</button> ' +
+                '<button onclick="_addStepTo(' + step._id + ', \\'off\\')">+ Device Off</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }
+        return '<div class="ae-row">' +
+          '<select onchange="_updateStepField(' + step._id + ', \\'type\\', this.value)">' +
+            '<option value="on"' + (step.type === 'on' ? ' selected' : '') + '>Device On</option>' +
+            '<option value="off"' + (step.type === 'off' ? ' selected' : '') + '>Device Off</option>' +
+          '</select> ' +
+          _renderDeviceSelect(step) +
+          ' for <input type="number" min="0.1" step="0.1" value="' + (step.durationMs / 1000) + '" onchange="_updateStepField(' + step._id + ', \\'durationMs\\', this.value)" style="width:80px"> s' +
+          '<button class="ae-x" onclick="_removeActionStep(' + step._id + ')" title="remove">×</button>' +
+        '</div>';
+      }
+      function _renderActionTree() {
+        const c = document.getElementById('m-steps-container');
+        if (!c) return;
+        c.innerHTML = __actionTree.map(_renderActionStep).join('') +
+          '<div class="ae-add ae-top-add">' +
+            '<button onclick="_addStepTo(null, \\'on\\')">+ Device On</button> ' +
+            '<button onclick="_addStepTo(null, \\'off\\')">+ Device Off</button> ' +
+            '<button onclick="_addStepTo(null, \\'repeat\\')">+ Repeat block</button>' +
+          '</div>';
+      }
+      function _serializeActionTree(nodes = __actionTree) {
+        return nodes.map(s => {
+          if (s.type === 'repeat') return { type: 'repeat', times: s.times, steps: _serializeActionTree(s.steps) };
+          const out = { type: s.type, durationMs: s.durationMs };
+          if (s.deviceId && s.deviceId !== 'primary') out.deviceId = s.deviceId;
+          return out;
+        });
+      }
       function _actionFormHtml(a) {
         return ''
+          + '<style>'
+          +   '.ae-row { background:#0a0c10; border:1px solid #2a2f3a; border-radius:8px; padding:10px 12px; margin:8px 0; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }'
+          +   '.ae-row.ae-repeat { display:block; }'
+          +   '.ae-row.ae-repeat .ae-head { display:flex; align-items:center; gap:8px; }'
+          +   '.ae-nested { margin:8px 0 0 14px; padding-left:12px; border-left:2px solid #2a2f3a; }'
+          +   '.ae-add { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }'
+          +   '.ae-x { margin-left:auto; background:#4a1b1b; padding:2px 10px; }'
+          + '</style>'
           + '<p><label>Name <input id="m-name" type="text" value="' + (a?.name?.replace(/"/g, '&quot;') || '') + '" style="width:100%"></label></p>'
-          + '<p><label>Steps (JSON)<br><span class="muted" style="font-size:0.85rem">'
-          + 'Examples: <code>[{"type":"on","durationMs":10000}]</code> — Slow Stream<br>'
-          + '<code>[{"type":"repeat","times":10,"steps":[{"type":"on","durationMs":2000},{"type":"off","durationMs":1000}]}]</code> — Pulse'
-          + '</span></label></p>'
-          + '<p><textarea id="m-steps" rows="10" style="width:100%;font-family:ui-monospace,monospace;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:6px;padding:10px;font-size:0.95rem">'
-          + JSON.stringify(a?.steps || [{type:'on', durationMs: 5000}], null, 2)
-          + '</textarea></p>';
+          + '<p class="muted" style="font-size:0.9rem;margin:6px 0 0">Build the sequence with the + buttons. "Repeat" wraps Device On/Off steps and runs them N times.</p>'
+          + '<div id="m-steps-container"></div>';
       }
       function _readActionForm() {
-        let steps;
-        try { steps = JSON.parse(document.getElementById('m-steps').value); }
-        catch (e) { throw new Error('steps is not valid JSON: ' + e.message); }
-        return { name: document.getElementById('m-name').value.trim(), steps };
+        return { name: document.getElementById('m-name').value.trim(), steps: _serializeActionTree() };
       }
       function tplNewAction() {
+        __actionTree = [];
+        __actionEditorId = 0;
         modalOpen('New action template', _actionFormHtml(null), async () => {
           const body = _readActionForm();
+          if (!body.steps.length) return flash('add at least one step', 'bad');
           const r = await fetch('/api/templates/actions', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
           const d = await r.json();
           if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
           location.reload();
         });
+        setTimeout(_renderActionTree, 0);
       }
       async function tplEditAction(id) {
         const all = await fetch('/api/templates/actions').then(r => r.json());
         const a = all.actions.find(x => x.id === id);
+        __actionEditorId = 0;
+        __actionTree = _cloneWithIds(a?.steps || []);
         modalOpen('Edit action template', _actionFormHtml(a), async () => {
           const body = _readActionForm();
+          if (!body.steps.length) return flash('add at least one step', 'bad');
           const r = await fetch('/api/templates/actions/' + id, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
           const d = await r.json();
           if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
           location.reload();
         });
+        setTimeout(_renderActionTree, 0);
       }
       // ---- drag-to-reorder ----
       function attachDragReorder(container, onReorder) {
