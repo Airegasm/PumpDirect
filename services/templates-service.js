@@ -101,13 +101,13 @@ function listActions() {
   return load().actionTemplates;
 }
 
-function createAction({ name, steps }) {
+function createAction({ name, description, steps }) {
   name = (name || '').trim();
   if (!name) throw new Error('name required');
   validateSteps(steps);
   const data = load();
   if (data.actionTemplates.some(a => a.name === name)) throw new Error('action template with this name already exists');
-  const action = { id: randomUUID(), name, steps: normalizeSteps(steps) };
+  const action = { id: randomUUID(), name, description: (description || '').toString().trim(), steps: normalizeSteps(steps) };
   data.actionTemplates.push(action);
   save(data);
   return action;
@@ -122,6 +122,9 @@ function updateAction(id, patch) {
     if (!trimmed) throw new Error('name cannot be empty');
     if (data.actionTemplates.some((a, i) => i !== idx && a.name === trimmed)) throw new Error('name already taken');
     data.actionTemplates[idx].name = trimmed;
+  }
+  if (patch.description != null) {
+    data.actionTemplates[idx].description = patch.description.toString().trim();
   }
   if (patch.steps != null) {
     validateSteps(patch.steps);

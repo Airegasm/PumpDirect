@@ -66,13 +66,21 @@ function start() {
 
   function nicknameFor(email) {
     const cfg = config.load();
+    // Owner's public-facing name comes from owner.displayName so visitors see
+    // the intended label (matches owner-server's nicknameFor).
+    if (email === cfg.cloudflare?.ownerEmail && (cfg.owner?.displayName || '').trim()) {
+      return cfg.owner.displayName.trim();
+    }
     const acct = (cfg.accounts || []).find(a => a.email === email);
     return acct?.nickname || (email.split('@')[0]);
   }
 
   function enrichState() {
     const cfg = config.load();
-    return { ...session.getState(), ownerCamera: cfg.owner?.camera || {} };
+    const s = session.getState();
+    const pmap = signaling.getPresenceMap();
+    const participants = (s.participants || []).map(p => ({ ...p, presence: pmap.get(p.email) || null }));
+    return { ...s, participants, ownerPresence: pmap.get(cfg.cloudflare?.ownerEmail || '') || null, ownerCamera: cfg.owner?.camera || {} };
   }
 
   wss.on('connection', (ws) => {
@@ -98,6 +106,7 @@ function start() {
       chat.system(`${nicknameFor(email)} joined`);
       signaling.broadcast({ type: 'peer-joined', email, nickname: nicknameFor(email), isOwner: false }, email);
     }
+    signaling.setPresence(email, 'connected');
 
     const onState = () => send('state', { state: enrichState() });
     const onChat = (message) => {
@@ -135,6 +144,8 @@ function start() {
         signaling.broadcast({ type: 'broadcast-state', email, broadcasting: !!msg.broadcasting }, email);
       } else if (msg && msg.type === 'track-state') {
         signaling.broadcast({ type: 'track-state', email, videoMuted: !!msg.videoMuted, audioMuted: !!msg.audioMuted }, email);
+      } else if (msg && msg.type === 'visibility') {
+        signaling.setPresence(email, msg.hidden ? 'afk' : 'connected');
       }
     });
 
@@ -144,6 +155,7 @@ function start() {
       const next = (visitorConns.get(email) || 1) - 1;
       if (next <= 0) {
         visitorConns.delete(email);
+        signaling.clearPresence(email);
         chat.system(`${nicknameFor(email)} left`);
         signaling.broadcast({ type: 'peer-left', email });
       } else {

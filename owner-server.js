@@ -53,7 +53,10 @@ function start() {
 
   function enrichState() {
     const cfg = config.load();
-    return { ...session.getState(), ownerCamera: cfg.owner?.camera || {} };
+    const s = session.getState();
+    const pmap = signaling.getPresenceMap();
+    const participants = (s.participants || []).map(p => ({ ...p, presence: pmap.get(p.email) || null }));
+    return { ...s, participants, ownerPresence: pmap.get(cfg.cloudflare?.ownerEmail || '') || null, ownerCamera: cfg.owner?.camera || {} };
   }
 
   function nicknameFor(email) {
@@ -87,6 +90,7 @@ function start() {
     send('state', { state: enrichState() });
     send('chat-history', { messages: chat.snapshot() });
     signaling.broadcast({ type: 'peer-joined', email: ownerEmail, nickname: nicknameFor(ownerEmail), isOwner: true }, ownerEmail);
+    signaling.setPresence(ownerEmail, 'connected');
 
     const onState = () => send('state', { state: enrichState() });
     const onChat = (message) => send('chat', { message });
@@ -105,6 +109,8 @@ function start() {
         signaling.broadcast({ type: 'broadcast-state', email: ownerEmail, broadcasting: !!msg.broadcasting }, ownerEmail);
       } else if (msg && msg.type === 'track-state') {
         signaling.broadcast({ type: 'track-state', email: ownerEmail, videoMuted: !!msg.videoMuted, audioMuted: !!msg.audioMuted }, ownerEmail);
+      } else if (msg && msg.type === 'visibility') {
+        signaling.setPresence(ownerEmail, msg.hidden ? 'afk' : 'connected');
       }
     });
 
@@ -113,6 +119,9 @@ function start() {
       bus.off('chat', onChat);
       bus.off('chat-key', onChatKey);
       signaling.unregister(ownerEmail, ws);
+      // Only clear presence once the last owner-tab WS closes — multiple tabs OK.
+      const stillOpen = signaling.allPeers(ownerEmail).some(p => p.email === ownerEmail);
+      if (!stillOpen) signaling.clearPresence(ownerEmail);
       signaling.broadcast({ type: 'peer-left', email: ownerEmail });
     });
     ws.on('error', () => {});

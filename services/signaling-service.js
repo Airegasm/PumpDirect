@@ -1,9 +1,28 @@
 // Tiny WebRTC signaling relay. Lives in-process across owner + public servers.
 const { createLogger } = require('../utils/logger');
+const { bus } = require('./event-bus');
 const logger = createLogger('Signaling');
 
 const conns = new Map(); // email -> Set<{ ws, role, send }>
+const presence = new Map(); // email -> 'connected' | 'afk' (absent = not in session)
 const VISITOR_CAP = 5;
+
+function _notifyPresence() {
+  // Lazy-require to avoid a load-order tangle on first boot.
+  const session = require('./session-service');
+  bus.emit('state', session.getState());
+}
+function setPresence(email, status) {
+  if (presence.get(email) === status) return;
+  presence.set(email, status);
+  _notifyPresence();
+}
+function clearPresence(email) {
+  if (!presence.has(email)) return;
+  presence.delete(email);
+  _notifyPresence();
+}
+function getPresenceMap() { return presence; }
 
 function registerOwner(email, ws, send) {
   return _register(email, ws, send, 'owner');
@@ -60,4 +79,4 @@ function broadcast(payload, excludeEmail = null) {
   }
 }
 
-module.exports = { registerOwner, registerVisitor, unregister, deliver, broadcast, allPeers, visitorEmails, VISITOR_CAP };
+module.exports = { registerOwner, registerVisitor, unregister, deliver, broadcast, allPeers, visitorEmails, setPresence, clearPresence, getPresenceMap, VISITOR_CAP };

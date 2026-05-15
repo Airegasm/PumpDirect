@@ -124,7 +124,29 @@ function rtcClientJs({ myEmail }) {
         for (const remote of Array.from(pcs.keys())) closePc(remote);
       }
 
-      return { init, onSignalingMsg, publishToAll, publishTo, tearDownAll, knownPeers };
+      // Stop sending our local tracks to peers, but keep the PCs alive so any
+      // inbound streams (owner → us, other controllers → us) keep flowing.
+      // Each PC's senders are removed and a fresh offer is sent so the SDP
+      // reflects "I'm not sending anything." Use this instead of tearDownAll()
+      // when the local side stops broadcasting.
+      async function unpublish() {
+        for (const [remote, pc] of pcs.entries()) {
+          let changed = false;
+          for (const sender of pc.getSenders()) {
+            if (sender.track) {
+              try { pc.removeTrack(sender); changed = true; } catch {}
+            }
+          }
+          if (!changed) continue;
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            sendSig({ type: 'webrtc-offer', toEmail: remote, sdp: pc.localDescription });
+          } catch (e) { console.warn('unpublish renegotiate failed for', remote, e); }
+        }
+      }
+
+      return { init, onSignalingMsg, publishToAll, publishTo, tearDownAll, unpublish, knownPeers };
     })();
   `;
 }

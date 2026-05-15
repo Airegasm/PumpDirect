@@ -87,13 +87,16 @@ router.get('/', (req, res) => {
   const isRunning = !!state.currentActionTemplateId;
   const alwaysBtns = state.active ? `
     <button class="action-btn pump-toggle" onclick="lpPumpToggle()" style="background:${isRunning ? '#a13030' : '#1a8a4d'};color:#fff">${isRunning ? '⏻ Pump Off' : '⏵ Pump On'}</button>
-    <button class="action-btn misc-action-btn" onclick="lpTimed()" ${isRunning ? 'disabled' : ''}>⏱ Timed</button>
-    <button class="action-btn misc-action-btn" onclick="lpCycle()" ${isRunning ? 'disabled' : ''}>↻ Cycle</button>
+    <button class="action-btn misc-action-btn" onclick="lpTimed()" style="background:#1a8a4d;color:#fff" ${isRunning ? 'disabled' : ''}>⏱ Timed</button>
+    <button class="action-btn misc-action-btn" onclick="lpCycle()" style="background:#1a8a4d;color:#fff" ${isRunning ? 'disabled' : ''}>↻ Cycle</button>
   ` : '';
   const actionButtonsCore = visibleActionIds.length
     ? visibleActionIds.map(id => {
         const a = actionsById[id];
-        return `<button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')">${escape(a?.name || '?')}</button>`;
+        return `<div class="action-cell">
+          <button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')">${escape(a?.name || '?')}</button>
+          <button class="action-help-btn" type="button" title="What does this do?" onclick="lpActionHelp('${escape(id)}')">?</button>
+        </div>`;
       }).join('')
     : (state.active ? '<p class="muted" style="grid-column:1/-1">No template actions for this milestone — use Pump On / Timed / Cycle above.</p>' : '<p class="muted">Start a session to enable actions.</p>');
   const actionButtons = alwaysBtns + actionButtonsCore;
@@ -125,6 +128,8 @@ router.get('/', (req, res) => {
     <div id="session-stage">
     <div class="top-row">
       <div class="card gauge-card">
+        <h3 style="margin:0 0 2px;font-size:1.1rem;text-align:center">Inflation Capacity</h3>
+        <p class="muted" style="margin:0 0 8px;font-size:0.82rem;text-align:center;line-height:1.35">Real, calibrated and calculated display of <strong>${escape(ownerNameForTitle)}</strong>'s current fullness.</p>
         ${gauge(state.capacity)}
         <p style="margin:6px 0 0">
           <button onclick="lpEditCapacity()" ${state.active ? '' : 'disabled'} style="background:#2a2f3a;padding:4px 10px;font-size:0.85rem">✎ Set capacity</button>
@@ -145,7 +150,7 @@ router.get('/', (req, res) => {
       <div class="card milestone-pane">
         <p class="milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
         <p class="milestone-announcement">${state.active ? escape(state.currentDisplayMessage || '(no message)') : escape(profile.welcomeMessage || '(no welcome message)')}</p>
-        <p class="muted" style="font-size:0.9rem;margin:0 0 14px">
+        <p class="muted" id="milestone-meta" style="font-size:0.9rem;margin:0 0 14px">
           ${state.active
             ? (activeMilestone ? `${activeMilestone.capacityMin}–${activeMilestone.capacityMax}% · milestone announcement live` : 'Welcome message — replaced when first milestone is reached')
             : 'Welcome message (visitors see this when no session is running)'}
@@ -202,6 +207,7 @@ router.get('/', (req, res) => {
           </p>
         ` : '<p class="muted" style="font-size:0.85rem;margin-top:12px">All accounts already added. Manage on Users tab.</p>'}
         <p class="muted" style="font-size:0.75rem;margin-top:12px">C = connect · A = action control · V = video broadcast</p>
+        <p class="muted" style="font-size:0.75rem;margin-top:4px"><span class="presence-dot" style="display:inline-block;vertical-align:middle"></span> invited &nbsp;<span class="presence-dot online" style="display:inline-block;vertical-align:middle"></span> in session &nbsp;<span class="presence-dot afk" style="display:inline-block;vertical-align:middle"></span> afk</p>
       </div>
     </div>
 
@@ -228,6 +234,69 @@ router.get('/', (req, res) => {
       const PROFILE_ID = ${JSON.stringify(profile.id)};
       const PROFILE_IS_FACTORY = ${JSON.stringify(!!profile.isFactory)};
       const TEMPLATE_OPTIONS = ${JSON.stringify(templates.templateProfiles.map(p => ({ id: p.id, name: p.name })))};
+      const ACTIONS_INFO = ${JSON.stringify(Object.fromEntries(templates.actionTemplates.map(a => [a.id, { name: a.name, description: a.description || '' }])))};
+      const MILESTONES_BY_ID = ${JSON.stringify(Object.fromEntries((templateProfile?.milestones || []).map(m => [m.id, { name: m.name, announcement: m.announcement || '', actionTemplateIds: m.actionTemplateIds || [], capacityMin: m.capacityMin, capacityMax: m.capacityMax, is100Plus: !!m.is100Plus }])))};
+      const ALWAYS_ACTION_IDS = ${JSON.stringify(templateProfile?.defaultActionTemplateIds || [])};
+      const TPL_NAME = ${JSON.stringify(templateProfile?.name || 'Default')};
+      const WELCOME_MSG = ${JSON.stringify(profile.welcomeMessage || '')};
+      let __lastRenderedMilestoneId = '__init__';
+      function _safeAttr(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+      function _activeMilestone(capacity, active) {
+        if (!active) return null;
+        const ms = Object.entries(MILESTONES_BY_ID).map(([id, m]) => ({ id, ...m }));
+        if (capacity >= 100) { const top = ms.find(m => m.is100Plus); if (top) return top; }
+        const cands = ms.filter(m => !m.is100Plus && capacity >= m.capacityMin && capacity <= m.capacityMax)
+                        .sort((a, b) => b.capacityMin - a.capacityMin);
+        return cands[0] || null;
+      }
+      function renderMilestonePane(s) {
+        // Re-render milestone-pane (title + announcement + meta + action grid) when the
+        // active milestone changes. Computed client-side from capacity so this stays in
+        // sync even before the server's first capacity-tick of a new session.
+        const m = _activeMilestone(s.capacity || 0, !!s.active);
+        const mid = m ? m.id : (s.active ? '__no_milestone__' : '__idle__');
+        if (__lastRenderedMilestoneId === mid) return;
+        __lastRenderedMilestoneId = mid;
+        const titleEl = document.querySelector('.milestone-pane .milestone-title');
+        const annEl = document.querySelector('.milestone-pane .milestone-announcement');
+        const metaEl = document.getElementById('milestone-meta');
+        if (titleEl) titleEl.textContent = m ? m.name : (s.active ? TPL_NAME : 'Idle');
+        if (annEl) annEl.textContent = s.active ? (s.currentDisplayMessage || '(no message)') : (WELCOME_MSG || '(no welcome message)');
+        if (metaEl) {
+          const inner = s.active
+            ? (m ? (m.is100Plus ? '100%+ · milestone announcement live' : (m.capacityMin + '–' + m.capacityMax + '% · milestone announcement live')) : 'Welcome message — replaced when first milestone is reached')
+            : 'Welcome message (visitors see this when no session is running)';
+          metaEl.innerHTML = _safeAttr(inner) + ' · <a href="#" onclick="lpEditWelcome();return false" style="color:#9aa4b2">edit welcome</a>';
+        }
+        const grid = document.querySelector('.milestone-pane .action-grid');
+        if (!grid) return;
+        if (!s.active) { grid.innerHTML = '<p class="muted">Start a session to enable actions.</p>'; return; }
+        const ids = Array.from(new Set([...((m && m.actionTemplateIds) || []), ...ALWAYS_ACTION_IDS]));
+        const running = !!s.currentActionTemplateId;
+        const alwaysBtns =
+          '<button class="action-btn pump-toggle" onclick="lpPumpToggle()" style="background:' + (running ? '#a13030' : '#1a8a4d') + ';color:#fff">' + (running ? '⏻ Pump Off' : '⏵ Pump On') + '</button>'
+        + '<button class="action-btn misc-action-btn" onclick="lpTimed()" style="background:#1a8a4d;color:#fff"' + (running ? ' disabled' : '') + '>⏱ Timed</button>'
+        + '<button class="action-btn misc-action-btn" onclick="lpCycle()" style="background:#1a8a4d;color:#fff"' + (running ? ' disabled' : '') + '>↻ Cycle</button>';
+        const cells = ids.length
+          ? ids.map(id => {
+              const a = ACTIONS_INFO[id];
+              return '<div class="action-cell">'
+                + '<button class="action-btn" data-action-id="' + _safeAttr(id) + '" onclick="lpFireAction(\\'' + _safeAttr(id) + '\\')">' + _safeAttr(a && a.name || '?') + '</button>'
+                + '<button class="action-help-btn" type="button" title="What does this do?" onclick="lpActionHelp(\\'' + _safeAttr(id) + '\\')">?</button>'
+              + '</div>';
+            }).join('')
+          : '<p class="muted" style="grid-column:1/-1">No template actions for this milestone — use Pump On / Timed / Cycle above.</p>';
+        grid.innerHTML = alwaysBtns + cells;
+      }
+      function lpActionHelp(id) {
+        const a = ACTIONS_INFO[id];
+        if (!a) return;
+        const safe = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+        const body = a.description
+          ? '<p style="font-size:1.05rem;line-height:1.5;margin:0">' + safe(a.description) + '</p>'
+          : '<p class="muted" style="margin:0">No description set for this action yet. Edit it on the Templates page.</p>';
+        modalOpen(a.name, body, null);
+      }
       let modalSaveFn = null;
       function flash(msg, cls) {
         const el = document.getElementById('lp-msg');
@@ -238,6 +307,8 @@ router.get('/', (req, res) => {
         document.getElementById('modal-title').textContent = title;
         document.getElementById('modal-body').innerHTML = html;
         modalSaveFn = onSave;
+        const save = document.getElementById('modal-save');
+        if (save) save.style.display = onSave ? '' : 'none';
         document.getElementById('modal-bg').style.display = 'flex';
       }
       function modalClose() { document.getElementById('modal-bg').style.display = 'none'; modalSaveFn = null; }
@@ -495,6 +566,7 @@ router.get('/', (req, res) => {
         window.__lastState = s;
         applyStandby(s);
         maybeAutoToggleCam(s);
+        renderMilestonePane(s);
         __pumpOnState = !!s.pumpOn;
         __stepState = s.currentStep || null;
         __repeatState = s.currentRepeat || null;
@@ -534,6 +606,16 @@ router.get('/', (req, res) => {
           toggle.style.color = '#fff';
         }
         document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running; });
+        // Presence: paint the dot + italicize AFK names in the participant list.
+        const presenceByEmail = Object.fromEntries((s.participants || []).map(p => [p.email, p.presence || null]));
+        document.querySelectorAll('.participants-pane .p-item[data-email]').forEach(item => {
+          const presence = presenceByEmail[item.dataset.email] || null;
+          const dot = item.querySelector('.presence-dot');
+          if (dot) dot.classList.remove('online', 'afk');
+          item.classList.remove('afk');
+          if (presence === 'connected' && dot) dot.classList.add('online');
+          if (presence === 'afk') { if (dot) dot.classList.add('afk'); item.classList.add('afk'); }
+        });
       }
       // ---- Webcam (local publish) ----
       let localStream = null;
@@ -663,6 +745,10 @@ router.get('/', (req, res) => {
 
       // ---- WebSocket ----
       let wsSig = null;
+      function _sendVisibility() {
+        if (wsSig && wsSig.readyState === 1) wsSig.send(JSON.stringify({ type: 'visibility', hidden: !!document.hidden }));
+      }
+      document.addEventListener('visibilitychange', _sendVisibility);
       function connectWs() {
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new WebSocket(proto + '://' + location.host + '/ws/owner');
@@ -675,6 +761,7 @@ router.get('/', (req, res) => {
             onRemoteGone: removeRemoteTile,
           });
         }
+        ws.onopen = () => { _sendVisibility(); };
         ws.onmessage = async (e) => {
           const m = JSON.parse(e.data);
           if (m.type === 'state') applyState(m.state);
@@ -689,6 +776,11 @@ router.get('/', (req, res) => {
             (m.messages || []).forEach(renderChatMessage);
           } else if (m.type === 'track-state') {
             applyPeerTrackState(m.email, !!m.videoMuted, !!m.audioMuted);
+          } else if (m.type === 'broadcast-state' && m.broadcasting === false) {
+            // Visitor stopped broadcasting — drop their tile but keep the PC alive
+            // for owner→visitor streaming.
+            removeRemoteTile(m.email);
+            if (window.__rtc) window.__rtc.onSignalingMsg(m);
           } else {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
             // When a new peer connects, re-send our mute state so their tile renders correctly.

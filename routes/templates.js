@@ -58,12 +58,13 @@ router.get('/templates', (req, res) => {
   const actionsBody = data.actionTemplates.length
     ? `<table style="width:100%;border-collapse:collapse">
         <thead><tr style="text-align:left;border-bottom:1px solid #2a2f3a">
-          <th style="padding:8px 0;width:30px"></th><th>Name</th><th>Steps</th><th></th>
+          <th style="padding:8px 0;width:30px"></th><th>Name</th><th>Description</th><th>Steps</th><th></th>
         </tr></thead>
         <tbody id="actions-tbody">${data.actionTemplates.map(a => `
           <tr draggable="true" data-id="${escape(a.id)}" class="draggable-row">
             <td class="drag-handle" style="cursor:grab;color:#7a8597;text-align:center">⋮⋮</td>
             <td><strong>${escape(a.name)}</strong></td>
+            <td class="muted" style="max-width:340px">${escape((a.description || '').slice(0, 120))}${(a.description || '').length > 120 ? '…' : ''}</td>
             <td><code>${summarizeSteps(a.steps)}</code></td>
             <td>
               <button onclick="tplEditAction('${escape(a.id)}')">Edit</button>
@@ -385,11 +386,12 @@ router.get('/templates', (req, res) => {
           +   '.ae-x { margin-left:auto; background:#4a1b1b; padding:2px 10px; }'
           + '</style>'
           + '<p><label>Name <input id="m-name" type="text" value="' + (a?.name?.replace(/"/g, '&quot;') || '') + '" style="width:100%"></label></p>'
+          + '<p><label>Description <textarea id="m-desc" rows="2" style="width:100%;resize:vertical;font-family:inherit" placeholder="Short sentence shown to controllers when they tap the ? button next to this action.">' + (a?.description ? String(a.description).replace(/</g, '&lt;') : '') + '</textarea></label></p>'
           + '<p class="muted" style="font-size:0.9rem;margin:6px 0 0">Build the sequence with the + buttons. "Repeat" wraps Device On/Off steps and runs them N times.</p>'
           + '<div id="m-steps-container"></div>';
       }
       function _readActionForm() {
-        return { name: document.getElementById('m-name').value.trim(), steps: _serializeActionTree() };
+        return { name: document.getElementById('m-name').value.trim(), description: document.getElementById('m-desc').value, steps: _serializeActionTree() };
       }
       function tplNewAction() {
         __actionTree = [];
