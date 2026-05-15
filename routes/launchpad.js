@@ -74,18 +74,6 @@ router.get('/', (req, res) => {
   // Owner is implicitly the Host — exclude from the manageable participants list
   // and from the "add from accounts" dropdown so they can't be added as a guest.
   const ownerEmailLp = cfg.cloudflare?.ownerEmail || '';
-  const allowedRows = profile.allowedParticipants
-    .filter(p => p.email !== ownerEmailLp)
-    .map(p => `
-    <tr data-email="${escape(p.email)}">
-      <td>${escape(cfg.accounts.find(a => a.email === p.email)?.nickname || '(unknown)')}</td>
-      <td><code>${escape(p.email)}</code></td>
-      <td><input type="checkbox" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}', 'canConnect', this.checked)"></td>
-      <td><input type="checkbox" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}', 'canControl', this.checked)"></td>
-      <td><input type="checkbox" ${p.canBroadcast ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}', 'canBroadcast', this.checked)"></td>
-      <td><button onclick="lpRemoveParticipant('${escape(p.email)}')">Remove</button></td>
-    </tr>`).join('');
-
   const candidateEmails = allAllowedEmails.filter(e => e !== ownerEmailLp);
   const ineligible = candidateEmails.filter(e => !profile.allowedParticipants.some(p => p.email === e));
   const addParticipantOptions = ineligible.map(e => `<option value="${escape(e)}">${escape(e)}</option>`).join('');
@@ -188,6 +176,7 @@ router.get('/', (req, res) => {
                 <span class="presence-dot"></span>
                 <span>${escape(cfg.accounts.find(a => a.email === p.email)?.nickname || p.email.split('@')[0])}</span>
                 <span class="p-flags">
+                  <button title="make sole controller (revokes others)" onclick="lpMakeSoleController('${escape(p.email)}')" style="background:${p.canControl ? '#6ddc9b' : '#2a6df4'};color:${p.canControl ? '#0f1115' : '#fff'};padding:2px 8px;font-size:0.85rem">▶</button>
                   <label title="can connect"><input type="checkbox" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canConnect',this.checked)">C</label>
                   <label title="can control"><input type="checkbox" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canControl',this.checked)">A</label>
                   <label title="can broadcast cam"><input type="checkbox" ${p.canBroadcast ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canBroadcast',this.checked)">V</label>
@@ -656,6 +645,13 @@ router.get('/', (req, res) => {
         const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/participants/' + encodeURIComponent(email), { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ [flag]: value }) });
         if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
       }
+      async function lpMakeSoleController(email) {
+        const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/sole-controller', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }) });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('controller reassigned', 'ok');
+        setTimeout(() => location.reload(), 400);
+      }
     </script>
   `;
   res.type('html').send(ownerLayout({ title: 'Launchpad', active: 'launchpad', body }));
@@ -727,13 +723,44 @@ router.patch('/api/launchpad/profiles/:id/participants/:email', (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).toLowerCase();
     const profile = session.getProfile(req.params.id);
+    const prev = profile.allowedParticipants.find(p => p.email === email) || {};
     const next = profile.allowedParticipants.map(p => p.email === email ? { ...p, ...req.body } : p);
     session.updateProfile(req.params.id, { allowedParticipants: next });
     if (session.getState().active && session.getState().sessionProfileId === req.params.id) {
       try { session.updateParticipantFlags(email, req.body); } catch {}
       require('../services/event-bus').emitState(session.getState());
     }
+    // Narrate meaningful changes in chat so visitors see the role shift live.
+    const acct = (config.load().accounts || []).find(a => a.email === email);
+    const nick = acct?.nickname || email.split('@')[0];
+    if ('canControl' in req.body && !!req.body.canControl !== !!prev.canControl) {
+      chat.system(req.body.canControl ? `${nick} can now control actions` : `${nick} no longer controls actions`);
+    }
+    if ('canBroadcast' in req.body && !!req.body.canBroadcast !== !!prev.canBroadcast) {
+      chat.system(req.body.canBroadcast ? `${nick} can now broadcast their cam` : `${nick} can no longer broadcast their cam`);
+    }
+    if ('canConnect' in req.body && !!req.body.canConnect !== !!prev.canConnect) {
+      chat.system(req.body.canConnect ? `${nick} can now join` : `${nick} removed from the session`);
+    }
     res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/launchpad/profiles/:id/sole-controller', (req, res) => {
+  try {
+    const target = (req.body?.email || '').trim().toLowerCase();
+    if (!target) throw new Error('email required');
+    const profile = session.getProfile(req.params.id);
+    if (!profile.allowedParticipants.some(p => p.email === target)) {
+      throw new Error('email not in this profile\'s participants');
+    }
+    const next = profile.allowedParticipants.map(p => ({ ...p, canControl: p.email === target }));
+    session.updateProfile(req.params.id, { allowedParticipants: next });
+    syncLiveParticipantsFromProfile(req.params.id);
+    const acct = (config.load().accounts || []).find(a => a.email === target);
+    const nick = acct?.nickname || target.split('@')[0];
+    chat.system(`Controller is now ${nick}`);
+    res.json({ ok: true, controller: target });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
