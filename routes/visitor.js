@@ -254,7 +254,7 @@ function renderVisitorPage(req) {
         <p style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0">
           <button id="cam-broadcast-btn" class="action-btn" onclick="vToggleBroadcast()">Enable my webcam</button>
           <span id="cam-broadcast-controls" style="display:none">
-            <button id="my-vid-btn" onclick="vMuteMyVideo()">Hide video</button>
+            <button id="my-vid-btn" onclick="vMuteMyVideo()">Mute video</button>
             <button id="my-aud-btn" onclick="vMuteMyAudio()">Mute audio</button>
           </span>
         </p>
@@ -390,7 +390,7 @@ function renderVisitorPage(req) {
           }
           addLocalBroadcastTile(myBroadcastStream);
           controls.style.display = '';
-          document.getElementById('my-vid-btn').textContent = 'Hide video';
+          document.getElementById('my-vid-btn').textContent = 'Mute video';
           document.getElementById('my-aud-btn').textContent = 'Mute audio';
           document.getElementById('my-aud-btn').disabled = !myBroadcastStream.getAudioTracks()[0];
           btn.textContent = 'Stop broadcasting';
@@ -406,7 +406,7 @@ function renderVisitorPage(req) {
         t._userMuted = !t._userMuted;
         applyMyBroadcastTrackState();
         broadcastTrackState();
-        document.getElementById('my-vid-btn').textContent = t._userMuted ? 'Show video' : 'Hide video';
+        document.getElementById('my-vid-btn').textContent = t._userMuted ? 'Unmute video' : 'Mute video';
       }
       function vMuteMyAudio() {
         if (!myBroadcastStream) return;
