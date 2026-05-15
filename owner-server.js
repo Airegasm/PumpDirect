@@ -56,6 +56,7 @@ function start() {
   app.use(require('./routes/devices'));
   app.use(require('./routes/triggers'));
   app.use(require('./routes/minigames'));
+  app.use(require('./routes/help'));
 
   const server = http.createServer(app);
   const wss = new WebSocket.Server({ server, path: '/ws/owner' });

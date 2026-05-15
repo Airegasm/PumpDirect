@@ -15,6 +15,7 @@ const TABS = [
   { id: 'minigames', label: 'Mini Games', href: '/minigames' },
   { id: 'network', label: 'Network', href: '/network' },
   { id: 'users', label: 'Users', href: '/users' },
+  { id: 'help', label: 'Help', href: '/help' },
 ];
 
 function ownerLayout({ title, active, body }) {

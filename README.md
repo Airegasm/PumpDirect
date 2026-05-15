@@ -3,6 +3,10 @@
 Self-hosted session controller for smart-plug-attached pumps, designed for invited remote guests.
 Each operator runs their own instance on their own hardware — there is no central server.
 
+💬 **Community:** join the Discord — <https://discord.gg/TyaPEjkKP5>
+
+> **NOTICE:** This application's creator only uses Linux. The host client app and installer have not been tested on Windows. It should work, but if it doesn't — congrats, you're a software tester now! Please drop any bugs or issues in the Discord server. Thanks.
+
 > ⚠️ **Adults only.** This software is intended for use by, and access only granted to, people
 > who are of legal age in their jurisdiction (**18+ or 21+ where applicable**). The operator of
 > each instance is **solely responsible** for verifying every participant's age and consent. See
@@ -121,7 +125,7 @@ Then on first launch, in your local browser:
    - Create the tunnel, route DNS to `app.your-domain.com`.
    - **Enable Cloudflare Zero Trust** in the CF dashboard if it isn't already — one click.
    - Create the Access app + email allow-policy via the API call.
-3. Open the **Devices** tab, scan for Kasa devices (UDP broadcast), add your pump plug, calibrate it (live timer or manual seconds-to-100%).
+3. Open the **Devices** tab, scan for or add your smart outlet (Kasa via UDP broadcast, Tapo / Wyze / Govee / Tuya / Matter via add-by-credentials), then calibrate the pump plug (live timer or manual seconds-to-100%).
 4. Open the **Users** tab, add invited guests by email + nickname. Each entry pushes to the CF Access allow-policy.
 5. Open the **Pump Templates** tab, build milestones with announcements + action templates (`on` / `off` / `repeat` step DSL).
 6. *(Optional)* Open the **Mini Games** tab to design prize-wheel profiles (1–10 sections each, with `action` / `spin-again` / `no-prize` types and per-section pump steps). Attach them to milestones from the Pump Templates editor.
