@@ -107,7 +107,7 @@ router.get('/', (req, res) => {
     <h2>Launchpad <span class="muted" style="font-size:1rem">— <span id="lp-owner-name">${escape(ownerNameForTitle)}</span></span></h2>
     <script>document.title = 'PumpDirect — ' + ${JSON.stringify(ownerNameForTitle)};</script>
 
-    <div class="card">
+    ${state.active ? '' : `<div class="card">
       <h3>Session profile</h3>
       <p>
         <select id="sp-select" onchange="location.search='?profile=' + encodeURIComponent(this.value)" style="min-width:280px">
@@ -120,10 +120,9 @@ router.get('/', (req, res) => {
           : `<button onclick="lpRenameProfile()">Rename</button> <button onclick="lpDeleteProfile()">Delete</button>`}
       </p>
       <p class="muted">Template profile: <strong>${escape(templateProfile?.name || '?')}</strong></p>
-    </div>
+    </div>`}
 
     <div id="session-stage">
-      <div id="standby-overlay"><div class="standby-text">Please Stand By</div></div>
     <div class="top-row">
       <div class="card gauge-card">
         ${gauge(state.capacity)}
@@ -410,15 +409,22 @@ router.get('/', (req, res) => {
       }
       setInterval(renderPumpLine, 250);
 
+      let __isStandby = false;
+      function applyOutgoingTrackState() {
+        if (!localStream) return;
+        for (const track of localStream.getTracks()) {
+          const userMuted = !!track._userMuted;
+          track.enabled = !__isStandby && !userMuted;
+        }
+      }
       function applyStandby(s) {
-        const stage = document.getElementById('session-stage');
-        const overlay = document.getElementById('standby-overlay');
-        const text = overlay.querySelector('.standby-text');
-        const standby = s.active && (s.paused || s.emergencyStopped);
-        stage.classList.toggle('standby', standby);
-        overlay.classList.toggle('active', standby);
-        if (s.emergencyStopped) { text.textContent = 'E-STOP'; text.style.color = '#f08484'; }
-        else { text.textContent = 'Please Stand By'; text.style.color = '#f0c674'; }
+        __isStandby = !!(s.active && (s.paused || s.emergencyStopped));
+        // Owner has no big "Please Stand By" overlay — but every cam tile
+        // (local + remote) blacks out so neither owner nor visitors see frames.
+        document.querySelectorAll('.cam-tile').forEach(t => t.classList.toggle('standby-blackout', __isStandby));
+        // Disable outgoing local tracks so peers receive no frames at all,
+        // combined with whatever the user manually muted via the buttons.
+        applyOutgoingTrackState();
       }
       function applyState(s) {
         applyStandby(s);
@@ -489,6 +495,7 @@ router.get('/', (req, res) => {
           document.getElementById('btn-vid').disabled = false;
           const audioTrack = localStream.getAudioTracks()[0];
           document.getElementById('btn-aud').disabled = !audioTrack;
+          applyOutgoingTrackState();   // honour standby + any pre-existing user-mute
           if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: true }));
           if (window.__rtc) await window.__rtc.publishToAll();
         } catch (e) {
@@ -517,14 +524,16 @@ router.get('/', (req, res) => {
       function lpToggleVideo() {
         if (!localStream) return;
         const t = localStream.getVideoTracks()[0]; if (!t) return;
-        t.enabled = !t.enabled;
-        document.getElementById('btn-vid').textContent = t.enabled ? 'Mute video' : 'Unmute video';
+        t._userMuted = !t._userMuted;
+        applyOutgoingTrackState();
+        document.getElementById('btn-vid').textContent = t._userMuted ? 'Unmute video' : 'Mute video';
       }
       function lpToggleAudio() {
         if (!localStream) return;
         const t = localStream.getAudioTracks()[0]; if (!t) return;
-        t.enabled = !t.enabled;
-        document.getElementById('btn-aud').textContent = t.enabled ? 'Mute audio' : 'Unmute audio';
+        t._userMuted = !t._userMuted;
+        applyOutgoingTrackState();
+        document.getElementById('btn-aud').textContent = t._userMuted ? 'Unmute audio' : 'Mute audio';
       }
       function attachRemoteTile(email, stream, nickname, isOwner) {
         const label = nickname || email;

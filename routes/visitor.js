@@ -135,10 +135,11 @@ function renderVisitorPage(req) {
       .milestone-pane .action-grid { grid-template-columns: 1fr 1fr; }
     }
     #session-stage { position: relative; }
-    #standby-overlay { display:none; position:absolute; inset:0; background: rgba(15,17,21,0.78); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 50; align-items: center; justify-content: center; border-radius: 12px; }
+    #standby-overlay { display:none; position:absolute; inset:0; background: rgba(15,17,21,0.85); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); z-index: 50; align-items: center; justify-content: center; border-radius: 12px; }
     #standby-overlay.active { display: flex; }
     .standby-text { font-size: clamp(2.5rem, 12vw, 6rem); font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; color: #f0c674; text-shadow: 0 6px 40px rgba(0,0,0,0.6); text-align: center; padding: 0 20px; }
-    #session-stage.standby > :not(#standby-overlay) { filter: grayscale(0.6); }
+    .cam-tile.standby-blackout video { visibility: hidden; }
+    .cam-tile.standby-blackout::after { content: "STANDBY"; position:absolute; inset:0; background:#000; display:flex; align-items:center; justify-content:center; color:#4a3413; font-weight:900; font-size:1.4rem; letter-spacing:0.2em; z-index:2; }
   `;
 
   if (!canConnect) {
@@ -389,6 +390,7 @@ function renderVisitorPage(req) {
           document.getElementById('my-aud-btn').textContent = 'Mute audio';
           document.getElementById('my-aud-btn').disabled = !myBroadcastStream.getAudioTracks()[0];
           btn.textContent = 'Stop broadcasting';
+          applyMyBroadcastTrackState();  // honour current standby state
           if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: true }));
           if (window.__rtc) await window.__rtc.publishToAll();
         } catch (e) { alert('Camera failed: ' + e.message); }
@@ -396,14 +398,16 @@ function renderVisitorPage(req) {
       function vMuteMyVideo() {
         if (!myBroadcastStream) return;
         const t = myBroadcastStream.getVideoTracks()[0]; if (!t) return;
-        t.enabled = !t.enabled;
-        document.getElementById('my-vid-btn').textContent = t.enabled ? 'Hide video' : 'Show video';
+        t._userMuted = !t._userMuted;
+        applyMyBroadcastTrackState();
+        document.getElementById('my-vid-btn').textContent = t._userMuted ? 'Show video' : 'Hide video';
       }
       function vMuteMyAudio() {
         if (!myBroadcastStream) return;
         const t = myBroadcastStream.getAudioTracks()[0]; if (!t) return;
-        t.enabled = !t.enabled;
-        document.getElementById('my-aud-btn').textContent = t.enabled ? 'Mute audio' : 'Unmute audio';
+        t._userMuted = !t._userMuted;
+        applyMyBroadcastTrackState();
+        document.getElementById('my-aud-btn').textContent = t._userMuted ? 'Unmute audio' : 'Mute audio';
       }
       function applyBroadcastCard(s) {
         const card = document.getElementById('cam-broadcast-card');
@@ -439,18 +443,28 @@ function renderVisitorPage(req) {
       }
       setInterval(renderPumpLine, 250);
 
+      let __isStandby = false;
+      function applyMyBroadcastTrackState() {
+        if (!myBroadcastStream) return;
+        for (const track of myBroadcastStream.getTracks()) {
+          track.enabled = !__isStandby && !track._userMuted;
+        }
+      }
       function applyStandby(s) {
         const stage = document.getElementById('session-stage');
         const overlay = document.getElementById('standby-overlay');
         const text = overlay && overlay.querySelector('.standby-text');
         if (!stage || !overlay) return;
-        const standby = s.active && (s.paused || s.emergencyStopped);
-        stage.classList.toggle('standby', standby);
-        overlay.classList.toggle('active', standby);
+        __isStandby = !!(s.active && (s.paused || s.emergencyStopped));
+        stage.classList.toggle('standby', __isStandby);
+        overlay.classList.toggle('active', __isStandby);
         if (text) {
           if (s.emergencyStopped) { text.textContent = 'E-STOP'; text.style.color = '#f08484'; }
           else { text.textContent = 'Please Stand By'; text.style.color = '#f0c674'; }
         }
+        // Black out every cam tile + cut outgoing tracks during standby.
+        document.querySelectorAll('.cam-tile').forEach(t => t.classList.toggle('standby-blackout', __isStandby));
+        applyMyBroadcastTrackState();
       }
       function applyState(s) {
         applyStandby(s);

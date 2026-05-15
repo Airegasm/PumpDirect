@@ -94,12 +94,17 @@ function ownerLayout({ title, active, body }) {
     .chat-row { grid-template-columns: 1fr; }
     .cam-grid .cam-slot { max-width: 100%; }
   }
-  /* Standby overlay — sits over the session stage (gauge + cam) but never over the chat-row */
+  /* Standby: blacks out every cam tile in place. Visual + the publisher's
+     outgoing tracks get disabled in JS so no real frames travel. */
   #session-stage { position: relative; }
-  #standby-overlay { display:none; position:absolute; inset:0; background: rgba(15,17,21,0.78); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 50; align-items: center; justify-content: center; border-radius: 12px; }
-  #standby-overlay.active { display: flex; }
-  .standby-text { font-size: clamp(3rem, 9vw, 7rem); font-weight: 900; letter-spacing: 0.15em; text-transform: uppercase; color: #f0c674; text-shadow: 0 6px 40px rgba(0,0,0,0.6); text-align: center; padding: 0 20px; }
-  #session-stage.standby > :not(#standby-overlay) { filter: grayscale(0.6); }
+  .cam-tile.standby-blackout video { visibility: hidden; }
+  .cam-tile.standby-blackout::after {
+    content: "STANDBY";
+    position: absolute; inset: 0; background: #000;
+    display: flex; align-items: center; justify-content: center;
+    color: #4a3413; font-weight: 900; font-size: 1.5rem; letter-spacing: 0.2em; z-index: 2;
+  }
+  .cam-tile.standby-blackout .rt-ctrls, .cam-tile.standby-blackout .rt-label { z-index: 3; }
   details summary { cursor: pointer; padding: 8px 0; font-size: 1.05rem; }
   input[type="text"], input[type="email"], input[type="password"], input[type="number"], select {
     padding: 10px 12px !important; background: #0a0c10 !important; color: #e8e8e8 !important;
