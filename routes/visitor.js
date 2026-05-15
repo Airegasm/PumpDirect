@@ -142,6 +142,8 @@ function renderVisitorPage(req) {
     .cam-tile.peer-video-muted video { visibility: hidden; }
     .cam-tile.peer-video-muted::after { content: "VIDEO MUTED"; position:absolute; inset:0; background:#000; display:flex; align-items:center; justify-content:center; color:#555; font-weight:700; font-size:1.05rem; letter-spacing:0.15em; z-index:2; }
     .cam-tile.standby-blackout::after { content: "STANDBY"; position:absolute; inset:0; background:#000; display:flex; align-items:center; justify-content:center; color:#4a3413; font-weight:900; font-size:1.4rem; letter-spacing:0.2em; z-index:3; }
+    .cam-tile .audio-muted-badge { display: none; position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); border-radius: 50%; width: 30px; height: 30px; align-items: center; justify-content: center; font-size: 0.95rem; z-index: 5; }
+    .cam-tile.peer-audio-muted .audio-muted-badge { display: flex; }
   `;
 
   if (!canConnect) {
@@ -331,7 +333,8 @@ function renderVisitorPage(req) {
             '<div class="rt-ctrls">' +
               '<button data-act="hide">👁</button>' +
               '<button data-act="mute">🔊</button>' +
-            '</div>';
+            '</div>' +
+            '<div class="audio-muted-badge" title="audio muted by publisher">🔇</div>';
           const slot = isOwner
             ? document.getElementById('cam-owner-slot')
             : document.getElementById('cam-controller-slot');
@@ -345,7 +348,10 @@ function renderVisitorPage(req) {
         tile.querySelector('.rt-label').textContent = label;
         tile.querySelector('video').srcObject = stream;
         const ps = __peerTrackState.get(email);
-        if (ps) tile.classList.toggle('peer-video-muted', !!ps.videoMuted);
+        if (ps) {
+          tile.classList.toggle('peer-video-muted', !!ps.videoMuted);
+          tile.classList.toggle('peer-audio-muted', !!ps.audioMuted);
+        }
       }
       function removeRemoteTile(email) {
         const tile = document.getElementById('rt-' + cssId(email));
@@ -462,10 +468,13 @@ function renderVisitorPage(req) {
           audioMuted: !!(a && a._userMuted),
         }));
       }
-      function applyPeerTrackState(email, videoMuted) {
-        __peerTrackState.set(email, { videoMuted: !!videoMuted });
+      function applyPeerTrackState(email, videoMuted, audioMuted) {
+        __peerTrackState.set(email, { videoMuted: !!videoMuted, audioMuted: !!audioMuted });
         const tile = document.getElementById('rt-' + cssId(email));
-        if (tile) tile.classList.toggle('peer-video-muted', !!videoMuted);
+        if (tile) {
+          tile.classList.toggle('peer-video-muted', !!videoMuted);
+          tile.classList.toggle('peer-audio-muted', !!audioMuted);
+        }
       }
       function applyMyBroadcastTrackState() {
         if (!myBroadcastStream) return;
@@ -606,7 +615,7 @@ function renderVisitorPage(req) {
             const log = document.getElementById('chat-log');
             if (log) { log.innerHTML = ''; (m.messages || []).forEach(renderChat); }
           } else if (m.type === 'track-state') {
-            applyPeerTrackState(m.email, m.videoMuted);
+            applyPeerTrackState(m.email, !!m.videoMuted, !!m.audioMuted);
           } else {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
             if (m.type === 'peer-joined' && myBroadcastStream) setTimeout(broadcastTrackState, 800);

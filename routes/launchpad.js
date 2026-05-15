@@ -421,10 +421,13 @@ router.get('/', (req, res) => {
           audioMuted: !!(a && a._userMuted),
         }));
       }
-      function applyPeerTrackState(email, videoMuted /*, audioMuted */) {
-        __peerTrackState.set(email, { videoMuted: !!videoMuted });
+      function applyPeerTrackState(email, videoMuted, audioMuted) {
+        __peerTrackState.set(email, { videoMuted: !!videoMuted, audioMuted: !!audioMuted });
         const tile = document.getElementById('remote-' + cssId(email));
-        if (tile) tile.classList.toggle('peer-video-muted', !!videoMuted);
+        if (tile) {
+          tile.classList.toggle('peer-video-muted', !!videoMuted);
+          tile.classList.toggle('peer-audio-muted', !!audioMuted);
+        }
       }
       function applyOutgoingTrackState() {
         if (!localStream) return;
@@ -567,7 +570,8 @@ router.get('/', (req, res) => {
             '<div class="rt-ctrls">' +
               '<button data-act="hide" title="hide video">👁</button>' +
               '<button data-act="mute" title="mute audio">🔊</button>' +
-            '</div>';
+            '</div>' +
+            '<div class="audio-muted-badge" title="audio muted by publisher">🔇</div>';
           // Owner Launchpad: remote tiles are controllers (never the owner themselves).
           document.getElementById('cam-controller-slot').appendChild(tile);
           const v = tile.querySelector('video');
@@ -580,7 +584,10 @@ router.get('/', (req, res) => {
         tile.querySelector('video').srcObject = stream;
         // re-apply any known peer mute state to the freshly-created tile
         const ps = __peerTrackState.get(email);
-        if (ps) tile.classList.toggle('peer-video-muted', !!ps.videoMuted);
+        if (ps) {
+          tile.classList.toggle('peer-video-muted', !!ps.videoMuted);
+          tile.classList.toggle('peer-audio-muted', !!ps.audioMuted);
+        }
       }
       function removeRemoteTile(email) {
         const tile = document.getElementById('remote-' + cssId(email));
@@ -615,7 +622,7 @@ router.get('/', (req, res) => {
             log.innerHTML = '';
             (m.messages || []).forEach(renderChatMessage);
           } else if (m.type === 'track-state') {
-            applyPeerTrackState(m.email, m.videoMuted, m.audioMuted);
+            applyPeerTrackState(m.email, !!m.videoMuted, !!m.audioMuted);
           } else {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
             // When a new peer connects, re-send our mute state so their tile renders correctly.

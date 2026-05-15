@@ -114,6 +114,13 @@ function ownerLayout({ title, active, body }) {
   }
   .cam-tile.standby-blackout .rt-ctrls, .cam-tile.standby-blackout .rt-label,
   .cam-tile.peer-video-muted .rt-ctrls, .cam-tile.peer-video-muted .rt-label { z-index: 4; }
+  .cam-tile .audio-muted-badge {
+    display: none; position: absolute; bottom: 10px; right: 10px;
+    background: rgba(0,0,0,0.7); border-radius: 50%; width: 32px; height: 32px;
+    display: none; align-items: center; justify-content: center;
+    font-size: 1rem; z-index: 5;
+  }
+  .cam-tile.peer-audio-muted .audio-muted-badge { display: flex; }
   details summary { cursor: pointer; padding: 8px 0; font-size: 1.05rem; }
   input[type="text"], input[type="email"], input[type="password"], input[type="number"], select {
     padding: 10px 12px !important; background: #0a0c10 !important; color: #e8e8e8 !important;
