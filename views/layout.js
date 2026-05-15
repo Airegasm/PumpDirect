@@ -1,0 +1,96 @@
+function escape(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+const TABS = [
+  { id: 'launchpad', label: 'Launchpad', href: '/' },
+  { id: 'chatwebcam', label: 'Chat/Webcam', href: '/chat-webcam' },
+  { id: 'templates', label: 'Pump Templates', href: '/templates' },
+  { id: 'devices', label: 'Device Discovery', href: '/devices' },
+  { id: 'network', label: 'Network', href: '/network' },
+  { id: 'users', label: 'Users', href: '/users' },
+];
+
+function ownerLayout({ title, active, body }) {
+  const tabs = TABS.map(t =>
+    `<a href="${t.href}" class="tab ${active === t.id ? 'active' : ''}">${escape(t.label)}</a>`
+  ).join('');
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${escape(title)} — PumpDirect Owner</title>
+<style>
+  :root { color-scheme: dark; font-size: 20px; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #0f1115; color: #e8e8e8; margin: 0; font-size: 1rem; line-height: 1.5; }
+  input, select, textarea { font-size: 1rem; font-family: inherit; }
+  .topbar { background: #161922; padding: 18px 32px; border-bottom: 1px solid #2a2f3a; display: flex; align-items: center; justify-content: space-between; }
+  .topbar h1 { font-size: 1.4rem; margin: 0; font-weight: 600; }
+  .tabs { display: flex; gap: 0; background: #0f1115; border-bottom: 1px solid #2a2f3a; padding: 0 32px; }
+  .tab { color: #9aa4b2; text-decoration: none; padding: 18px 24px; font-size: 1.1rem; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+  .tab:hover { color: #e8e8e8; background: #161922; }
+  .tab.active { color: #fff; border-bottom-color: #2a6df4; background: #161922; }
+  main { max-width: 1200px; margin: 0 auto; padding: 36px 32px; }
+  h2 { font-size: 2rem; margin-top: 0; }
+  h3 { font-size: 1.3rem; margin: 0 0 16px; }
+  h4 { font-size: 1.1rem; margin: 16px 0 8px; }
+  .card { background: #161922; border: 1px solid #2a2f3a; border-radius: 10px; padding: 28px; margin-bottom: 24px; }
+  .pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.9rem; }
+  .pill.ok { background: #133d2b; color: #6ddc9b; }
+  .pill.warn { background: #4a3413; color: #f0c674; }
+  .pill.bad { background: #4a1b1b; color: #f08484; }
+  button, .btn { background: #2a6df4; color: #fff; border: 0; border-radius: 8px; padding: 12px 22px; font-size: 1rem; font-family: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  code { background: #0a0c10; padding: 3px 8px; border-radius: 4px; font-size: 0.95rem; }
+  pre { background: #0a0c10; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.95rem; }
+  .muted, .muted * { color: #7a8597; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+  table { font-size: 1rem; }
+  th, td { padding: 10px 4px; }
+  details summary { cursor: pointer; padding: 8px 0; font-size: 1.05rem; }
+  input[type="text"], input[type="email"], input[type="password"], input[type="number"], select {
+    padding: 10px 12px !important; background: #0a0c10 !important; color: #e8e8e8 !important;
+    border: 1px solid #2a2f3a !important; border-radius: 6px !important;
+  }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>PumpDirect <span class="muted">— owner console</span></h1>
+  <span class="muted" style="font-size:0.9rem">loopback only</span>
+</div>
+<div class="tabs">${tabs}</div>
+<main>${body}</main>
+</body>
+</html>`;
+}
+
+function splash({ user }) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PumpDirect</title>
+<style>
+  :root { font-size: 20px; }
+  body { font-family: system-ui, sans-serif; background: #0f1115; color: #e8e8e8; margin: 0; display: grid; place-items: center; min-height: 100vh; font-size: 1rem; line-height: 1.5; }
+  .splash { text-align: center; padding: 60px; }
+  h1 { font-size: 3rem; margin: 0 0 20px; }
+  p { color: #9aa4b2; font-size: 1.1rem; }
+</style>
+</head>
+<body>
+<div class="splash">
+  <h1>Welcome to PumpDirect</h1>
+  <p>Signed in as <strong>${escape(user)}</strong></p>
+  <p class="muted">Visitor experience coming soon.</p>
+</div>
+</body>
+</html>`;
+}
+
+module.exports = { ownerLayout, splash, escape };
