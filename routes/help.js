@@ -99,8 +99,9 @@ const SECTIONS = [
       <ul>
         <li><strong>text-overlay</strong> — text card anchored over the host cam. 5 anchors: top-left / top-right / bottom-left / bottom-right / center. ADD adds a card; CLEAR removes the card at that anchor (or <code>all</code> to clear every anchor).</li>
         <li><strong>lottie-overlay</strong> — Lottie animation positioned + sized over the host cam tile. Drag-to-position editor, Center snap button, width slider. Optional freeze-last-frame so the final frame persists. Upload <code>.json</code> Lottie files inline via the file row.</li>
+        <li><strong>video-overlay</strong> — WebM (or MP4) video positioned + sized over the host cam tile. Alpha-channel WebM composites transparently (Chrome / Firefox / Edge); Safari falls back to opaque. Same drag-to-position editor as lottie. Options: <em>Loop</em> (plays forever until cleared), <em>Freeze last frame</em> (holds the last frame after playback), <em>Muted</em> (forces no audio — useful when you've paired the clip with a separate <code>play-sound</code> sub-action). Use the <code>mp4towebm</code> utility in <code>~/Projects/mp4towebm</code> to chroma-key talking-head footage into alpha WebM.</li>
         <li><strong>play-sound</strong> — plays an audio file to all participants. Optional blocking hold (chain waits until playback finishes). Upload audio files inline.</li>
-        <li><strong>device-control</strong> — direct on / on-cycle / off on any device (or <code>all</code>). <em>on infinite</em> is non-blocking so the chain proceeds while the device stays on.</li>
+        <li><strong>device-control</strong> — direct on / on-cycle / off on any device (or <code>all</code>). <em>on infinite</em> is non-blocking so the chain proceeds while the device stays on. <em>off</em> as the <strong>first</strong> sub-action of a trigger preempts any running pump action (timed, cycled, or manual on) so the chain runs immediately instead of queueing; <em>off</em> later in the chain just queues normally — it's part of the planned sequence.</li>
         <li><strong>wait</strong> — pauses the chain for N seconds.</li>
         <li><strong>turn-off-host-cam</strong> — kills the host cam stream cleanly (visitors get a track-end, not a frozen frame).</li>
         <li><strong>end-session</strong> — ends the session. Instant or delayed; delayed shows a full-stage "Session ending in N" countdown that layers <em>above</em> any frozen lottie at the overlay stage.</li>
@@ -136,6 +137,13 @@ const SECTIONS = [
     summary: 'Per-profile settings: template, trigger template, custom end, owner cam resolution.',
     body: `
       <p>A session profile bundles everything the session needs: template profile (milestones), trigger template, mini-games, owner cam mode/resolution, controller broadcast toggle, and the optional Custom End Button.</p>
+      <h4>Session Intro Button</h4>
+      <ol>
+        <li>Open <strong>Launchpad → Settings</strong>.</li>
+        <li>Tick <em>Enable Session Intro Button</em>.</li>
+        <li>Type the button text and pick a Trigger Action or Group.</li>
+      </ol>
+      <p>When the session starts, the Pump Action Control Panel renders <strong>disabled</strong> for everyone — owner and any visitor controller. A green Intro button appears above the Custom End button (or where the Custom End button would be). Pressing it fires the configured trigger; when the chain finishes, the action panel unlocks. Useful for forced "watch the rules / consent video / countdown" presentations before the session is interactable. If you also want the intro itself to be uninterruptible, build it as a single trigger action with a leading <code>device-control: off</code> sub-action — the gate prevents anyone from firing pump actions, and the leading off is a no-op until something tries to run.</p>
       <h4>Custom Session End Button</h4>
       <ol>
         <li>Open <strong>Launchpad → Settings</strong>.</li>

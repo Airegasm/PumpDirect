@@ -100,6 +100,19 @@ async function _drainQueue() {
 }
 
 async function _runTriggerRow(row) {
+  // Resolve the target up-front so we can peek at the leading sub-action.
+  let actionList = [];
+  try { actionList = _resolveActionList(row.target); }
+  catch (e) { logger.warn(`trigger row ${row.id}: target lookup failed: ${e.message}`); }
+
+  // A trigger whose very first sub-action is `device-control: off` is the
+  // operator's explicit "stop everything and do this" signal — preempt any
+  // running pump action (timed, cycled, OR manual on). Non-leading device-off
+  // sub-actions queue normally; they're part of a planned chain.
+  if (_firstSubActionIsDeviceOff(actionList)) {
+    try { _lazyActionEngine().abort('trigger preempted by leading device-off'); } catch {}
+  }
+
   // Coordinate with the action engine before grabbing the lock:
   //   * If a normal (timed/cycled) action is running, wait for it to finish so
   //     this trigger queues behind it.
@@ -111,18 +124,6 @@ async function _runTriggerRow(row) {
   const lockId = 'trigger:' + row.id;
   session._setLive && session._setLive({ currentActionTemplateId: lockId });
   emitState(session.getState());
-
-  // Resolve the target to an ordered list of trigger-action profiles.
-  let actionList = [];
-  try {
-    if (row.target?.kind === 'action') actionList = [triggers.getAction(row.target.id)];
-    else if (row.target?.kind === 'group') {
-      const g = triggers.getGroup(row.target.id);
-      actionList = (g.actionIds || []).map(id => { try { return triggers.getAction(id); } catch { return null; } }).filter(Boolean);
-    }
-  } catch (e) {
-    logger.warn(`trigger row ${row.id}: target lookup failed: ${e.message}`);
-  }
 
   runtime.abortCtl = new AbortController();
   const sig = runtime.abortCtl.signal;
@@ -151,6 +152,23 @@ async function _runTriggerRow(row) {
 function _labelForRow(row) {
   if (row.type === 'CAPACITY_REACHED') return `@${row.value}% capacity`;
   return row.type;
+}
+
+function _resolveActionList(target) {
+  if (!target) return [];
+  if (target.kind === 'action') return [triggers.getAction(target.id)];
+  if (target.kind === 'group') {
+    const g = triggers.getGroup(target.id);
+    return (g.actionIds || [])
+      .map(id => { try { return triggers.getAction(id); } catch { return null; } })
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function _firstSubActionIsDeviceOff(actionList) {
+  const firstStep = actionList[0]?.steps?.[0];
+  return firstStep?.kind === 'device-control' && firstStep?.mode === 'off';
 }
 
 async function _waitForEngineIdle() {
@@ -209,6 +227,19 @@ async function _runSubAction(step, sig) {
       // When the Lottie is frozen on its last frame we don't block — the rest
       // of the trigger chain runs in parallel with the still-visible overlay.
       if (step.freezeLastFrame) return;
+      return _sleep(step.durationMs, sig);
+    case 'video-overlay':
+      emitOverlay({
+        kind: 'video-overlay',
+        path: step.path, durationMs: step.durationMs,
+        freezeLastFrame: !!step.freezeLastFrame,
+        loop: !!step.loop,
+        muted: !!step.muted,
+        xPct: step.xPct, yPct: step.yPct, widthPct: step.widthPct,
+      });
+      // Loop or freeze-last-frame: don't block. Otherwise hold the chain for
+      // the configured duration (or until clearOverlay swaps it out).
+      if (step.loop || step.freezeLastFrame) return;
       return _sleep(step.durationMs, sig);
     case 'play-sound':
       emitOverlay({ kind: 'play-sound', path: step.path, volume: step.volume });

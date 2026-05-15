@@ -185,17 +185,18 @@ Three reusable layers, all on the **Triggers** tab:
 
 | Layer | Shape | Notes |
 |---|---|---|
-| **Trigger Action** | named profile · ordered sub-actions | Sub-action kinds: `text-overlay` (5 anchors over host cam — top-left/top-right/bottom-left/bottom-right/center, with ADD/CLEAR modes + `all` for clear), `lottie-overlay` (positioned + sized over the host cam tile, optional freeze-last-frame, drag-to-position editor with a Center button + width slider), `play-sound` (audio with optional blocking hold), `device-control` (on / on-cycle / off, `all` legal for every mode — `on infinite` is non-blocking so the chain proceeds while the device stays on), `wait`, `turn-off-host-cam`, `end-session` (instant OR delayed with full-stage "Session ending in N" countdown). |
+| **Trigger Action** | named profile · ordered sub-actions | Sub-action kinds: `text-overlay` (5 anchors over host cam — top-left/top-right/bottom-left/bottom-right/center, with ADD/CLEAR modes + `all` for clear), `lottie-overlay` (positioned + sized over the host cam tile, optional freeze-last-frame, drag-to-position editor with a Center button + width slider), `video-overlay` (alpha-channel WebM or rectangular MP4 over the host cam tile — same drag-to-position editor, Loop / Freeze last frame / Muted toggles; use the `mp4towebm` utility for talking-head footage), `play-sound` (audio with optional blocking hold), `device-control` (on / on-cycle / off, `all` legal for every mode — `on infinite` is non-blocking so the chain proceeds while the device stays on; `off` as the *first* sub-action of a trigger preempts any running pump action so the chain runs immediately instead of queueing), `wait`, `turn-off-host-cam`, `end-session` (instant OR delayed with full-stage "Session ending in N" countdown). |
 | **Trigger Action Group** | named profile · ordered list of Trigger Actions | Macro of macros — runs its actions sequentially. |
 | **Trigger Template** | named profile · rows of `{type, value, target}` | Only one row per capacity number; target is either a Trigger Action or a Group. |
 
 A trigger template attaches to a session profile (Launchpad → Settings). At runtime the action engine's capacity tick fires unfired triggers when their `value` is crossed upward — fire-once per session. The runtime locks the gauge (same UI lock actions/minigames use), queues additional triggers behind in-flight ones, and preempts manual Pump On when a trigger fires.
 
-**Asset uploads** are inline — the lottie + sound rows each have an **⬆ Upload** button that takes a file picker, copies the bytes into the right directory, and selects the new filename automatically. Files land in:
+**Asset uploads** are inline — the lottie, sound, and video rows each have an **⬆ Upload** button that takes a file picker, copies the bytes into the right directory, and selects the new filename automatically. Files land in:
 - `public/assets/triggers/lottie/*.json` — Lottie JSON for `lottie-overlay`.
 - `public/assets/triggers/sound/*.{mp3,wav,ogg,m4a}` — audio for `play-sound`.
+- `public/assets/triggers/video/*.{webm,mp4}` — video for `video-overlay`. Alpha-channel WebM (VP9 / `yuva420p`) is the format you want for talking-head compositing; the [`mp4towebm`](../mp4towebm) sister utility converts greenscreen MP4s into alpha WebM in one command.
 
-The sub-action editor supports drag-to-reorder rows, a copy button (📋) per row that deep-clones, **collapsible rows** (each row has a `▼/▶` toggle so a long chain doesn't fill the screen — newly-added rows open expanded, existing rows open collapsed), and live previews for both `text-overlay` (cam-shaped preview with the styled text) and `lottie-overlay` (cam-shaped preview with draggable center + width slider + Center snap).
+The sub-action editor supports drag-to-reorder rows, a copy button (📋) per row that deep-clones, **collapsible rows** (each row has a `▼/▶` toggle so a long chain doesn't fill the screen — newly-added rows open expanded, existing rows open collapsed), and live previews for `text-overlay` (cam-shaped preview with the styled text), `lottie-overlay`, and `video-overlay` (cam-shaped previews with draggable center + width slider + Center snap).
 
 ### Custom Session End Button
 

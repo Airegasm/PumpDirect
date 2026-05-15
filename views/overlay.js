@@ -36,6 +36,7 @@ function overlayJs() {
       if (msg.kind === 'dice-roll') return _renderDiceRoll(msg);
       if (msg.kind === 'prize-wheel') return _renderPrizeWheel(msg);
       if (msg.kind === 'lottie-overlay') return _renderLottieOverlay(msg);
+      if (msg.kind === 'video-overlay') return _renderVideoOverlay(msg);
       if (msg.kind === 'play-sound') return _playSound(msg);
       if (msg.kind === 'session-ending') return _renderSessionEnding(msg);
     }
@@ -213,6 +214,69 @@ function overlayJs() {
         } catch (e) { slot.textContent = '(lottie load failed)'; }
       } else {
         slot.textContent = msg.path;
+      }
+    }
+    function _renderVideoOverlay(msg) {
+      // Mounts an HTMLVideoElement at the same trigger-fx-stage the lottie
+      // path uses — anchored to the host cam tile's bounds captured at mount
+      // time so position/size survive a cam-tile teardown (e.g. a later
+      // turn-off-host-cam in the same chain). Alpha-WebM composites
+      // transparently in Chrome/Firefox/Edge; Safari falls back to opaque.
+      const safe = String(msg.path || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+      if (!safe) return;
+      const stage = document.getElementById('trigger-fx-stage');
+      if (!stage) return;
+
+      const targetFn = window.__textOverlayTarget;
+      const tile = typeof targetFn === 'function' ? targetFn() : null;
+      const ref = tile || document.getElementById('cam-owner-slot');
+      const grid = stage.parentElement;
+      if (!ref || !grid) return;
+      const refRect = ref.getBoundingClientRect();
+      const gridRect = grid.getBoundingClientRect();
+      let left = refRect.left - gridRect.left;
+      let top  = refRect.top - gridRect.top;
+      let width = refRect.width;
+      let height = refRect.height;
+      if (width <= 1 || height <= 1) {
+        width = Math.min(gridRect.width || 400, 480);
+        height = width;
+        left = (gridRect.width - width) / 2;
+        top = 8;
+      }
+
+      const xPct = Math.max(0, Math.min(100, Number(msg.xPct != null ? msg.xPct : 50)));
+      const yPct = Math.max(0, Math.min(100, Number(msg.yPct != null ? msg.yPct : 50)));
+      const wPct = Math.max(5, Math.min(100, Number(msg.widthPct != null ? msg.widthPct : 40)));
+      const loop = !!msg.loop;
+      const freeze = !!msg.freezeLastFrame;
+      const muted = !!msg.muted;
+
+      stage.innerHTML = '<div class="lottie-trigger-stage" style="position:absolute;'
+        + 'left:' + left + 'px;top:' + top + 'px;width:' + width + 'px;height:' + height + 'px">'
+        + '<div class="video-trigger-slot" style="position:absolute;left:' + xPct + '%;top:' + yPct + '%;width:' + wPct + '%;transform:translate(-50%,-50%);pointer-events:none">'
+        +   '<video src="/assets/triggers/video/' + safe + '" '
+        +     'playsinline ' + (loop ? 'loop ' : '') + (muted ? 'muted ' : '')
+        +     'style="width:100%;height:auto;display:block;background:transparent"></video>'
+        + '</div></div>';
+
+      const video = stage.querySelector('video');
+      if (!video) return;
+      // Autoplay-with-sound is browser-restricted. If play() rejects, retry
+      // muted so the visual still happens — the operator can tick "Muted"
+      // upstream to suppress this fallback warning.
+      const tryPlay = () => video.play().catch(() => {
+        try { video.muted = true; video.play().catch(() => {}); } catch {}
+      });
+      if (freeze) {
+        video.addEventListener('ended', () => { try { video.pause(); video.currentTime = Math.max(0, (video.duration || 0) - 0.01); } catch {} });
+      }
+      tryPlay();
+
+      clearTimeout(window.__triggerFxTimer);
+      const dur = Math.max(200, Number(msg.durationMs) || 5000);
+      if (!loop && !freeze) {
+        window.__triggerFxTimer = setTimeout(() => { stage.innerHTML = ''; }, dur);
       }
     }
     function _renderSessionEnding(msg) {

@@ -39,6 +39,7 @@ const VALID_TRIGGER_TYPES = ['CAPACITY_REACHED'];
 const SUB_ACTION_KINDS = {
   'text-overlay':      { enabled: true,  validate: _validateTextOverlay },
   'lottie-overlay':    { enabled: true,  validate: _validateLottieOverlay },
+  'video-overlay':     { enabled: true,  validate: _validateVideoOverlay },
   'play-sound':        { enabled: true,  validate: _validatePlaySound },
   'device-control':    { enabled: true,  validate: _validateDeviceControl },
   'wait':              { enabled: true,  validate: _validateWait },
@@ -95,6 +96,25 @@ function _validateLottieOverlay(s) {
     path: s.path.trim(),
     durationMs,
     freezeLastFrame: !!s.freezeLastFrame,
+    xPct, yPct, widthPct,
+  };
+}
+function _validateVideoOverlay(s) {
+  if (typeof s.path !== 'string' || !s.path.trim()) throw new Error('video-overlay: path required');
+  // durationMs is the hard cap when neither loop nor freezeLastFrame is set.
+  // For loop / freeze cases the chain falls through immediately and the
+  // overlay sticks until cleared (next overlay, session end, etc.).
+  const durationMs = Number(s.durationMs);
+  if (!Number.isFinite(durationMs) || durationMs <= 0 || durationMs > 5 * 60_000) throw new Error('video-overlay: durationMs must be 1–300000');
+  const xPct     = Math.max(0, Math.min(100, Number(s.xPct     != null ? s.xPct     : 50)));
+  const yPct     = Math.max(0, Math.min(100, Number(s.yPct     != null ? s.yPct     : 50)));
+  const widthPct = Math.max(5, Math.min(100, Number(s.widthPct != null ? s.widthPct : 40)));
+  return {
+    path: s.path.trim(),
+    durationMs,
+    freezeLastFrame: !!s.freezeLastFrame,
+    loop: !!s.loop,
+    muted: !!s.muted,
     xPct, yPct, widthPct,
   };
 }

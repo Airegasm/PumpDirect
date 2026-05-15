@@ -18,6 +18,8 @@ public/assets/triggers/lottie/*
 !public/assets/triggers/lottie/.gitkeep
 public/assets/triggers/sound/*
 !public/assets/triggers/sound/.gitkeep
+public/assets/triggers/video/*
+!public/assets/triggers/video/.gitkeep
 
 # OS
 .DS_Store

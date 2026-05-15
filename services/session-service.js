@@ -111,6 +111,20 @@ function updateProfile(id, patch) {
         : null,
     };
   }
+  if (patch.introButton !== undefined) {
+    // Same shape as customEndButton. When enabled with a valid target, the
+    // session starts with introPending=true — every pump-action endpoint is
+    // gated until the operator presses the intro button on Launchpad and the
+    // trigger finishes.
+    const ib = patch.introButton || {};
+    profile.introButton = {
+      enabled: !!ib.enabled,
+      text: typeof ib.text === 'string' ? ib.text.slice(0, 80) : '',
+      target: ib.target && typeof ib.target === 'object' && (ib.target.kind === 'action' || ib.target.kind === 'group') && ib.target.id
+        ? { kind: ib.target.kind, id: String(ib.target.id) }
+        : null,
+    };
+  }
   if (patch.settings) {
     if (typeof patch.settings.chatroomEnabled === 'boolean') profile.settings.chatroomEnabled = patch.settings.chatroomEnabled;
     if (typeof patch.settings.disableControlAt100 === 'boolean') profile.settings.disableControlAt100 = patch.settings.disableControlAt100;
@@ -152,6 +166,11 @@ const sessionState = {
   // Active text overlays keyed by anchor — populated by trigger sub-actions.
   // Each value: { text, fontColor, bgColor|null, fontSize }.
   textOverlays: {},
+  // When the active session profile has an intro button configured, this is
+  // set true on session start and cleared when the intro trigger completes.
+  // While true, every pump-action endpoint refuses to fire; the action grid
+  // renders disabled on both owner and visitor sides.
+  introPending: false,
 };
 
 function getState() { return { ...sessionState }; }
@@ -180,6 +199,7 @@ function startSession(profileId) {
   sessionState.currentMilestoneId = null;
   sessionState.currentDisplayMessage = profile.welcomeMessage || '';
   sessionState.textOverlays = {};
+  sessionState.introPending = !!(profile.introButton?.enabled && profile.introButton?.target?.id);
   sessionState.participants = (profile.allowedParticipants || []).map(p => ({
     canConnect: true, canControl: false, canBroadcast: false, ...p,
     muted: false, connected: false,
@@ -197,6 +217,7 @@ function stopSession() {
   sessionState.pumpOn = false;
   sessionState.currentActionTemplateId = null;
   sessionState.textOverlays = {};
+  sessionState.introPending = false;
   logger.info('session stopped');
   emitState(getState());
   return getState();

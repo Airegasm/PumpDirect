@@ -284,31 +284,36 @@ function renderVisitorPage(req) {
   }
 
   const isRunningV = !!state.currentActionTemplateId;
+  const introGatedV = !!state.introPending;
+  const lockBtnsV = isRunningV || introGatedV;
   const alwaysBtns = (state.active && canControl) ? `
-    <button class="action-btn pump-toggle" onclick="vPumpToggle()" style="background:${isRunningV ? '#a13030' : '#1a8a4d'};color:#fff">${isRunningV ? '⏻ Pump Off' : '⏵ Pump On'}</button>
-    <button class="action-btn misc-action-btn" onclick="vTimed()" style="background:#1a8a4d;color:#fff" ${isRunningV ? 'disabled' : ''}>⏱ Timed</button>
-    <button class="action-btn misc-action-btn" onclick="vCycle()" style="background:#1a8a4d;color:#fff" ${isRunningV ? 'disabled' : ''}>↻ Cycle</button>
+    <button class="action-btn pump-toggle" onclick="vPumpToggle()" style="background:${isRunningV ? '#a13030' : '#1a8a4d'};color:#fff" ${introGatedV ? 'disabled' : ''}>${isRunningV ? '⏻ Pump Off' : '⏵ Pump On'}</button>
+    <button class="action-btn misc-action-btn" onclick="vTimed()" style="background:#1a8a4d;color:#fff" ${lockBtnsV ? 'disabled' : ''}>⏱ Timed</button>
+    <button class="action-btn misc-action-btn" onclick="vCycle()" style="background:#1a8a4d;color:#fff" ${lockBtnsV ? 'disabled' : ''}>↻ Cycle</button>
   ` : '';
   const actionCellsV = visibleActionIds.map(id => {
     const a = actionsById[id];
     return `<div class="action-cell">
-      <button class="action-btn" data-action-id="${escapeHtml(id)}" onclick="vFire('${escapeHtml(id)}')">${escapeHtml(a?.name || '?')}</button>
+      <button class="action-btn" data-action-id="${escapeHtml(id)}" onclick="vFire('${escapeHtml(id)}')" ${introGatedV ? 'disabled' : ''}>${escapeHtml(a?.name || '?')}</button>
       <button class="action-help-btn" type="button" title="What does this do?" onclick="vActionHelp('${escapeHtml(id)}')">?</button>
     </div>`;
   }).join('');
   const minigameCellsV = visibleMinigameIds.map(id => {
     const mg = minigamesById[id]; if (!mg) return '';
     return `<div class="action-cell">
-      <button class="action-btn minigame-btn" data-minigame-id="${escapeHtml(id)}" onclick="vOpenMinigame('${escapeHtml(id)}')" style="background:${escapeHtml(mg.color)};color:#fff">🎲 ${escapeHtml(mg.name)}</button>
+      <button class="action-btn minigame-btn" data-minigame-id="${escapeHtml(id)}" onclick="vOpenMinigame('${escapeHtml(id)}')" style="background:${escapeHtml(mg.color)};color:#fff" ${introGatedV ? 'disabled' : ''}>🎲 ${escapeHtml(mg.name)}</button>
       <button class="action-help-btn" type="button" title="What does this do?" onclick="vMinigameHelp('${escapeHtml(id)}')">?</button>
     </div>`;
   }).join('');
   const hasAnyV = visibleActionIds.length || visibleMinigameIds.length;
+  const introNote = introGatedV
+    ? '<p class="muted" style="color:#f0c674;font-size:0.95rem;margin:0 0 8px">Host is presenting an intro — pump controls unlock when it finishes.</p>'
+    : '';
   const actionGrid = !state.active
     ? '<p class="muted" style="color:#7a8597">No active session.</p>'
     : !canControl
       ? '<p class="muted" style="color:#7a8597">You can watch + chat, but the owner has not enabled device control for you.</p>'
-      : `<div class="action-grid">${alwaysBtns}${hasAnyV
+      : introNote + `<div class="action-grid">${alwaysBtns}${hasAnyV
           ? actionCellsV + minigameCellsV
           : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No template actions or minigames at this capacity — Pump On / Timed / Cycle still work.</p>'}</div>`;
 
@@ -888,9 +893,14 @@ function renderVisitorPage(req) {
         if (text) { text.textContent = Math.round(cap) + '%'; text.setAttribute('fill', over ? '#f0c674' : 'currentColor'); }
         // template-action button lock (data-action-id only); pump-toggle and misc handled separately
         const running = s.currentActionTemplateId;
+        const introGated = !!s.introPending;
+        const lockAll = !!running || introGated;
         document.querySelectorAll('.action-btn[data-action-id]').forEach(btn => {
           const id = btn.dataset.actionId;
-          if (running) {
+          if (introGated) {
+            btn.disabled = true;
+            btn.classList.remove('running');
+          } else if (running) {
             btn.disabled = running !== id;
             if (running === id) btn.classList.add('running');
             else btn.classList.remove('running');
@@ -904,13 +914,20 @@ function renderVisitorPage(req) {
           toggle.textContent = running ? '⏻ Pump Off' : '⏵ Pump On';
           toggle.style.background = running ? '#a13030' : '#1a8a4d';
           toggle.style.color = '#fff';
+          toggle.disabled = introGated;
         }
-        document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running; });
-        document.querySelectorAll('.minigame-btn').forEach(b => { b.disabled = !!running; });
+        document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = lockAll; });
+        document.querySelectorAll('.minigame-btn').forEach(b => { b.disabled = lockAll; });
         // if session went idle (active→false) or vice versa, reload to re-render layout
         if (s.active !== window.__visitorActive) {
           if (window.__visitorActive !== undefined) location.reload();
           window.__visitorActive = s.active;
+        }
+        // Intro pending transition: server-rendered introNote + button disabled
+        // states need a re-render. Reload on flip.
+        if (s.introPending !== window.__visitorIntro) {
+          if (window.__visitorIntro !== undefined && s.active) { location.reload(); return; }
+          window.__visitorIntro = s.introPending;
         }
       }
       async function renderChat(m) {
@@ -1082,6 +1099,7 @@ router.post('/api/visitor/fire-action', async (req, res) => {
   if (!email) return res.status(401).json({ error: 'unauthenticated' });
   const state = session.getState();
   if (!state.active) return res.status(400).json({ error: 'no active session' });
+  if (state.introPending) return res.status(400).json({ error: 'intro in progress — action panel locked' });
   const participant = findParticipant(email);
   if (!participant || !participant.canControl) {
     return res.status(403).json({ error: 'you do not have device control permission for this session' });
@@ -1103,7 +1121,9 @@ router.post('/api/visitor/fire-action', async (req, res) => {
 function _visitorCtx(req, res) {
   const email = req.user?.email;
   if (!email) { res.status(401).json({ error: 'unauthenticated' }); return null; }
-  if (!session.getState().active) { res.status(400).json({ error: 'no active session' }); return null; }
+  const state = session.getState();
+  if (!state.active) { res.status(400).json({ error: 'no active session' }); return null; }
+  if (state.introPending) { res.status(400).json({ error: 'intro in progress — action panel locked' }); return null; }
   const participant = findParticipant(email);
   if (!participant || !participant.canControl) {
     res.status(403).json({ error: 'you do not have device control permission for this session' });

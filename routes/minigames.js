@@ -301,6 +301,7 @@ router.post('/api/minigame/dice-roll', async (req, res) => {
   try {
     const s = session.getState();
     if (!s.active) return res.status(400).json({ error: 'no active session' });
+    if (s.introPending) return res.status(400).json({ error: 'intro in progress — action panel locked' });
     const o = _ownerNick();
     await minigames.runDiceRoll({
       count: req.body?.count,
@@ -318,6 +319,7 @@ router.post('/api/minigame/prize-wheel', async (req, res) => {
   try {
     const s = session.getState();
     if (!s.active) return res.status(400).json({ error: 'no active session' });
+    if (s.introPending) return res.status(400).json({ error: 'intro in progress — action panel locked' });
     const o = _ownerNick();
     const result = minigames.requestPrizeWheel({
       // Either pin a wheel (used by future "test this wheel" flows on the

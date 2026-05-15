@@ -10,11 +10,13 @@ const router = express.Router();
 const ASSETS_ROOT = path.join(__dirname, '..', 'public', 'assets', 'triggers');
 const LOTTIE_DIR = path.join(ASSETS_ROOT, 'lottie');
 const SOUND_DIR  = path.join(ASSETS_ROOT, 'sound');
+const VIDEO_DIR  = path.join(ASSETS_ROOT, 'video');
 function _ensureAssetDirs() {
-  for (const d of [LOTTIE_DIR, SOUND_DIR]) if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  for (const d of [LOTTIE_DIR, SOUND_DIR, VIDEO_DIR]) if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
 function listLottieFiles() { _ensureAssetDirs(); return fs.readdirSync(LOTTIE_DIR).filter(f => f.endsWith('.json')).sort(); }
 function listSoundFiles()  { _ensureAssetDirs(); return fs.readdirSync(SOUND_DIR).filter(f => /\.(mp3|wav|ogg|m4a)$/i.test(f)).sort(); }
+function listVideoFiles()  { _ensureAssetDirs(); return fs.readdirSync(VIDEO_DIR).filter(f => /\.(webm|mp4)$/i.test(f)).sort(); }
 
 function _safeBasename(name) {
   // Strip path separators, allow only filename-safe chars. Empty → 'upload'.
@@ -37,6 +39,7 @@ router.get('/triggers', (req, res) => {
   const data = triggers.load();
   const lottieFiles = listLottieFiles();
   const soundFiles = listSoundFiles();
+  const videoFiles = listVideoFiles();
   const allDevices = (() => {
     try { return devicesSvc.loadAll(); } catch { return []; }
   })();
@@ -141,31 +144,42 @@ router.get('/triggers', (req, res) => {
       const DEVICES_OFF      = ${JSON.stringify(devicesForOff)};
       let LOTTIE_FILES       = ${JSON.stringify(lottieFiles)};
       let SOUND_FILES        = ${JSON.stringify(soundFiles)};
+      let VIDEO_FILES        = ${JSON.stringify(videoFiles)};
       // Pop a native file picker, upload the bytes to the matching trigger-
       // assets endpoint, refresh the in-memory file list, and select the new
       // filename on the row that requested it. Keeps the editor focused on
       // doing instead of file-system bookkeeping.
       function _uploadTriggerAsset(i, kind) {
-        const isLottie = kind === 'lottie';
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = isLottie ? '.json,application/json' : '.mp3,.wav,.ogg,.m4a,audio/*';
+        const accept = {
+          lottie: '.json,application/json',
+          sound:  '.mp3,.wav,.ogg,.m4a,audio/*',
+          video:  '.webm,.mp4,video/webm,video/mp4',
+        }[kind] || '*/*';
+        const endpoint = {
+          lottie: '/api/triggers/upload-lottie',
+          sound:  '/api/triggers/upload-sound',
+          video:  '/api/triggers/upload-video',
+        }[kind];
+        if (!endpoint) return;
+        input.accept = accept;
         input.onchange = async () => {
           const f = input.files && input.files[0];
           if (!f) return;
           let buf;
           try { buf = await f.arrayBuffer(); }
           catch (e) { flash('read failed: ' + e.message, 'bad'); return; }
-          const url = isLottie ? '/api/triggers/upload-lottie' : '/api/triggers/upload-sound';
-          const r = await fetch(url, {
+          const r = await fetch(endpoint, {
             method: 'POST',
             headers: { 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(f.name) },
             body: buf,
           });
           const d = await r.json().catch(() => ({}));
           if (!r.ok || d.error) { flash(d.error || 'upload failed', 'bad'); return; }
-          if (isLottie) LOTTIE_FILES = d.files || LOTTIE_FILES;
-          else          SOUND_FILES  = d.files || SOUND_FILES;
+          if (kind === 'lottie')      LOTTIE_FILES = d.files || LOTTIE_FILES;
+          else if (kind === 'sound')  SOUND_FILES  = d.files || SOUND_FILES;
+          else if (kind === 'video')  VIDEO_FILES  = d.files || VIDEO_FILES;
           __subDraft[i].path = d.filename;
           _renderSubActionRows();
           flash('uploaded ' + d.filename, 'ok');
@@ -329,6 +343,7 @@ router.get('/triggers', (req, res) => {
         const base = { kind };
         if (kind === 'text-overlay') { base.mode = 'add'; base.anchor = 'top-left'; base.text = 'Caption'; base.fontColor = '#ffffff'; base.bgColor = '#000000aa'; base.fontSize = 24; }
         else if (kind === 'lottie-overlay') { base.path = LOTTIE_FILES[0] || ''; base.durationMs = 2500; base.freezeLastFrame = false; base.xPct = 50; base.yPct = 50; base.widthPct = 40; }
+        else if (kind === 'video-overlay') { base.path = VIDEO_FILES[0] || ''; base.durationMs = 8000; base.freezeLastFrame = false; base.loop = false; base.muted = false; base.xPct = 50; base.yPct = 50; base.widthPct = 50; }
         else if (kind === 'play-sound') { base.path = SOUND_FILES[0] || ''; base.volume = 1; base.blocking = false; base.estDurationMs = 1500; }
         else if (kind === 'device-control') { base.mode = 'on'; base.deviceId = 'primary'; base.durationMs = 5000; base.cycleOnMs = 1000; base.cycleOffMs = 1000; base.cycleTimes = 5; }
         else if (kind === 'wait') { base.durationMs = 1000; }
@@ -401,6 +416,96 @@ router.get('/triggers', (req, res) => {
             __subDraft[idx].xPct = Math.round(xp * 10) / 10;
             __subDraft[idx].yPct = Math.round(yp * 10) / 10;
             _renderLottiePreview(idx);
+          }
+          prev.onmousedown = (e) => {
+            setFromXY(e.clientX, e.clientY);
+            const move = (ev) => setFromXY(ev.clientX, ev.clientY);
+            const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+            e.preventDefault();
+          };
+          prev.ontouchstart = (e) => {
+            const t = e.touches[0]; if (!t) return;
+            setFromXY(t.clientX, t.clientY);
+            const move = (ev) => { const tt = ev.touches[0]; if (tt) { setFromXY(tt.clientX, tt.clientY); ev.preventDefault(); } };
+            const up = () => { document.removeEventListener('touchmove', move); document.removeEventListener('touchend', up); };
+            document.addEventListener('touchmove', move, { passive: false });
+            document.addEventListener('touchend', up);
+          };
+        });
+      }
+
+      // ---- video-overlay editor: preview + drag-center + width slider ----
+      const VIDEO_PREVIEW_W = 320;
+      function _videoPreviewSlotHtml(s) {
+        const wPct = Math.max(5, Math.min(100, Number(s.widthPct != null ? s.widthPct : 50)));
+        const label = (s.path || 'video').replace(/\\.(webm|mp4)$/i, '');
+        return ''
+          + '<div class="vid-prev-slot" style="position:absolute;'
+          +   'left:' + (s.xPct != null ? s.xPct : 50) + '%;'
+          +   'top:'  + (s.yPct != null ? s.yPct : 50) + '%;'
+          +   'width:' + wPct + '%;aspect-ratio:16/9;transform:translate(-50%,-50%);'
+          +   'background:rgba(42,109,244,0.32);border:2px dashed #79a6ff;border-radius:6px;'
+          +   'pointer-events:none;display:flex;align-items:center;justify-content:center;'
+          +   'color:#fff;font-size:0.78rem;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.7);text-align:center;padding:0 6px">'
+          +   _safeAttr(label)
+          +   '<div style="position:absolute;left:50%;top:50%;width:10px;height:10px;background:#fff;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px rgba(0,0,0,0.5)"></div>'
+          + '</div>';
+      }
+      function _renderVideoPreview(i) {
+        const prev = document.getElementById('tov-vid-prev-' + i);
+        if (!prev) return;
+        prev.innerHTML = _videoPreviewSlotHtml(__subDraft[i]);
+      }
+      function _videoOverlayBody(s, i) {
+        const opts = VIDEO_FILES.map(f => '<option value="' + _safeAttr(f) + '"' + (s.path === f ? ' selected' : '') + '>' + _safeAttr(f) + '</option>').join('')
+                   || '<option value="">(no videos uploaded yet)</option>';
+        const wPct = s.widthPct != null ? s.widthPct : 50;
+        const dur = s.durationMs != null ? s.durationMs : 8000;
+        return ''
+          + '<div style="display:grid;grid-template-columns:1fr 340px;gap:14px;align-items:start">'
+          +   '<div>'
+          +     '<label style="display:block;margin-bottom:4px;font-size:0.85rem;color:var(--text-muted)">Video file (.webm with alpha recommended)</label>'
+          +     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+          +       '<select onchange="__subDraft[' + i + '].path=this.value;_renderSubActionRows()" style="min-width:220px">' + opts + '</select>'
+          +       '<button type="button" onclick="_uploadTriggerAsset(' + i + ',\\'video\\')">⬆ Upload .webm</button>'
+          +     '</div>'
+          +     '<div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">'
+          +       '<label>Duration <input type="number" min="100" step="100" value="' + dur + '" style="width:110px" oninput="__subDraft[' + i + '].durationMs=Number(this.value)"' + ((s.loop || s.freezeLastFrame) ? ' disabled' : '') + '> ms</label>'
+          +       '<label><input type="checkbox"' + (s.loop ? ' checked' : '') + ' onchange="__subDraft[' + i + '].loop=this.checked;if(this.checked){__subDraft[' + i + '].freezeLastFrame=false;}_renderSubActionRows()"> Loop</label>'
+          +       '<label><input type="checkbox"' + (s.freezeLastFrame ? ' checked' : '') + ' onchange="__subDraft[' + i + '].freezeLastFrame=this.checked;if(this.checked){__subDraft[' + i + '].loop=false;}_renderSubActionRows()"> Freeze last frame</label>'
+          +       '<label><input type="checkbox"' + (s.muted ? ' checked' : '') + ' onchange="__subDraft[' + i + '].muted=this.checked"> Muted</label>'
+          +     '</div>'
+          +     '<div style="margin-top:14px">'
+          +       '<label>Size: <strong id="tov-vw-val-' + i + '">' + wPct + '%</strong> of cam width</label>'
+          +       '<input type="range" min="5" max="100" step="1" value="' + wPct + '" style="width:100%;margin-top:4px" oninput="__subDraft[' + i + '].widthPct=Number(this.value); document.getElementById(\\'tov-vw-val-' + i + '\\').textContent = this.value + \\'%\\'; _renderVideoPreview(' + i + ')">'
+          +     '</div>'
+          +     '<p style="margin:8px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+          +       '<button type="button" onclick="__subDraft[' + i + '].xPct=50;__subDraft[' + i + '].yPct=50;_renderVideoPreview(' + i + ')" title="snap center back to middle">Center</button>'
+          +       '<span class="muted" style="font-size:0.85rem">Loop and Freeze are mutually exclusive — both let the chain proceed immediately.</span>'
+          +     '</p>'
+          +   '</div>'
+          +   '<div>'
+          +     '<div class="muted" style="font-size:0.85rem;margin-bottom:4px">Preview (cam-shaped, drag to position)</div>'
+          +     '<div id="tov-vid-prev-' + i + '" data-idx="' + i + '" class="video-prev-stage" '
+          +       'style="position:relative;width:' + VIDEO_PREVIEW_W + 'px;height:' + VIDEO_PREVIEW_W + 'px;'
+          +       'background:#000;border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:crosshair;user-select:none">'
+          +       _videoPreviewSlotHtml(s)
+          +     '</div>'
+          +   '</div>'
+          + '</div>';
+      }
+      function _attachVideoPreviewDrag() {
+        document.querySelectorAll('.video-prev-stage').forEach(prev => {
+          const idx = Number(prev.dataset.idx);
+          function setFromXY(clientX, clientY) {
+            const rect = prev.getBoundingClientRect();
+            const xp = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+            const yp = Math.max(0, Math.min(100, ((clientY - rect.top) / rect.height) * 100));
+            __subDraft[idx].xPct = Math.round(xp * 10) / 10;
+            __subDraft[idx].yPct = Math.round(yp * 10) / 10;
+            _renderVideoPreview(idx);
           }
           prev.onmousedown = (e) => {
             setFromXY(e.clientX, e.clientY);
@@ -515,6 +620,8 @@ router.get('/triggers', (req, res) => {
             body = _textOverlayBody(s, i);
           } else if (s.kind === 'lottie-overlay') {
             body = _lottieOverlayBody(s, i);
+          } else if (s.kind === 'video-overlay') {
+            body = _videoOverlayBody(s, i);
           } else if (s.kind === 'play-sound') {
             const opts = SOUND_FILES.map(f => '<option value="' + _safeAttr(f) + '"' + (s.path === f ? ' selected' : '') + '>' + _safeAttr(f) + '</option>').join('');
             body = '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
@@ -578,6 +685,7 @@ router.get('/triggers', (req, res) => {
         }).join('');
         _attachSubActionDrag();
         _attachLottiePreviewDrag();
+        _attachVideoPreviewDrag();
       }
       function _attachSubActionDrag() {
         const container = document.getElementById('m-sub-rows');
@@ -653,6 +761,11 @@ router.get('/triggers', (req, res) => {
           return 'text “' + trimmed + '” · ' + (s.anchor || '?');
         }
         if (s.kind === 'lottie-overlay') return 'lottie ' + (s.path || '?') + ' · ' + s.durationMs + 'ms' + (s.freezeLastFrame ? ' · frozen' : '');
+        if (s.kind === 'video-overlay') {
+          const flags = (s.loop ? ' · loop' : '') + (s.freezeLastFrame ? ' · frozen' : '') + (s.muted ? ' · muted' : '');
+          const dur = (s.loop || s.freezeLastFrame) ? '' : ' · ' + s.durationMs + 'ms';
+          return 'video ' + (s.path || '?') + dur + flags;
+        }
         if (s.kind === 'play-sound') return 'sound ' + (s.path || '?') + (s.blocking ? ' · hold ' + s.estDurationMs + 'ms' : '');
         if (s.kind === 'device-control') {
           if (s.mode === 'off') return 'device off · ' + (s.deviceId || '?');
@@ -794,6 +907,12 @@ function _summarizeSubAction(s) {
     return 'text "' + t + '" → ' + s.anchor;
   }
   if (s.kind === 'lottie-overlay') return 'lottie ' + s.path + ' (' + s.durationMs + 'ms' + (s.freezeLastFrame ? ', frozen' : '') + ')';
+  if (s.kind === 'video-overlay') {
+    const flags = [s.loop ? 'loop' : null, s.freezeLastFrame ? 'frozen' : null, s.muted ? 'muted' : null].filter(Boolean).join(', ');
+    const dur = (s.loop || s.freezeLastFrame) ? '' : s.durationMs + 'ms';
+    const parts = [dur, flags].filter(Boolean).join('; ');
+    return 'video ' + s.path + (parts ? ' (' + parts + ')' : '');
+  }
   if (s.kind === 'play-sound')     return 'sound ' + s.path + (s.blocking ? ' (hold ' + s.estDurationMs + 'ms)' : '');
   if (s.kind === 'device-control') {
     if (s.mode === 'off')      return 'device off (' + s.deviceId + ')';
@@ -837,6 +956,19 @@ router.post('/api/triggers/upload-sound', express.raw({ type: '*/*', limit: '25m
     const filename = _writeUnique(SOUND_DIR, sanitized);
     fs.writeFileSync(path.join(SOUND_DIR, filename), req.body);
     res.json({ ok: true, filename, files: listSoundFiles() });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/triggers/upload-video', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
+  try {
+    const raw = decodeURIComponent(String(req.headers['x-filename'] || 'upload.webm'));
+    const sanitized = _safeBasename(raw);
+    if (!/\.(webm|mp4)$/i.test(sanitized)) return res.status(400).json({ error: 'video must be .webm or .mp4' });
+    if (!req.body || !req.body.length) return res.status(400).json({ error: 'empty upload' });
+    _ensureAssetDirs();
+    const filename = _writeUnique(VIDEO_DIR, sanitized);
+    fs.writeFileSync(path.join(VIDEO_DIR, filename), req.body);
+    res.json({ ok: true, filename, files: listVideoFiles() });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 

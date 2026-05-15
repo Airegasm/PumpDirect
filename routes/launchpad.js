@@ -98,15 +98,17 @@ router.get('/', (req, res) => {
     : [];
   const minigamesById = Object.fromEntries(minigames.list().map(m => [m.id, m]));
   const isRunning = !!state.currentActionTemplateId;
+  const introGated = !!state.introPending;
+  const lockBtns = isRunning || introGated;
   const alwaysBtns = state.active ? `
-    <button class="action-btn pump-toggle" onclick="lpPumpToggle()" style="background:${isRunning ? '#a13030' : '#1a8a4d'};color:#fff">${isRunning ? '⏻ Pump Off' : '⏵ Pump On'}</button>
-    <button class="action-btn misc-action-btn" onclick="lpTimed()" style="background:#1a8a4d;color:#fff" ${isRunning ? 'disabled' : ''}>⏱ Timed</button>
-    <button class="action-btn misc-action-btn" onclick="lpCycle()" style="background:#1a8a4d;color:#fff" ${isRunning ? 'disabled' : ''}>↻ Cycle</button>
+    <button class="action-btn pump-toggle" onclick="lpPumpToggle()" style="background:${isRunning ? '#a13030' : '#1a8a4d'};color:#fff" ${introGated ? 'disabled' : ''}>${isRunning ? '⏻ Pump Off' : '⏵ Pump On'}</button>
+    <button class="action-btn misc-action-btn" onclick="lpTimed()" style="background:#1a8a4d;color:#fff" ${lockBtns ? 'disabled' : ''}>⏱ Timed</button>
+    <button class="action-btn misc-action-btn" onclick="lpCycle()" style="background:#1a8a4d;color:#fff" ${lockBtns ? 'disabled' : ''}>↻ Cycle</button>
   ` : '';
   const actionCells = visibleActionIds.map(id => {
     const a = actionsById[id];
     return `<div class="action-cell">
-      <button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')">${escape(a?.name || '?')}</button>
+      <button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')" ${introGated ? 'disabled' : ''}>${escape(a?.name || '?')}</button>
       <button class="action-help-btn" type="button" title="What does this do?" onclick="lpActionHelp('${escape(id)}')">?</button>
     </div>`;
   }).join('');
@@ -114,7 +116,7 @@ router.get('/', (req, res) => {
     const mg = minigamesById[id];
     if (!mg) return '';
     return `<div class="action-cell">
-      <button class="action-btn minigame-btn" data-minigame-id="${escape(id)}" onclick="lpOpenMinigame('${escape(id)}')" style="background:${escape(mg.color)};color:#fff">🎲 ${escape(mg.name)}</button>
+      <button class="action-btn minigame-btn" data-minigame-id="${escape(id)}" onclick="lpOpenMinigame('${escape(id)}')" style="background:${escape(mg.color)};color:#fff" ${introGated ? 'disabled' : ''}>🎲 ${escape(mg.name)}</button>
       <button class="action-help-btn" type="button" title="What does this do?" onclick="lpMinigameHelp('${escape(id)}')">?</button>
     </div>`;
   }).join('');
@@ -168,10 +170,16 @@ router.get('/', (req, res) => {
                <button onclick="lpTogglePause()" style="background:${state.paused ? '#2a6df4' : '#7a8597'};min-width:140px">${state.paused ? 'Exit Standby' : 'Enter Standby'}</button>`
             : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>`}
         </p>
+        ${state.active && state.introPending && profile.introButton?.enabled && profile.introButton?.target ? `
+          <p style="margin-top:8px">
+            <button onclick="lpIntro()" style="background:#2a8a6d;color:#fff;font-weight:700;min-width:180px">${escape(profile.introButton.text || 'Start Intro')}</button>
+          </p>` : ''}
         ${state.active && profile.customEndButton?.enabled && profile.customEndButton?.target ? `
           <p style="margin-top:8px">
             <button onclick="lpCustomEnd()" style="background:#7b3fd6;color:#fff;font-weight:700;min-width:180px">${escape(profile.customEndButton.text || 'Custom End')}</button>
           </p>` : ''}
+        ${state.active && state.introPending ? `
+          <p class="muted" style="margin-top:6px;font-size:0.82rem;text-align:center;line-height:1.3">Pump action panel locked until intro completes.</p>` : ''}
         ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin-top:6px">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
       </div>
       <div class="card milestone-pane">
@@ -454,16 +462,28 @@ router.get('/', (req, res) => {
           const triggerOptions = '<option value=""' + (!p.triggerTemplateId ? ' selected' : '') + '>(none)</option>'
             + (trigData.templates || []).map(t => '<option value="' + t.id + '"' + (t.id === p.triggerTemplateId ? ' selected' : '') + '>' + t.name + '</option>').join('');
           const ceb = p.customEndButton || { enabled: false, text: '', target: null };
-          const cebTargetOpts = '<optgroup label="Trigger Actions">'
-            + (taData.actions || []).map(a => '<option value="action:' + a.id + '"' + (ceb.target?.kind === 'action' && ceb.target?.id === a.id ? ' selected' : '') + '>🎯 ' + a.name + '</option>').join('')
+          const ib  = p.introButton    || { enabled: false, text: '', target: null };
+          const buildTargetOpts = (sel) => '<optgroup label="Trigger Actions">'
+            + (taData.actions || []).map(a => '<option value="action:' + a.id + '"' + (sel?.kind === 'action' && sel?.id === a.id ? ' selected' : '') + '>🎯 ' + a.name + '</option>').join('')
             + '</optgroup><optgroup label="Trigger Action Groups">'
-            + (tgData.groups || []).map(g => '<option value="group:' + g.id + '"' + (ceb.target?.kind === 'group' && ceb.target?.id === g.id ? ' selected' : '') + '>📦 ' + g.name + '</option>').join('')
+            + (tgData.groups || []).map(g => '<option value="group:' + g.id + '"' + (sel?.kind === 'group' && sel?.id === g.id ? ' selected' : '') + '>📦 ' + g.name + '</option>').join('')
             + '</optgroup>';
+          const cebTargetOpts = buildTargetOpts(ceb.target);
+          const ibTargetOpts  = buildTargetOpts(ib.target);
           modalOpen('Settings — ' + p.name, ''
             + '<p><label>Pump template <select id="m-tpl">' + tplOptions + '</select></label></p>'
             + '<p><label>Trigger template <select id="m-trig">' + triggerOptions + '</select></label></p>'
             + '<p><label><input type="checkbox" id="m-chat"' + (p.settings.chatroomEnabled ? ' checked' : '') + '> Enable chatroom</label></p>'
             + '<p><label><input type="checkbox" id="m-d100"' + (p.settings.disableControlAt100 ? ' checked' : '') + '> Disable device control at 100% capacity</label></p>'
+            + '<p style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+            +   '<label><input type="checkbox" id="m-ib-en"' + (ib.enabled ? ' checked' : '') + ' onchange="document.getElementById(\\'m-ib-rows\\').style.display = this.checked ? \\'block\\' : \\'none\\'"> Enable Session Intro Button</label>'
+            +   '<span class="muted" style="font-size:0.85rem">(Pump Action Control Panel is disabled on Session start and enabled as soon as the intro trigger completes.)</span>'
+            + '</p>'
+            + '<div id="m-ib-rows" style="display:' + (ib.enabled ? 'block' : 'none') + ';margin-left:22px;padding-left:10px;border-left:2px solid var(--border)">'
+            +   '<p><label>Button Text <input type="text" id="m-ib-text" value="' + (ib.text || '').replace(/"/g, '&quot;') + '" placeholder="e.g. Start Intro" style="width:100%"></label></p>'
+            +   '<p><label>Trigger or Group <select id="m-ib-target" style="min-width:280px">' + ibTargetOpts + '</select></label></p>'
+            +   '<p class="muted" style="font-size:0.85rem;margin:4px 0 0">Appears above the Custom End button on Launchpad. Fires the chosen trigger sequence; the action grid unlocks once it completes.</p>'
+            + '</div>'
             + '<p><label><input type="checkbox" id="m-ceb-en"' + (ceb.enabled ? ' checked' : '') + ' onchange="document.getElementById(\\'m-ceb-rows\\').style.display = this.checked ? \\'block\\' : \\'none\\'"> Enable Custom Session End Button</label></p>'
             + '<div id="m-ceb-rows" style="display:' + (ceb.enabled ? 'block' : 'none') + ';margin-left:22px;padding-left:10px;border-left:2px solid var(--border)">'
             +   '<p><label>Button Text <input type="text" id="m-ceb-text" value="' + (ceb.text || '').replace(/"/g, '&quot;') + '" placeholder="e.g. Burst &amp; Wrap" style="width:100%"></label></p>'
@@ -471,6 +491,13 @@ router.get('/', (req, res) => {
             +   '<p class="muted" style="font-size:0.85rem;margin:4px 0 0">Appears below the Stop / E-STOP / Standby cluster on Launchpad. Fires the chosen trigger sequence — include an <code>end-session</code> sub-action in it if you want it to also end the session.</p>'
             + '</div>',
             async () => {
+              const ibEnabled = document.getElementById('m-ib-en').checked;
+              let ibTarget = null;
+              if (ibEnabled) {
+                const t = document.getElementById('m-ib-target').value || '';
+                const [kind, id] = t.split(':');
+                if (id) ibTarget = { kind, id };
+              }
               const cebEnabled = document.getElementById('m-ceb-en').checked;
               let cebTarget = null;
               if (cebEnabled) {
@@ -484,6 +511,11 @@ router.get('/', (req, res) => {
                 settings: {
                   chatroomEnabled: document.getElementById('m-chat').checked,
                   disableControlAt100: document.getElementById('m-d100').checked,
+                },
+                introButton: {
+                  enabled: ibEnabled,
+                  text: document.getElementById('m-ib-text').value || '',
+                  target: ibTarget,
                 },
                 customEndButton: {
                   enabled: cebEnabled,
@@ -546,6 +578,12 @@ router.get('/', (req, res) => {
         const r = await fetch('/api/launchpad/session/custom-end', { method: 'POST' });
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+      }
+      async function lpIntro() {
+        const r = await fetch('/api/launchpad/session/intro', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('intro running…', 'ok');
       }
       async function lpFireAction(actionId) {
         const r = await fetch('/api/launchpad/session/fire-action', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ actionTemplateId: actionId }) });
@@ -716,6 +754,15 @@ router.get('/', (req, res) => {
           return;
         }
         window.__lpActive = nowActive;
+        // Intro-pending transition: the action grid + intro button are
+        // server-rendered with the gated/ungated shape baked in, so re-fetch
+        // when the gate flips.
+        const nowIntro = !!s.introPending;
+        if (window.__lpIntro !== undefined && window.__lpIntro !== nowIntro) {
+          setTimeout(() => location.reload(), 250);
+          return;
+        }
+        window.__lpIntro = nowIntro;
         applyStandby(s);
         maybeAutoToggleCam(s);
         renderMilestonePane(s);
@@ -1171,9 +1218,40 @@ router.post('/api/launchpad/session/custom-end', async (_req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+router.post('/api/launchpad/session/intro', async (_req, res) => {
+  try {
+    const s = session.getState();
+    if (!s.active) throw new Error('no active session');
+    if (!s.introPending) throw new Error('intro already completed or not configured');
+    const profile = session.getProfile(s.sessionProfileId);
+    const ib = profile.introButton;
+    if (!ib?.enabled || !ib.target?.id) throw new Error('intro button not configured');
+    const triggerRuntime = require('../services/trigger-runtime');
+    logger.info(`intro button: firing ${ib.target.kind}:${ib.target.id.slice(0,8)}…`);
+    // Fire-and-forget. When the target's chain settles, clear introPending so
+    // the action grid unlocks on the next state emit. If the target included
+    // an end-session sub-action the session is already inactive — guard the
+    // clear with active check so we don't resurrect introPending on an idle
+    // session.
+    res.json({ ok: true });
+    Promise.resolve(triggerRuntime.runActionTarget(ib.target, new AbortController().signal))
+      .catch(e => logger.error('intro target run failed: ' + (e?.message || e)))
+      .finally(() => {
+        const cur = session.getState();
+        if (cur.active && cur.introPending) {
+          session._setLive({ introPending: false });
+          require('../services/event-bus').emitState(session.getState());
+          logger.info('intro complete → action grid unlocked');
+        }
+      });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 router.post('/api/launchpad/session/pump-off', (_req, res) => {
   try {
-    if (!session.getState().active) throw new Error('no active session');
+    const s = session.getState();
+    if (!s.active) throw new Error('no active session');
+    if (s.introPending) throw new Error('intro in progress — action panel locked');
     const cfg = config.load();
     const ownerEmail = cfg.cloudflare?.ownerEmail || 'owner@local';
     const ownerName = cfg.owner?.displayName?.trim() || ownerEmail.split('@')[0] || 'owner';
@@ -1205,6 +1283,7 @@ function _ownerInfo() {
 
 router.post('/api/launchpad/session/fire-action', async (req, res) => {
   try {
+    if (session.getState().introPending) throw new Error('intro in progress — action panel locked');
     const { ownerEmail, ownerName } = _ownerInfo();
     await actionEngine.fireAction({
       actionTemplateId: req.body?.actionTemplateId,
@@ -1216,6 +1295,7 @@ router.post('/api/launchpad/session/fire-action', async (req, res) => {
 
 router.post('/api/launchpad/session/pump-on', async (_req, res) => {
   try {
+    if (session.getState().introPending) throw new Error('intro in progress — action panel locked');
     const { ownerEmail, ownerName } = _ownerInfo();
     await actionEngine.fireAction({
       inline: { name: 'Pump On', steps: [{ type: 'on', durationMs: 24 * 3600 * 1000, indefinite: true }] },
@@ -1227,6 +1307,7 @@ router.post('/api/launchpad/session/pump-on', async (_req, res) => {
 
 router.post('/api/launchpad/session/timed', async (req, res) => {
   try {
+    if (session.getState().introPending) throw new Error('intro in progress — action panel locked');
     const sec = parseFloat(req.body?.seconds);
     if (!Number.isFinite(sec) || sec <= 0) throw new Error('positive seconds required');
     const { ownerEmail, ownerName } = _ownerInfo();
@@ -1240,6 +1321,7 @@ router.post('/api/launchpad/session/timed', async (req, res) => {
 
 router.post('/api/launchpad/session/cycle', async (req, res) => {
   try {
+    if (session.getState().introPending) throw new Error('intro in progress — action panel locked');
     const onSec = parseFloat(req.body?.onSec);
     const offSec = parseFloat(req.body?.offSec);
     const times = parseInt(req.body?.times, 10);
