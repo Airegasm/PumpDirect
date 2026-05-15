@@ -215,7 +215,10 @@ router.get('/', (req, res) => {
 
     <div class="chat-row">
       <div class="card chat-pane">
-        <h3 style="margin:0 0 12px">Chat ${profile.settings.chatroomEnabled ? '' : '<span class="muted" style="font-size:0.9rem;font-weight:normal">(disabled for visitors in this profile)</span>'}</h3>
+        <h3 style="margin:0 0 12px;display:flex;align-items:center;gap:10px">
+          <span>Chat ${profile.settings.chatroomEnabled ? '' : '<span class="muted" style="font-size:0.9rem;font-weight:normal">(disabled for visitors in this profile)</span>'}</span>
+          <span id="chat-presence-line" class="muted" style="margin-left:auto;font-size:0.85rem;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px"></span>
+        </h3>
         <div id="chat-log" class="chat-log"></div>
         <div class="chat-input-row">
           <input id="chat-input" type="text" placeholder="say something…" onkeydown="if(event.key==='Enter') lpSendChat()">
@@ -1004,6 +1007,9 @@ router.get('/', (req, res) => {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
           } else if (m.type === 'overlay') {
             renderOverlay(m);
+          } else if (m.type === 'presence-msg') {
+            const el = document.getElementById('chat-presence-line');
+            if (el) el.textContent = m.text || '';
           } else {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
             // When a new peer connects, re-send our mute state so their tile renders correctly.
@@ -1130,18 +1136,8 @@ router.patch('/api/launchpad/profiles/:id/participants/:email', (req, res) => {
       try { session.updateParticipantFlags(email, req.body); } catch {}
       require('../services/event-bus').emitState(session.getState());
     }
-    // Narrate meaningful changes in chat so visitors see the role shift live.
-    const acct = (config.load().accounts || []).find(a => a.email === email);
-    const nick = acct?.nickname || email.split('@')[0];
-    if ('canControl' in req.body && !!req.body.canControl !== !!prev.canControl) {
-      chat.system(req.body.canControl ? `${nick} can now control actions` : `${nick} no longer controls actions`);
-    }
-    if ('canBroadcast' in req.body && !!req.body.canBroadcast !== !!prev.canBroadcast) {
-      chat.system(req.body.canBroadcast ? `${nick} can now broadcast their cam` : `${nick} can no longer broadcast their cam`);
-    }
-    if ('canConnect' in req.body && !!req.body.canConnect !== !!prev.canConnect) {
-      chat.system(req.body.canConnect ? `${nick} can now join` : `${nick} removed from the session`);
-    }
+    // Permission flips are visible via the participant-list flags on every
+    // client — no longer narrated in chat per host preference.
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -1157,9 +1153,6 @@ router.post('/api/launchpad/profiles/:id/sole-controller', (req, res) => {
     const next = profile.allowedParticipants.map(p => ({ ...p, canControl: p.email === target }));
     session.updateProfile(req.params.id, { allowedParticipants: next });
     syncLiveParticipantsFromProfile(req.params.id);
-    const acct = (config.load().accounts || []).find(a => a.email === target);
-    const nick = acct?.nickname || target.split('@')[0];
-    chat.system(`Controller is now ${nick}`);
     res.json({ ok: true, controller: target });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });

@@ -218,36 +218,42 @@ function overlayJs() {
       }
     }
     function _renderActionFlash(msg) {
-      // Small floating notice anchored at the top-center of the host cam tile;
-      // rises a short distance while fading out. Multiple stack — each new
-      // flash starts at the same position, older ones are already drifting up.
-      // Coordinates are captured from the cam tile so the notice tracks the
-      // tile's current size even if the layout reshuffles.
+      // Floating notice anchored at the top-center of the host cam tile;
+      // holds for a moment, then rises while fading. When flashes arrive in
+      // quick succession, each new one is offset downward into a vertical
+      // queue so they don't pile up on top of each other — as the older
+      // entries rise out of their slot the queue compacts naturally.
       const text = String(msg.text || '');
       if (!text) return;
       const stage = document.getElementById('action-flash-stage');
       if (!stage) return;
-      // Ensure the keyframes / stage style block is installed (once per page).
+      // Total visible-on-screen lifetime in ms; bumped from 2.4s so the
+      // post-animation result pills (dice / wheel) have time to read.
+      const LIFETIME_MS = 5500;
+      const STACK_GAP_PX = 32;       // vertical spacing between queued flashes
+      const STACK_WINDOW_MS = 1400;  // how long a slot is "occupied" for stacking purposes
       if (!document.getElementById('action-flash-style')) {
         const s = document.createElement('style');
         s.id = 'action-flash-style';
         s.textContent = ''
           + '@keyframes pd-action-flash-rise {'
           +   '0%   { transform: translate3d(-50%, 0px, 0); opacity: 0; }'
-          +   '12%  { transform: translate3d(-50%, 0px, 0); opacity: 1; }'
-          +   '100% { transform: translate3d(-50%, -64px, 0); opacity: 0; }'
+          +   '6%   { transform: translate3d(-50%, 0px, 0); opacity: 1; }'
+          +   '60%  { transform: translate3d(-50%, 0px, 0); opacity: 1; }'
+          +   '100% { transform: translate3d(-50%, -80px, 0); opacity: 0; }'
           + '}'
           + '.pd-action-flash {'
-          +   'position: absolute; left: 50%; top: 7%;'
+          +   'position: absolute; left: 50%;'
           +   'transform: translate3d(-50%, 0, 0);'
-          +   'background: rgba(0,0,0,0.55);'
-          +   'padding: 4px 14px; border-radius: 999px;'
+          +   'background: rgba(28,72,46,0.88);'
+          +   'border: 1px solid rgba(50,116,76,0.6);'
+          +   'padding: 5px 16px; border-radius: 999px;'
           +   'color: #fff; font-size: 0.92rem; font-weight: 600;'
           +   'text-shadow: 0 1px 2px rgba(0,0,0,0.85);'
           +   'white-space: nowrap; max-width: 96%;'
           +   'overflow: hidden; text-overflow: ellipsis;'
           +   'pointer-events: none; z-index: 5;'
-          +   'animation: pd-action-flash-rise 2.4s ease-out forwards;'
+          +   'animation: pd-action-flash-rise ' + LIFETIME_MS + 'ms ease-out forwards;'
           + '}'
           + '.pd-action-flash-anchor {'
           +   'position: absolute; pointer-events: none;'
@@ -273,6 +279,13 @@ function overlayJs() {
         left = (gridRect.width - width) / 2;
         top = 8;
       }
+      // Queue accounting: how many flashes are still in their start slot?
+      if (!window.__actionFlashes) window.__actionFlashes = [];
+      const now = Date.now();
+      window.__actionFlashes = window.__actionFlashes.filter(f => document.body.contains(f.el));
+      const stackIndex = window.__actionFlashes.filter(f => (now - f.startedAt) < STACK_WINDOW_MS).length;
+      const baseTopPct = 7;  // top: 7% of the cam tile
+      const yOffsetPx = stackIndex * STACK_GAP_PX;
       const anchor = document.createElement('div');
       anchor.className = 'pd-action-flash-anchor';
       anchor.style.left = left + 'px';
@@ -281,13 +294,14 @@ function overlayJs() {
       anchor.style.height = height + 'px';
       const flash = document.createElement('div');
       flash.className = 'pd-action-flash';
+      flash.style.top = 'calc(' + baseTopPct + '% + ' + yOffsetPx + 'px)';
       flash.textContent = text;
       anchor.appendChild(flash);
       stage.appendChild(anchor);
+      const entry = { el: anchor, startedAt: now };
+      window.__actionFlashes.push(entry);
       flash.addEventListener('animationend', () => { try { anchor.remove(); } catch {} });
-      // Belt-and-braces: also remove after a hair past the animation duration
-      // in case the animationend event is dropped (some Safari edge cases).
-      setTimeout(() => { try { anchor.remove(); } catch {} }, 3000);
+      setTimeout(() => { try { anchor.remove(); } catch {} }, LIFETIME_MS + 300);
     }
     function _renderVideoOverlay(msg) {
       // Mounts an HTMLVideoElement at the same trigger-fx-stage the lottie

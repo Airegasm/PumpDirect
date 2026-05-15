@@ -83,7 +83,10 @@ function runDiceRoll({ count, mode, byEmail, byNickname }) {
     durationMs: DICE_ANIMATION_MS,
     by: byName,
   });
-  emitOverlay({ kind: 'action-flash', text: `${byName} rolls the dice` });
+  // Fire the flash AFTER the dice animation settles so the result is shown
+  // alongside the landed values rather than before they're known on-screen.
+  const diceLabel = `${byName} rolled ${dice.join(', ')} → ${mode === 'cycle' ? `${total} × 1s on/off` : `${total}s continuous`}`;
+  setTimeout(() => { emitOverlay({ kind: 'action-flash', text: diceLabel }); }, DICE_ANIMATION_MS);
 
   logger.info(`dice roll: ${count}d6 [${dice.join(',')}] = ${total} (${mode}) by ${byNickname || byEmail || 'unknown'}`);
 
@@ -163,11 +166,13 @@ function requestPrizeWheel({ wheelId, wheelIds, allowedWheelIds, byEmail, byNick
     by,
     triggeredBy: byEmail,
   });
-  emitOverlay({ kind: 'action-flash', text: `${by} spins the wheel` });
+  // Fire the flash AFTER the full spin chain (incl. any re-rolls) settles
+  // so the result label is meaningful when the pill appears.
+  const animationLockMs = chain.length * PRIZE_WHEEL_ANIMATION_MS;
+  const wheelLabel = `${by} spun the wheel → ${finalSection.label}`;
+  setTimeout(() => { emitOverlay({ kind: 'action-flash', text: wheelLabel }); }, animationLockMs);
 
   logger.info(`prize wheel "${wheel.name}" by ${by} — ${chain.length} spin(s), result: ${finalSection.label} (${finalSection.type})`);
-
-  const animationLockMs = chain.length * PRIZE_WHEEL_ANIMATION_MS;
   const pumpSteps = (finalSection.type === 'action' && Array.isArray(finalSection.steps))
     ? finalSection.steps : [];
   const steps = [{ type: 'off', durationMs: animationLockMs }, ...pumpSteps];

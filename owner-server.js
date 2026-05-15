@@ -112,10 +112,12 @@ function start() {
     const onChat = (message) => send('chat', { message });
     const onChatKey = (key) => send('chat-key', { key });
     const onOverlay = (payload) => send('overlay', payload);
+    const onPresenceMsg = (payload) => send('presence-msg', payload);
     bus.on('state', onState);
     bus.on('chat', onChat);
     bus.on('chat-key', onChatKey);
     bus.on('overlay', onOverlay);
+    bus.on('presence-msg', onPresenceMsg);
 
     ws.on('message', (raw) => {
       let msg;
@@ -137,6 +139,7 @@ function start() {
       bus.off('chat', onChat);
       bus.off('chat-key', onChatKey);
       bus.off('overlay', onOverlay);
+      bus.off('presence-msg', onPresenceMsg);
       signaling.unregister(ownerEmail, ws);
       // Only clear presence once the last owner-tab WS closes, and even then
       // defer so a refresh doesn't flip the Host row offline-then-online.

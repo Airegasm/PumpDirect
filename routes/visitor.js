@@ -377,7 +377,10 @@ function renderVisitorPage(req) {
 
       <div class="chat-row">
         <div class="card chat-pane">
-          <h3 style="margin:0 0 10px;font-size:1.05rem">Chat${chatEnabled ? '' : ' <span class="muted" style="font-size:0.9rem;font-weight:normal">(disabled)</span>'}</h3>
+          <h3 style="margin:0 0 10px;font-size:1.05rem;display:flex;align-items:center;gap:8px">
+            <span>Chat${chatEnabled ? '' : ' <span class="muted" style="font-size:0.9rem;font-weight:normal">(disabled)</span>'}</span>
+            <span id="chat-presence-line" class="muted" style="margin-left:auto;font-size:0.82rem;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px"></span>
+          </h3>
           <div id="chat-log" class="chat-log"></div>
           ${chatEnabled ? `
             <div class="chat-input-row">
@@ -1060,6 +1063,9 @@ function renderVisitorPage(req) {
             alert('Your broadcast was stopped: ' + (m.reason || 'permission revoked'));
           } else if (m.type === 'overlay') {
             renderOverlay(m);
+          } else if (m.type === 'presence-msg') {
+            const el = document.getElementById('chat-presence-line');
+            if (el) el.textContent = m.text || '';
           } else {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
             if (m.type === 'peer-joined' && myBroadcastStream) setTimeout(broadcastTrackState, 800);
@@ -1170,11 +1176,7 @@ router.post('/api/visitor/pass-control', (req, res) => {
     try { session.updateParticipantFlags(email,       { canControl: false }); } catch {}
     try { session.updateParticipantFlags(targetEmail, { canControl: true, canBroadcast: false }); } catch {}
     require('../services/event-bus').emitState(session.getState());
-    const meAcct  = (config.load().accounts || []).find(a => a.email === email);
-    const tgtAcct = (config.load().accounts || []).find(a => a.email === targetEmail);
-    const meNick  = meAcct?.nickname  || email.split('@')[0];
-    const tgtNick = tgtAcct?.nickname || targetEmail.split('@')[0];
-    chat.system(`${meNick} passed control to ${tgtNick}`);
+    // No chat narration — the participant-list flags carry the role shift.
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });

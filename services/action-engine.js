@@ -127,7 +127,7 @@ function _maybeAdvanceMilestone() {
     // session; the milestone announcement is rendered as a separate line below
     // it (client derives it from the milestone definition by currentMilestoneId).
     session._setLive && session._setLive(live);
-    chat.system(`Milestone reached: ${top.name}`);
+    emitOverlay({ kind: 'action-flash', text: `Milestone: ${top.name}` });
     _publish();
   }
 }
@@ -308,6 +308,15 @@ function resetForNewSession(welcomeMessage) {
   chat.reset();
   chat.rotateKey();  // fresh AES key per session — old ciphertext stays undecryptable
   pumpOnSince = null;
+  // Safety blast: fan an `off` to every configured device on session start.
+  // Covers the case where a previous session crashed mid-cycle and left a
+  // plug latched on (or a manual flip somewhere). Fire-and-forget so we
+  // don't block start on device latency.
+  try {
+    const allDevs = devices.loadAll ? devices.loadAll() : [];
+    for (const d of allDevs) { control.turnOff(d).catch(() => {}); }
+    logger.info(`session start: cleared ${allDevs.length} device(s) to OFF`);
+  } catch (e) { logger.warn('session-start off-all failed: ' + e.message); }
   try { _triggers().resetForSession(); } catch (e) { logger.warn('trigger reset failed: ' + e.message); }
   startCapacityLoop();
   _publish();

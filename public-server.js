@@ -6,7 +6,7 @@ const rateLimit = require('express-rate-limit');
 const WebSocket = require('ws');
 const { createLogger } = require('./utils/logger');
 const config = require('./config');
-const { bus } = require('./services/event-bus');
+const { bus, emitPresenceMsg } = require('./services/event-bus');
 const session = require('./services/session-service');
 const chat = require('./services/chat-service');
 const signaling = require('./services/signaling-service');
@@ -160,7 +160,7 @@ function start() {
       clearTimeout(pending.timer);
       pendingLeave.delete(email);
     } else if (prevCount === 0) {
-      chat.system(`${nicknameFor(email)} joined`);
+      emitPresenceMsg({ text: `${nicknameFor(email)} joined`, ts: Date.now() });
     }
     if (prevCount === 0) {
       signaling.broadcast({ type: 'peer-joined', email, nickname: nicknameFor(email), isOwner: false }, email);
@@ -178,10 +178,12 @@ function start() {
     };
     const onChatKey = (key) => send('chat-key', { key });
     const onOverlay = (payload) => send('overlay', payload);
+    const onPresenceMsg = (payload) => send('presence-msg', payload);
     bus.on('state', onState);
     bus.on('chat', onChat);
     bus.on('chat-key', onChatKey);
     bus.on('overlay', onOverlay);
+    bus.on('presence-msg', onPresenceMsg);
 
     ws.on('message', (raw) => {
       let msg;
@@ -213,7 +215,7 @@ function start() {
     });
 
     ws.on('close', () => {
-      bus.off('state', onState); bus.off('chat', onChat); bus.off('chat-key', onChatKey); bus.off('overlay', onOverlay);
+      bus.off('state', onState); bus.off('chat', onChat); bus.off('chat-key', onChatKey); bus.off('overlay', onOverlay); bus.off('presence-msg', onPresenceMsg);
       signaling.unregister(email, ws);
       broadcasting.delete(email);
       const next = (visitorConns.get(email) || 1) - 1;
@@ -227,7 +229,7 @@ function start() {
         const timer = setTimeout(() => {
           pendingLeave.delete(email);
           signaling.clearPresence(email);
-          chat.system(`${nick} left`);
+          emitPresenceMsg({ text: `${nick} left`, ts: Date.now() });
         }, REJOIN_GRACE_MS);
         pendingLeave.set(email, { timer, nickname: nick });
       } else {
