@@ -207,6 +207,7 @@ router.get('/', (req, res) => {
         </div>
       </div>
       <div id="trigger-fx-stage"></div>
+      <div id="action-flash-stage"></div>
     </div>
     <div id="overlay-stage"></div>
     <div id="countdown-stage"></div>
@@ -1255,7 +1256,8 @@ router.post('/api/launchpad/session/pump-off', (_req, res) => {
     const cfg = config.load();
     const ownerEmail = cfg.cloudflare?.ownerEmail || 'owner@local';
     const ownerName = cfg.owner?.displayName?.trim() || ownerEmail.split('@')[0] || 'owner';
-    actionEngine.abort(`${ownerName} hit Pump Off`);
+    actionEngine.abort(null);
+    require('../services/event-bus').emitOverlay({ kind: 'action-flash', text: `${ownerName} stopped the pump` });
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });

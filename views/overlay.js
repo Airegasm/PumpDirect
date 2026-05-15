@@ -37,6 +37,7 @@ function overlayJs() {
       if (msg.kind === 'prize-wheel') return _renderPrizeWheel(msg);
       if (msg.kind === 'lottie-overlay') return _renderLottieOverlay(msg);
       if (msg.kind === 'video-overlay') return _renderVideoOverlay(msg);
+      if (msg.kind === 'action-flash') return _renderActionFlash(msg);
       if (msg.kind === 'play-sound') return _playSound(msg);
       if (msg.kind === 'session-ending') return _renderSessionEnding(msg);
     }
@@ -215,6 +216,78 @@ function overlayJs() {
       } else {
         slot.textContent = msg.path;
       }
+    }
+    function _renderActionFlash(msg) {
+      // Small floating notice anchored at the top-center of the host cam tile;
+      // rises a short distance while fading out. Multiple stack — each new
+      // flash starts at the same position, older ones are already drifting up.
+      // Coordinates are captured from the cam tile so the notice tracks the
+      // tile's current size even if the layout reshuffles.
+      const text = String(msg.text || '');
+      if (!text) return;
+      const stage = document.getElementById('action-flash-stage');
+      if (!stage) return;
+      // Ensure the keyframes / stage style block is installed (once per page).
+      if (!document.getElementById('action-flash-style')) {
+        const s = document.createElement('style');
+        s.id = 'action-flash-style';
+        s.textContent = ''
+          + '@keyframes pd-action-flash-rise {'
+          +   '0%   { transform: translate3d(-50%, 0px, 0); opacity: 0; }'
+          +   '12%  { transform: translate3d(-50%, 0px, 0); opacity: 1; }'
+          +   '100% { transform: translate3d(-50%, -64px, 0); opacity: 0; }'
+          + '}'
+          + '.pd-action-flash {'
+          +   'position: absolute; left: 50%; top: 7%;'
+          +   'transform: translate3d(-50%, 0, 0);'
+          +   'background: rgba(0,0,0,0.55);'
+          +   'padding: 4px 14px; border-radius: 999px;'
+          +   'color: #fff; font-size: 0.92rem; font-weight: 600;'
+          +   'text-shadow: 0 1px 2px rgba(0,0,0,0.85);'
+          +   'white-space: nowrap; max-width: 96%;'
+          +   'overflow: hidden; text-overflow: ellipsis;'
+          +   'pointer-events: none; z-index: 5;'
+          +   'animation: pd-action-flash-rise 2.4s ease-out forwards;'
+          + '}'
+          + '.pd-action-flash-anchor {'
+          +   'position: absolute; pointer-events: none;'
+          + '}';
+        document.head.appendChild(s);
+      }
+      // Anchor a wrapper to the cam tile bounds (same trick as lottie /
+      // video overlays), then drop the flash node inside it.
+      const targetFn = window.__textOverlayTarget;
+      const tile = typeof targetFn === 'function' ? targetFn() : null;
+      const ref = tile || document.getElementById('cam-owner-slot');
+      const grid = stage.parentElement;
+      if (!ref || !grid) return;
+      const refRect = ref.getBoundingClientRect();
+      const gridRect = grid.getBoundingClientRect();
+      let left = refRect.left - gridRect.left;
+      let top  = refRect.top - gridRect.top;
+      let width = refRect.width;
+      let height = refRect.height;
+      if (width <= 1 || height <= 1) {
+        width = Math.min(gridRect.width || 400, 480);
+        height = width;
+        left = (gridRect.width - width) / 2;
+        top = 8;
+      }
+      const anchor = document.createElement('div');
+      anchor.className = 'pd-action-flash-anchor';
+      anchor.style.left = left + 'px';
+      anchor.style.top = top + 'px';
+      anchor.style.width = width + 'px';
+      anchor.style.height = height + 'px';
+      const flash = document.createElement('div');
+      flash.className = 'pd-action-flash';
+      flash.textContent = text;
+      anchor.appendChild(flash);
+      stage.appendChild(anchor);
+      flash.addEventListener('animationend', () => { try { anchor.remove(); } catch {} });
+      // Belt-and-braces: also remove after a hair past the animation duration
+      // in case the animationend event is dropped (some Safari edge cases).
+      setTimeout(() => { try { anchor.remove(); } catch {} }, 3000);
     }
     function _renderVideoOverlay(msg) {
       // Mounts an HTMLVideoElement at the same trigger-fx-stage the lottie

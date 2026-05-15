@@ -369,6 +369,7 @@ function renderVisitorPage(req) {
         <div class="cam-slot" id="cam-controller-slot"></div>
         <div class="cam-slot" id="cam-owner-slot"></div>
         <div id="trigger-fx-stage"></div>
+        <div id="action-flash-stage"></div>
       </div>
       <div id="overlay-stage"></div>
       <div id="countdown-stage"></div>
@@ -1135,8 +1136,11 @@ function _visitorCtx(req, res) {
 
 router.post('/api/visitor/pump-off', (req, res) => {
   const ctx = _visitorCtx(req, res); if (!ctx) return;
-  try { actionEngine.abort(`${ctx.nickname} hit Pump Off`); res.json({ ok: true }); }
-  catch (e) { res.status(400).json({ error: e.message }); }
+  try {
+    actionEngine.abort(null);
+    require('../services/event-bus').emitOverlay({ kind: 'action-flash', text: `${ctx.nickname} stopped the pump` });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 router.post('/api/visitor/pass-control', (req, res) => {

@@ -4,7 +4,7 @@ const control = require('./device-control');
 const templates = require('./templates-service');
 const chat = require('./chat-service');
 const config = require('../config');
-const { emitState } = require('./event-bus');
+const { emitState, emitOverlay } = require('./event-bus');
 const { createLogger } = require('../utils/logger');
 // Lazy require to break a potential cycle (trigger-runtime requires this file too).
 let _triggerRuntime = null;
@@ -210,7 +210,7 @@ async function _runSteps(steps, primary, signal, repeatContext = null) {
   }
 }
 
-async function fireAction({ actionTemplateId, inline, byEmail, byNickname }) {
+async function fireAction({ actionTemplateId, inline, byEmail, byNickname, silentFlash }) {
   const s = session.getState();
   if (!s.active) throw new Error('no active session');
   if (s.emergencyStopped) throw new Error('E-STOP active — clear by stopping the session');
@@ -241,22 +241,18 @@ async function fireAction({ actionTemplateId, inline, byEmail, byNickname }) {
   if (action.mode === 'trigger' && action.triggerTarget) {
     abortController = new AbortController();
     _setRunning(action.id);
-    chat.system(`${byNickname || 'someone'} fired ${action.name}`);
+    if (!silentFlash) emitOverlay({ kind: 'action-flash', text: `${byNickname || 'someone'} fired ${action.name}` });
     _publish();
     (async () => {
-      let wasAborted = false;
       try {
         await _triggers().runActionTarget(action.triggerTarget, abortController.signal);
       } catch (e) {
         if (e?.name !== 'AbortError') logger.error('trigger-mode action run failed: ' + e.message);
-        else wasAborted = true;
       } finally {
-        wasAborted = wasAborted || !!(abortController && abortController.signal.aborted);
         abortController = null;
         _setRunning(null);
         _setStep(null);
         _setRepeat(null);
-        chat.system(wasAborted ? `${action.name} aborted` : `${action.name} finished`);
         _publish();
       }
     })();
@@ -268,27 +264,23 @@ async function fireAction({ actionTemplateId, inline, byEmail, byNickname }) {
 
   abortController = new AbortController();
   _setRunning(action.id);
-  chat.system(`${byNickname || 'someone'} fired ${action.name}`);
+  if (!silentFlash) emitOverlay({ kind: 'action-flash', text: `${byNickname || 'someone'} fired ${action.name}` });
   _publish();
 
   // Run the sequence asynchronously — caller does NOT await. Long-running
   // actions (Pump On, infinite repeats, etc.) shouldn't hold the HTTP request.
   (async () => {
-    let wasAborted = false;
     try {
       await _runSteps(action.steps, primary, abortController.signal);
     } catch (e) {
       if (e.name !== 'AbortError') logger.error('action run failed', e.message);
-      else wasAborted = true;
     } finally {
-      wasAborted = wasAborted || !!(abortController && abortController.signal.aborted);
       abortController = null;
       _setRunning(null);
       _setStep(null);
       _setRepeat(null);
       try { await control.turnOff(primary); } catch {}
       _setPump(false);
-      chat.system(wasAborted ? `${action.name} aborted` : `${action.name} finished`);
       _publish();
     }
   })();

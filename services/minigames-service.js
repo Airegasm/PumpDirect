@@ -76,12 +76,14 @@ function runDiceRoll({ count, mode, byEmail, byNickname }) {
   // the "off (3s)" countdown isn't visible underneath.
   const steps = [{ type: 'off', durationMs: DICE_ANIMATION_MS }, ...pumpSteps];
 
+  const byName = byNickname || (byEmail ? byEmail.split('@')[0] : 'someone');
   emitOverlay({
     kind: 'dice-roll',
     dice, mode, total, count,
     durationMs: DICE_ANIMATION_MS,
-    by: byNickname || (byEmail ? byEmail.split('@')[0] : 'someone'),
+    by: byName,
   });
+  emitOverlay({ kind: 'action-flash', text: `${byName} rolls the dice` });
 
   logger.info(`dice roll: ${count}d6 [${dice.join(',')}] = ${total} (${mode}) by ${byNickname || byEmail || 'unknown'}`);
 
@@ -90,7 +92,7 @@ function runDiceRoll({ count, mode, byEmail, byNickname }) {
       name: `🎲 ${count}d6 [${dice.join(',')}] = ${total} → ${modeLabel}`,
       steps,
     },
-    byEmail, byNickname,
+    byEmail, byNickname, silentFlash: true,
   });
 }
 
@@ -161,10 +163,8 @@ function requestPrizeWheel({ wheelId, wheelIds, allowedWheelIds, byEmail, byNick
     by,
     triggeredBy: byEmail,
   });
+  emitOverlay({ kind: 'action-flash', text: `${by} spins the wheel` });
 
-  if (chain.length > 1) {
-    chat.system(`${by} spun ${wheel.name} — ${chain.length} spins (${chain.length - 1} re-roll${chain.length - 1 === 1 ? '' : 's'}) → ${finalSection.label}`);
-  }
   logger.info(`prize wheel "${wheel.name}" by ${by} — ${chain.length} spin(s), result: ${finalSection.label} (${finalSection.type})`);
 
   const animationLockMs = chain.length * PRIZE_WHEEL_ANIMATION_MS;
@@ -174,7 +174,7 @@ function requestPrizeWheel({ wheelId, wheelIds, allowedWheelIds, byEmail, byNick
 
   return actionEngine.fireAction({
     inline: { name: `🎡 ${wheel.name} → ${finalSection.label}`, steps },
-    byEmail, byNickname,
+    byEmail, byNickname, silentFlash: true,
   });
 }
 
