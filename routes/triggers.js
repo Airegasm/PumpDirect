@@ -343,8 +343,23 @@ router.get('/triggers', (req, res) => {
         const base = { kind };
         if (kind === 'text-overlay') { base.mode = 'add'; base.anchor = 'top-left'; base.text = 'Caption'; base.fontColor = '#ffffff'; base.bgColor = '#000000aa'; base.fontSize = 24; }
         else if (kind === 'lottie-overlay') { base.path = LOTTIE_FILES[0] || ''; base.durationMs = 2500; base.freezeLastFrame = false; base.xPct = 50; base.yPct = 50; base.widthPct = 40; }
-        else if (kind === 'video-overlay') { base.path = VIDEO_FILES[0] || ''; base.durationMs = 8000; base.freezeLastFrame = false; base.loop = false; base.muted = false; base.xPct = 50; base.yPct = 50; base.widthPct = 50; }
+        else if (kind === 'video-overlay') {
+          base.mode = 'add';
+          base.path = VIDEO_FILES[0] || '';
+          base.durationMs = 8000;
+          base.freezeLastFrame = false;
+          base.loop = false;
+          base.muted = false;
+          base.circleCrop = false;
+          base.xPct = 50; base.yPct = 50; base.widthPct = 50;
+          base.endBehavior = 'default';
+          base.clearMode = 'vanish';
+          base.fadeMs = 1000;
+          base.introOutroStyle = 'corner-slide';
+          base.cornerSlide = { anchor: 'BR', slideIn: 'right', slideOut: 'right', inMs: 500, outMs: 500 };
+        }
         else if (kind === 'play-sound') { base.path = SOUND_FILES[0] || ''; base.volume = 1; base.blocking = false; base.estDurationMs = 1500; }
+        else if (kind === 'cam-toast')  { base.text = 'Heads up!'; base.textColor = '#ffffff'; base.bgColor = '#1c482e'; }
         else if (kind === 'device-control') { base.mode = 'on'; base.deviceId = 'primary'; base.durationMs = 5000; base.cycleOnMs = 1000; base.cycleOffMs = 1000; base.cycleTimes = 5; }
         else if (kind === 'wait') { base.durationMs = 1000; }
         else if (kind === 'end-session') { base.mode = 'instant'; base.delayMs = 5000; }
@@ -358,7 +373,7 @@ router.get('/triggers', (req, res) => {
           + '<div class="lot-prev-slot" style="position:absolute;'
           +   'left:' + (s.xPct != null ? s.xPct : 50) + '%;'
           +   'top:' + (s.yPct != null ? s.yPct : 50) + '%;'
-          +   'width:' + wPct + '%;aspect-ratio:1;transform:translate(-50%,-50%);'
+          +   'width:' + wPct + '%;aspect-ratio:var(--src-aspect, 1);transform:translate(-50%,-50%);'
           +   'background:rgba(123,63,214,0.32);border:2px dashed #b88dff;border-radius:6px;'
           +   'pointer-events:none;display:flex;align-items:center;justify-content:center;'
           +   'color:#fff;font-size:0.78rem;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.7)">'
@@ -370,6 +385,75 @@ router.get('/triggers', (req, res) => {
         const prev = document.getElementById('tov-lot-prev-' + i);
         if (!prev) return;
         prev.innerHTML = _lottiePreviewSlotHtml(__subDraft[i]);
+      }
+      // Fetch the Lottie JSON's natural w/h and apply that aspect ratio to the
+      // preview rectangle so it matches the source file's shape.
+      function _applyLottieAspect(i) {
+        const prev = document.getElementById('tov-lot-prev-' + i);
+        const p = __subDraft[i] && __subDraft[i].path;
+        if (!prev || !p) return;
+        fetch('/assets/triggers/lottie/' + encodeURIComponent(p))
+          .then(r => r.ok ? r.json() : null)
+          .then(d => {
+            if (!d || !(d.w > 0) || !(d.h > 0)) return;
+            const ar = d.w + '/' + d.h;
+            prev.style.aspectRatio = ar;
+            prev.style.setProperty('--src-aspect', ar);
+          })
+          .catch(() => {});
+      }
+      // 5 quick-anchor preset buttons (top-left, top-right, center, bottom-left, bottom-right).
+      // Coordinates are computed at click time from the current widthPct so the slot
+      // snaps to the cam-tile edge (not centered there, which would clip).
+      function _xyAnchorButtons(i, kind) {
+        const presets = [
+          { label: '↖ TL', pos: 'TL' },
+          { label: '↗ TR', pos: 'TR' },
+          { label: '· C',  pos: 'C'  },
+          { label: '↙ BL', pos: 'BL' },
+          { label: '↘ BR', pos: 'BR' },
+        ];
+        return presets.map(p =>
+          '<button type="button" onclick="_setXYAnchor(' + i + ',\\'' + p.pos + '\\',\\'' + kind + '\\')" '
+            + 'style="padding:6px 10px;font-size:0.85rem;border-radius:6px;border:1px solid var(--border);background:var(--bg-2);color:var(--text);cursor:pointer">'
+            + p.label + '</button>'
+        ).join('');
+      }
+      // Switch the end-behavior radio AND seed the nested config object
+      // for the picked branch so the validator has live values to read on
+      // save (instead of relying on the editor's display-only defaults).
+      function _setVideoEndBehavior(i, eb) {
+        if (!__subDraft[i]) return;
+        __subDraft[i].endBehavior = eb;
+        if (eb === 'clear') {
+          if (!__subDraft[i].clearMode) __subDraft[i].clearMode = 'vanish';
+          if (!__subDraft[i].fadeMs)    __subDraft[i].fadeMs    = 1000;
+        } else if (eb === 'intro-outro') {
+          if (!__subDraft[i].introOutroStyle) __subDraft[i].introOutroStyle = 'corner-slide';
+          if (!__subDraft[i].cornerSlide) {
+            __subDraft[i].cornerSlide = { anchor: 'BR', slideIn: 'right', slideOut: 'right', inMs: 500, outMs: 500 };
+          }
+        }
+        _renderSubActionRows();
+      }
+      function _setXYAnchor(i, position, kind) {
+        if (!__subDraft[i]) return;
+        const w = Math.max(5, Math.min(100, Number(__subDraft[i].widthPct) || 40));
+        const half = w / 2;
+        // Assumes the slot's aspect matches the preview rect's aspect (which
+        // the aspect-applier ensures), so heightPct ≈ widthPct in this frame.
+        const map = {
+          'TL': [half, half],
+          'TR': [100 - half, half],
+          'C':  [50, 50],
+          'BL': [half, 100 - half],
+          'BR': [100 - half, 100 - half],
+        };
+        const [x, y] = map[position] || [50, 50];
+        __subDraft[i].xPct = x;
+        __subDraft[i].yPct = y;
+        if (kind === 'video') _renderVideoPreview(i);
+        else _renderLottiePreview(i);
       }
       function _lottieOverlayBody(s, i) {
         const opts = LOTTIE_FILES.map(f => '<option value="' + _safeAttr(f) + '"' + (s.path === f ? ' selected' : '') + '>' + _safeAttr(f) + '</option>').join('')
@@ -391,15 +475,16 @@ router.get('/triggers', (req, res) => {
           +       '<label>Size: <strong id="tov-w-val-' + i + '">' + wPct + '%</strong> of cam width</label>'
           +       '<input type="range" min="5" max="100" step="1" value="' + wPct + '" style="width:100%;margin-top:4px" oninput="__subDraft[' + i + '].widthPct=Number(this.value); document.getElementById(\\'tov-w-val-' + i + '\\').textContent = this.value + \\'%\\'; _renderLottiePreview(' + i + ')">'
           +     '</div>'
-          +     '<p style="margin:8px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-          +       '<button type="button" onclick="__subDraft[' + i + '].xPct=50;__subDraft[' + i + '].yPct=50;_renderLottiePreview(' + i + ')" title="snap center back to middle">Center</button>'
-          +       '<span class="muted" style="font-size:0.85rem">Click/drag on the preview to move the Lottie within the host webcam.</span>'
+          +     '<p style="margin:8px 0 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+          +       '<span class="muted" style="font-size:0.85rem;margin-right:4px">Snap:</span>'
+          +       _xyAnchorButtons(i, 'lottie')
           +     '</p>'
+          +     '<p style="margin:6px 0 0"><span class="muted" style="font-size:0.85rem">Click/drag on the preview for precise positioning.</span></p>'
           +   '</div>'
           +   '<div>'
-          +     '<div class="muted" style="font-size:0.85rem;margin-bottom:4px">Preview (cam-shaped, drag to position)</div>'
+          +     '<div class="muted" style="font-size:0.85rem;margin-bottom:4px">Preview (source-shaped, drag to position)</div>'
           +     '<div id="tov-lot-prev-' + i + '" data-idx="' + i + '" class="lottie-prev-stage" '
-          +       'style="position:relative;width:' + LOTTIE_PREVIEW_W + 'px;height:' + LOTTIE_PREVIEW_W + 'px;'
+          +       'style="position:relative;width:' + LOTTIE_PREVIEW_W + 'px;aspect-ratio:1;'
           +       'background:#000;border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:crosshair;user-select:none">'
           +       _lottiePreviewSlotHtml(s)
           +     '</div>'
@@ -441,12 +526,15 @@ router.get('/triggers', (req, res) => {
       function _videoPreviewSlotHtml(s) {
         const wPct = Math.max(5, Math.min(100, Number(s.widthPct != null ? s.widthPct : 50)));
         const label = (s.path || 'video').replace(/\\.(webm|mp4)$/i, '');
+        // Slot uses the source aspect (set via CSS var on the outer prev),
+        // so its width = wPct% of outer.width and height matches the source.
+        const cropRadius = s.circleCrop ? '50%' : '6px';
         return ''
           + '<div class="vid-prev-slot" style="position:absolute;'
           +   'left:' + (s.xPct != null ? s.xPct : 50) + '%;'
           +   'top:'  + (s.yPct != null ? s.yPct : 50) + '%;'
-          +   'width:' + wPct + '%;aspect-ratio:16/9;transform:translate(-50%,-50%);'
-          +   'background:rgba(42,109,244,0.32);border:2px dashed #79a6ff;border-radius:6px;'
+          +   'width:' + wPct + '%;aspect-ratio:var(--src-aspect, 1);transform:translate(-50%,-50%);'
+          +   'background:rgba(42,109,244,0.32);border:2px dashed #79a6ff;border-radius:' + cropRadius + ';'
           +   'pointer-events:none;display:flex;align-items:center;justify-content:center;'
           +   'color:#fff;font-size:0.78rem;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.7);text-align:center;padding:0 6px">'
           +   _safeAttr(label)
@@ -458,38 +546,125 @@ router.get('/triggers', (req, res) => {
         if (!prev) return;
         prev.innerHTML = _videoPreviewSlotHtml(__subDraft[i]);
       }
+      // Partial re-render: only the cam-toast preview pill (keeps focus in the
+      // text input / color pickers above).
+      function _renderCamToastPreview(i) {
+        const wrap = document.getElementById('ct-prev-' + i);
+        const s = __subDraft[i];
+        if (!wrap || !s) return;
+        const tc = _safeAttr(s.textColor || '#ffffff');
+        const bc = _safeAttr(s.bgColor   || '#1c482e');
+        const txt = _safeAttr(s.text || '');
+        wrap.innerHTML = '<span style="background:' + bc + ';color:' + tc + ';padding:5px 16px;border-radius:999px;font-size:0.92rem;font-weight:600;text-shadow:0 1px 2px rgba(0,0,0,0.85)">' + (txt || '(empty)') + '</span>';
+      }
+      // Probe the selected video's natural width/height via a hidden <video>
+      // element and stamp the aspect onto the preview rectangle (and the
+      // slot via a CSS var) so the editor reflects the file's true shape.
+      function _applyVideoAspect(i) {
+        const prev = document.getElementById('tov-vid-prev-' + i);
+        const p = __subDraft[i] && __subDraft[i].path;
+        if (!prev || !p) return;
+        const probe = document.createElement('video');
+        probe.preload = 'metadata';
+        probe.muted = true;
+        probe.src = '/assets/triggers/video/' + encodeURIComponent(p);
+        probe.addEventListener('loadedmetadata', () => {
+          if (probe.videoWidth > 0 && probe.videoHeight > 0) {
+            const ar = probe.videoWidth + '/' + probe.videoHeight;
+            prev.style.aspectRatio = ar;
+            prev.style.setProperty('--src-aspect', ar);
+          }
+        });
+      }
       function _videoOverlayBody(s, i) {
+        const mode = s.mode === 'clear' ? 'clear' : 'add';
+        const modeRow =
+            '<label style="margin-right:14px"><input type="radio" name="m-vov-mode-' + i + '" value="add"' + (mode === 'add' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'add\\';_renderSubActionRows()"> ADD</label>'
+          + '<label><input type="radio" name="m-vov-mode-' + i + '" value="clear"' + (mode === 'clear' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'clear\\';_renderSubActionRows()"> CLEAR</label>';
+        if (mode === 'clear') {
+          return modeRow
+            + '<p class="muted" style="font-size:0.9rem;margin:10px 0 0">Wipes whatever video / lottie overlay is currently mounted on the host cam tile. No file or position needed.</p>';
+        }
         const opts = VIDEO_FILES.map(f => '<option value="' + _safeAttr(f) + '"' + (s.path === f ? ' selected' : '') + '>' + _safeAttr(f) + '</option>').join('')
                    || '<option value="">(no videos uploaded yet)</option>';
         const wPct = s.widthPct != null ? s.widthPct : 50;
         const dur = s.durationMs != null ? s.durationMs : 8000;
+        const endBehavior = (s.endBehavior === 'clear' || s.endBehavior === 'intro-outro') ? s.endBehavior : 'default';
+        const clearMode = s.clearMode === 'fade' ? 'fade' : 'vanish';
+        const fadeMs = s.fadeMs != null ? s.fadeMs : 1000;
+        const cs = s.cornerSlide || { anchor: 'BR', slideIn: 'right', slideOut: 'right', inMs: 500, outMs: 500 };
+
+        const dirOpts = (sel) => ['left','right','top','bottom']
+          .map(d => '<option value="' + d + '"' + (sel === d ? ' selected' : '') + '>' + d + '</option>').join('');
+        const anchorOpts = (sel) => ['TL','TR','BL','BR','C']
+          .map(a => '<option value="' + a + '"' + (sel === a ? ' selected' : '') + '>' + a + '</option>').join('');
+
+        const radioName = 'm-vov-end-' + i;
+        const endBehaviorRow = !s.loop ? ''
+          +   '<div style="margin-top:12px;padding-top:8px;border-top:1px dashed var(--border)">'
+          +     '<div class="muted" style="font-size:0.85rem;margin-bottom:6px">End behavior (when video finishes playing)</div>'
+          +     '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">'
+          +       '<label><input type="radio" name="' + radioName + '" value="default"' + (endBehavior === 'default' ? ' checked' : '') + ' onchange="_setVideoEndBehavior(' + i + ',\\'default\\')"> Default</label>'
+          +       '<label><input type="radio" name="' + radioName + '" value="clear"' + (endBehavior === 'clear' ? ' checked' : '') + ' onchange="_setVideoEndBehavior(' + i + ',\\'clear\\')"> Clear when complete</label>'
+          +       '<label><input type="radio" name="' + radioName + '" value="intro-outro"' + (endBehavior === 'intro-outro' ? ' checked' : '') + ' onchange="_setVideoEndBehavior(' + i + ',\\'intro-outro\\')"> Intro / Outro</label>'
+          +     '</div>'
+          +     (endBehavior === 'clear' ? ''
+            +   '<div style="margin-top:6px;margin-left:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">'
+            +     '<label><input type="radio" name="m-vov-clearmode-' + i + '" value="vanish"' + (clearMode === 'vanish' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].clearMode=\\'vanish\\';_renderSubActionRows()"> Vanish</label>'
+            +     '<label style="display:flex;gap:6px;align-items:center"><input type="radio" name="m-vov-clearmode-' + i + '" value="fade"' + (clearMode === 'fade' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].clearMode=\\'fade\\';_renderSubActionRows()"> Freeze and fade <input type="number" min="0.1" step="0.1" value="' + (fadeMs / 1000) + '" style="width:70px"' + (clearMode === 'fade' ? '' : ' disabled') + ' oninput="__subDraft[' + i + '].fadeMs=Math.max(100, Number(this.value) * 1000)"> sec</label>'
+            +   '</div>'
+            : '')
+          +     (endBehavior === 'intro-outro' ? ''
+            +   '<div style="margin-top:8px;margin-left:18px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-3)">'
+            +     '<div style="font-size:0.85rem;font-weight:600;margin-bottom:6px">Corner Slide</div>'
+            +     '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:center;font-size:0.9rem;max-width:480px">'
+            +       '<label>Target corner</label>'
+            +       '<select onchange="__subDraft[' + i + '].cornerSlide.anchor=this.value">' + anchorOpts(cs.anchor) + '</select>'
+            +       '<label>Slide in from</label>'
+            +       '<select onchange="__subDraft[' + i + '].cornerSlide.slideIn=this.value">' + dirOpts(cs.slideIn) + '</select>'
+            +       '<label>Slide out to</label>'
+            +       '<select onchange="__subDraft[' + i + '].cornerSlide.slideOut=this.value">' + dirOpts(cs.slideOut) + '</select>'
+            +       '<label>Slide in duration</label>'
+            +       '<span><input type="number" min="0.1" step="0.1" value="' + (cs.inMs / 1000) + '" style="width:80px" oninput="__subDraft[' + i + '].cornerSlide.inMs=Math.max(100, Number(this.value) * 1000)"> sec</span>'
+            +       '<label>Slide out duration</label>'
+            +       '<span><input type="number" min="0.1" step="0.1" value="' + (cs.outMs / 1000) + '" style="width:80px" oninput="__subDraft[' + i + '].cornerSlide.outMs=Math.max(100, Number(this.value) * 1000)"> sec</span>'
+            +     '</div>'
+            +     '<p class="muted" style="font-size:0.8rem;margin:6px 0 0">Video slides in from offscreen → plays once → slides off in the chosen exit direction.</p>'
+            +   '</div>'
+            : '')
+          +   '</div>'
+          : '';
         return ''
-          + '<div style="display:grid;grid-template-columns:1fr 340px;gap:14px;align-items:start">'
+          + modeRow
+          + '<div style="margin-top:10px;display:grid;grid-template-columns:1fr 340px;gap:14px;align-items:start">'
           +   '<div>'
-          +     '<label style="display:block;margin-bottom:4px;font-size:0.85rem;color:var(--text-muted)">Video file (.webm with alpha recommended)</label>'
+          +     '<label style="display:block;margin-bottom:4px;font-size:0.85rem;color:var(--text-muted)">Video file (.webm or .mp4 — use alpha-WebM if you need transparency)</label>'
           +     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
           +       '<select onchange="__subDraft[' + i + '].path=this.value;_renderSubActionRows()" style="min-width:220px">' + opts + '</select>'
-          +       '<button type="button" onclick="_uploadTriggerAsset(' + i + ',\\'video\\')">⬆ Upload .webm</button>'
+          +       '<button type="button" onclick="_uploadTriggerAsset(' + i + ',\\'video\\')">⬆ Upload video</button>'
           +     '</div>'
           +     '<div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">'
           +       '<label>Duration <input type="number" min="100" step="100" value="' + dur + '" style="width:110px" oninput="__subDraft[' + i + '].durationMs=Number(this.value)"' + ((s.loop || s.freezeLastFrame) ? ' disabled' : '') + '> ms</label>'
-          +       '<label><input type="checkbox"' + (s.loop ? ' checked' : '') + ' onchange="__subDraft[' + i + '].loop=this.checked;if(this.checked){__subDraft[' + i + '].freezeLastFrame=false;}_renderSubActionRows()"> Loop</label>'
-          +       '<label><input type="checkbox"' + (s.freezeLastFrame ? ' checked' : '') + ' onchange="__subDraft[' + i + '].freezeLastFrame=this.checked;if(this.checked){__subDraft[' + i + '].loop=false;}_renderSubActionRows()"> Freeze last frame</label>'
+          +       '<label><input type="checkbox"' + (s.loop ? ' checked' : '') + ' onchange="__subDraft[' + i + '].loop=this.checked;if(this.checked){__subDraft[' + i + '].freezeLastFrame=false;__subDraft[' + i + '].endBehavior=\\'default\\';}_renderSubActionRows()"> Loop</label>'
+          +       '<label><input type="checkbox"' + (s.freezeLastFrame ? ' checked' : '') + (endBehavior !== 'default' ? ' disabled' : '') + ' onchange="__subDraft[' + i + '].freezeLastFrame=this.checked;if(this.checked){__subDraft[' + i + '].loop=false;}_renderSubActionRows()"> Freeze last frame</label>'
           +       '<label><input type="checkbox"' + (s.muted ? ' checked' : '') + ' onchange="__subDraft[' + i + '].muted=this.checked"> Muted</label>'
+          +       '<label title="Clips the slot to a circle/ellipse. Looks best with a 1:1 source."><input type="checkbox"' + (s.circleCrop ? ' checked' : '') + ' onchange="__subDraft[' + i + '].circleCrop=this.checked;_renderVideoPreview(' + i + ')"> Circle crop</label>'
           +     '</div>'
           +     '<div style="margin-top:14px">'
           +       '<label>Size: <strong id="tov-vw-val-' + i + '">' + wPct + '%</strong> of cam width</label>'
           +       '<input type="range" min="5" max="100" step="1" value="' + wPct + '" style="width:100%;margin-top:4px" oninput="__subDraft[' + i + '].widthPct=Number(this.value); document.getElementById(\\'tov-vw-val-' + i + '\\').textContent = this.value + \\'%\\'; _renderVideoPreview(' + i + ')">'
           +     '</div>'
-          +     '<p style="margin:8px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
-          +       '<button type="button" onclick="__subDraft[' + i + '].xPct=50;__subDraft[' + i + '].yPct=50;_renderVideoPreview(' + i + ')" title="snap center back to middle">Center</button>'
-          +       '<span class="muted" style="font-size:0.85rem">Loop and Freeze are mutually exclusive — both let the chain proceed immediately.</span>'
+          +     '<p style="margin:8px 0 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+          +       '<span class="muted" style="font-size:0.85rem;margin-right:4px">Snap:</span>'
+          +       _xyAnchorButtons(i, 'video')
           +     '</p>'
+          +     '<p style="margin:6px 0 0"><span class="muted" style="font-size:0.85rem">Click/drag the preview for precise positioning. Loop and Freeze are mutually exclusive — End behavior overrides Freeze.</span></p>'
+          +     endBehaviorRow
           +   '</div>'
           +   '<div>'
-          +     '<div class="muted" style="font-size:0.85rem;margin-bottom:4px">Preview (cam-shaped, drag to position)</div>'
+          +     '<div class="muted" style="font-size:0.85rem;margin-bottom:4px">Preview (source-shaped, drag to position)</div>'
           +     '<div id="tov-vid-prev-' + i + '" data-idx="' + i + '" class="video-prev-stage" '
-          +       'style="position:relative;width:' + VIDEO_PREVIEW_W + 'px;height:' + VIDEO_PREVIEW_W + 'px;'
+          +       'style="position:relative;width:' + VIDEO_PREVIEW_W + 'px;aspect-ratio:1;'
           +       'background:#000;border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:crosshair;user-select:none">'
           +       _videoPreviewSlotHtml(s)
           +     '</div>'
@@ -630,6 +805,21 @@ router.get('/triggers', (req, res) => {
                  +   '<label>Vol <input type="number" min="0" max="1" step="0.05" value="' + s.volume + '" style="width:70px" oninput="__subDraft[' + i + '].volume=Number(this.value)"></label>'
                  +   '<label><input type="checkbox"' + (s.blocking ? ' checked' : '') + ' onchange="__subDraft[' + i + '].blocking=this.checked;_renderSubActionRows()"> hold for ' + (s.blocking ? '<input type="number" min="0" step="100" value="' + s.estDurationMs + '" style="width:80px" oninput="__subDraft[' + i + '].estDurationMs=Number(this.value)"> ms' : 'duration') + '</label>'
                  + '</div>';
+          } else if (s.kind === 'cam-toast') {
+            const tc = _safeAttr(s.textColor || '#ffffff');
+            const bc = _safeAttr(s.bgColor   || '#1c482e');
+            const txt = _safeAttr(s.text || '');
+            body = '<label style="display:block;margin-bottom:4px;font-size:0.85rem;color:var(--text-muted)">Notification text</label>'
+                 + '<input type="text" maxlength="200" style="width:100%" value="' + txt + '" oninput="__subDraft[' + i + '].text=this.value;_renderCamToastPreview(' + i + ')">'
+                 + '<div style="display:flex;gap:14px;align-items:center;margin-top:10px;flex-wrap:wrap">'
+                 +   '<label style="display:flex;gap:6px;align-items:center">Text color <input type="color" value="' + tc + '" style="width:36px;height:32px;border:1px solid var(--border);border-radius:6px;padding:0" oninput="__subDraft[' + i + '].textColor=this.value;_renderCamToastPreview(' + i + ')"></label>'
+                 +   '<label style="display:flex;gap:6px;align-items:center">Background <input type="color" value="' + bc + '" style="width:36px;height:32px;border:1px solid var(--border);border-radius:6px;padding:0" oninput="__subDraft[' + i + '].bgColor=this.value;_renderCamToastPreview(' + i + ')"></label>'
+                 +   '<span class="muted" style="font-size:0.85rem">Toast rises over the host cam tile, same animation as button-press flashes.</span>'
+                 + '</div>'
+                 + '<div style="margin-top:10px"><span class="muted" style="font-size:0.85rem">Preview:</span></div>'
+                 + '<div id="ct-prev-' + i + '" style="margin-top:4px;background:#000;padding:14px;border:1px solid var(--border);border-radius:6px;display:flex;justify-content:center">'
+                 +   '<span style="background:' + bc + ';color:' + tc + ';padding:5px 16px;border-radius:999px;font-size:0.92rem;font-weight:600;text-shadow:0 1px 2px rgba(0,0,0,0.85)">' + (txt || '(empty)') + '</span>'
+                 + '</div>';
           } else if (s.kind === 'device-control') {
             const modeRadios = '<label><input type="radio" name="m-dc-mode-' + i + '" value="on"' + (s.mode === 'on' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'on\\';_renderSubActionRows()"> On</label> '
                              + '<label><input type="radio" name="m-dc-mode-' + i + '" value="on-cycle"' + (s.mode === 'on-cycle' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'on-cycle\\';_renderSubActionRows()"> Cycle</label> '
@@ -686,6 +876,13 @@ router.get('/triggers', (req, res) => {
         _attachSubActionDrag();
         _attachLottiePreviewDrag();
         _attachVideoPreviewDrag();
+        // After the previews mount, fetch each source file's natural aspect
+        // and stamp it onto the corresponding preview rectangle.
+        __subDraft.forEach((s, idx) => {
+          if (!s || s._collapsed) return;
+          if (s.kind === 'video-overlay' && s.mode !== 'clear') _applyVideoAspect(idx);
+          else if (s.kind === 'lottie-overlay')                 _applyLottieAspect(idx);
+        });
       }
       function _attachSubActionDrag() {
         const container = document.getElementById('m-sub-rows');
@@ -762,11 +959,23 @@ router.get('/triggers', (req, res) => {
         }
         if (s.kind === 'lottie-overlay') return 'lottie ' + (s.path || '?') + ' · ' + s.durationMs + 'ms' + (s.freezeLastFrame ? ' · frozen' : '');
         if (s.kind === 'video-overlay') {
-          const flags = (s.loop ? ' · loop' : '') + (s.freezeLastFrame ? ' · frozen' : '') + (s.muted ? ' · muted' : '');
+          if (s.mode === 'clear') return 'clear video overlay';
+          const endBits = s.endBehavior === 'clear'
+            ? (s.clearMode === 'fade' ? ' · fade ' + (s.fadeMs / 1000) + 's' : ' · auto-clear')
+            : (s.endBehavior === 'intro-outro'
+                ? ' · slide(' + (s.cornerSlide?.anchor || '?') + ')'
+                : '');
+          const flags = (s.loop ? ' · loop' : '') + (s.freezeLastFrame ? ' · frozen' : '')
+            + (s.muted ? ' · muted' : '') + (s.circleCrop ? ' · circle' : '') + endBits;
           const dur = (s.loop || s.freezeLastFrame) ? '' : ' · ' + s.durationMs + 'ms';
           return 'video ' + (s.path || '?') + dur + flags;
         }
         if (s.kind === 'play-sound') return 'sound ' + (s.path || '?') + (s.blocking ? ' · hold ' + s.estDurationMs + 'ms' : '');
+        if (s.kind === 'cam-toast') {
+          const t = String(s.text || '');
+          const trimmed = t.length > 30 ? t.slice(0, 30) + '…' : t;
+          return 'toast "' + trimmed + '"';
+        }
         if (s.kind === 'device-control') {
           if (s.mode === 'off') return 'device off · ' + (s.deviceId || '?');
           if (s.mode === 'on') return 'device on · ' + (s.deviceId || '?') + (s.infinite ? ' · ∞' : ' · ' + s.durationMs + 'ms');
@@ -908,12 +1117,26 @@ function _summarizeSubAction(s) {
   }
   if (s.kind === 'lottie-overlay') return 'lottie ' + s.path + ' (' + s.durationMs + 'ms' + (s.freezeLastFrame ? ', frozen' : '') + ')';
   if (s.kind === 'video-overlay') {
-    const flags = [s.loop ? 'loop' : null, s.freezeLastFrame ? 'frozen' : null, s.muted ? 'muted' : null].filter(Boolean).join(', ');
+    if (s.mode === 'clear') return 'clear video overlay';
+    const endStr = s.endBehavior === 'clear'
+      ? (s.clearMode === 'fade' ? 'fade ' + (s.fadeMs / 1000) + 's' : 'auto-clear')
+      : (s.endBehavior === 'intro-outro' ? 'slide @ ' + (s.cornerSlide?.anchor || '?') : null);
+    const flags = [
+      s.loop ? 'loop' : null,
+      s.freezeLastFrame ? 'frozen' : null,
+      s.muted ? 'muted' : null,
+      s.circleCrop ? 'circle' : null,
+      endStr,
+    ].filter(Boolean).join(', ');
     const dur = (s.loop || s.freezeLastFrame) ? '' : s.durationMs + 'ms';
     const parts = [dur, flags].filter(Boolean).join('; ');
     return 'video ' + s.path + (parts ? ' (' + parts + ')' : '');
   }
   if (s.kind === 'play-sound')     return 'sound ' + s.path + (s.blocking ? ' (hold ' + s.estDurationMs + 'ms)' : '');
+  if (s.kind === 'cam-toast') {
+    const t = String(s.text || '');
+    return 'toast "' + (t.length > 40 ? t.slice(0, 40) + '…' : t) + '"';
+  }
   if (s.kind === 'device-control') {
     if (s.mode === 'off')      return 'device off (' + s.deviceId + ')';
     if (s.mode === 'on')       return 'device on ' + s.deviceId + (s.infinite ? ' (∞)' : (' ' + s.durationMs + 'ms'));

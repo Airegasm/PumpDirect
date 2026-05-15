@@ -295,6 +295,10 @@ function overlayJs() {
       const flash = document.createElement('div');
       flash.className = 'pd-action-flash';
       flash.style.top = 'calc(' + baseTopPct + '% + ' + yOffsetPx + 'px)';
+      // Optional per-flash colors (cam-toast sub-action). Skip if missing
+      // so the default dark-green pill styling in the stylesheet applies.
+      if (msg.bgColor   && /^#[0-9a-fA-F]{6}$/.test(String(msg.bgColor)))   flash.style.background = msg.bgColor;
+      if (msg.textColor && /^#[0-9a-fA-F]{6}$/.test(String(msg.textColor))) flash.style.color      = msg.textColor;
       flash.textContent = text;
       anchor.appendChild(flash);
       stage.appendChild(anchor);
@@ -309,9 +313,15 @@ function overlayJs() {
       // time so position/size survive a cam-tile teardown (e.g. a later
       // turn-off-host-cam in the same chain). Alpha-WebM composites
       // transparently in Chrome/Firefox/Edge; Safari falls back to opaque.
+      const stage0 = document.getElementById('trigger-fx-stage');
+      if (msg && msg.mode === 'clear') {
+        if (stage0) stage0.innerHTML = '';
+        clearTimeout(window.__triggerFxTimer);
+        return;
+      }
       const safe = String(msg.path || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
       if (!safe) return;
-      const stage = document.getElementById('trigger-fx-stage');
+      const stage = stage0;
       if (!stage) return;
 
       const targetFn = window.__textOverlayTarget;
@@ -339,9 +349,53 @@ function overlayJs() {
       const freeze = !!msg.freezeLastFrame;
       const muted = !!msg.muted;
 
+      // End-behavior data extracted up front (intro-outro uses its own
+      // anchor point + slide directions which override xPct/yPct).
+      const endBehavior = msg.endBehavior || (msg.clearOnComplete ? 'clear' : 'default');
+      const isIntroOutro = endBehavior === 'intro-outro' && msg.cornerSlide;
+      const circleCrop = !!msg.circleCrop;
+      const cropStyle = circleCrop ? 'border-radius:50%;overflow:hidden;' : '';
+
+      // For intro/outro Corner Slide, snap the slot to the chosen anchor
+      // (corners or center). Y-position depends on the slot's actual height-
+      // as-pct-of-cam, which is wPct * (camAspect / srcAspect) — only known
+      // after the video metadata loads. We mount with a srcAspect=1 fallback
+      // and correct the position on loadedmetadata before starting slide-in.
+      function _anchorPos(anchor, wp, stageW, stageH, srcAspect) {
+        const halfW = wp / 2;
+        const slotHpct = (wp * (stageW / stageH) / Math.max(srcAspect, 0.0001));
+        const halfH = Math.min(50, slotHpct / 2);
+        const map = {
+          'TL': [halfW, halfH], 'TR': [100 - halfW, halfH], 'C': [50, 50],
+          'BL': [halfW, 100 - halfH], 'BR': [100 - halfW, 100 - halfH],
+        };
+        return map[anchor] || [50, 50];
+      }
+      let mountX = xPct, mountY = yPct;
+      let initialSlideTx = '', exitSlideTx = '';
+      if (isIntroOutro) {
+        const cs = msg.cornerSlide;
+        const [fx, fy] = _anchorPos(cs.anchor, wPct, width, height, 1);
+        mountX = fx; mountY = fy;
+        // Sliding offset: enough to push the slot fully past the cam edge.
+        // Slot width = wPct% of stage width, so a translateX of ±(200%) of
+        // its own width consistently clears the cam tile in any direction.
+        const offTx = { 'left': 'translateX(-200%)', 'right': 'translateX(200%)',
+                        'top':  'translateY(-200%)', 'bottom': 'translateY(200%)' };
+        initialSlideTx = offTx[cs.slideIn]  || 'translateX(200%)';
+        exitSlideTx    = offTx[cs.slideOut] || 'translateX(200%)';
+      }
+
+      // For intro/outro we need the slot to START at its slide-in offset, so
+      // bake that into the initial transform string.
+      const baseTx = 'translate(-50%, -50%)';
+      const startTx = isIntroOutro ? (baseTx + ' ' + initialSlideTx) : baseTx;
+      // overflow:hidden clips the slot to the cam-tile bounds so intro/outro
+      // slides only become visible inside the frame — the video appears to
+      // come from nowhere instead of crossing the area outside the cam.
       stage.innerHTML = '<div class="lottie-trigger-stage" style="position:absolute;'
-        + 'left:' + left + 'px;top:' + top + 'px;width:' + width + 'px;height:' + height + 'px">'
-        + '<div class="video-trigger-slot" style="position:absolute;left:' + xPct + '%;top:' + yPct + '%;width:' + wPct + '%;transform:translate(-50%,-50%);pointer-events:none">'
+        + 'left:' + left + 'px;top:' + top + 'px;width:' + width + 'px;height:' + height + 'px;overflow:hidden">'
+        + '<div class="video-trigger-slot" style="position:absolute;left:' + mountX + '%;top:' + mountY + '%;width:' + wPct + '%;transform:' + startTx + ';pointer-events:none;' + cropStyle + '">'
         +   '<video src="/assets/triggers/video/' + safe + '" '
         +     'playsinline ' + (loop ? 'loop ' : '') + (muted ? 'muted ' : '')
         +     'style="width:100%;height:auto;display:block;background:transparent"></video>'
@@ -349,20 +403,68 @@ function overlayJs() {
 
       const video = stage.querySelector('video');
       if (!video) return;
+      const slot = stage.querySelector('.video-trigger-slot');
       // Autoplay-with-sound is browser-restricted. If play() rejects, retry
       // muted so the visual still happens — the operator can tick "Muted"
       // upstream to suppress this fallback warning.
       const tryPlay = () => video.play().catch(() => {
         try { video.muted = true; video.play().catch(() => {}); } catch {}
       });
-      if (freeze) {
+
+      if (isIntroOutro) {
+        const cs = msg.cornerSlide;
+        let slidIn = false;
+        const startSlideIn = () => {
+          if (slidIn || !slot) return;
+          slidIn = true;
+          // Correct the anchor position using the real source aspect once we
+          // have video metadata; falls back to the srcAspect=1 mount values
+          // if metadata never arrived.
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            const srcAspect = video.videoWidth / video.videoHeight;
+            const [cx, cy] = _anchorPos(cs.anchor, wPct, width, height, srcAspect);
+            slot.style.left = cx + '%';
+            slot.style.top  = cy + '%';
+          }
+          void slot.offsetWidth;
+          slot.style.transition = 'transform ' + cs.inMs + 'ms ease-out';
+          slot.style.transform = baseTx;
+        };
+        if (video.readyState >= 1) startSlideIn();
+        else video.addEventListener('loadedmetadata', startSlideIn, { once: true });
+        // Hard fallback in case metadata never resolves (rare).
+        setTimeout(startSlideIn, 1500);
+        // On ended: slide out over outMs, then clear.
+        video.addEventListener('ended', () => {
+          if (!slot) { try { stage.innerHTML = ''; } catch {} return; }
+          slot.style.transition = 'transform ' + cs.outMs + 'ms ease-in';
+          slot.style.transform = baseTx + ' ' + exitSlideTx;
+          setTimeout(() => { try { stage.innerHTML = ''; } catch {} }, cs.outMs + 100);
+        });
+      } else if (endBehavior === 'clear') {
+        const clearMode = msg.clearMode === 'fade' ? 'fade' : 'vanish';
+        const fadeMs = Math.max(0, Number(msg.fadeMs) || 0);
+        video.addEventListener('ended', () => {
+          if (clearMode === 'vanish') { try { stage.innerHTML = ''; } catch {} return; }
+          try { video.pause(); video.currentTime = Math.max(0, (video.duration || 0) - 0.01); } catch {}
+          if (slot) {
+            slot.style.transition = 'opacity ' + fadeMs + 'ms ease-out';
+            void slot.offsetWidth;
+            slot.style.opacity = '0';
+          }
+          setTimeout(() => { try { stage.innerHTML = ''; } catch {} }, fadeMs + 100);
+        });
+      } else if (freeze) {
+        // Default + Freeze last frame ticked: pause on the last frame.
         video.addEventListener('ended', () => { try { video.pause(); video.currentTime = Math.max(0, (video.duration || 0) - 0.01); } catch {} });
       }
       tryPlay();
 
       clearTimeout(window.__triggerFxTimer);
       const dur = Math.max(200, Number(msg.durationMs) || 5000);
-      if (!loop && !freeze) {
+      // Belt-and-braces fallback wipe: only when no explicit end-behavior is
+      // managing the cleanup (i.e. plain default, no loop, no freeze).
+      if (!loop && !freeze && endBehavior === 'default') {
         window.__triggerFxTimer = setTimeout(() => { stage.innerHTML = ''; }, dur);
       }
     }

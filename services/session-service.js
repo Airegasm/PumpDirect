@@ -19,6 +19,7 @@ const SEED = {
       name: 'Default',
       isFactory: true,
       welcomeMessage: 'Welcome to PumpDirect. The session has not started yet.',
+      aboutMe: '',
       templateProfileId: templates.FACTORY_PROFILE_ID,
       settings: {
         chatroomEnabled: true,
@@ -73,6 +74,7 @@ function createProfile({ name, templateProfileId }) {
     name,
     isFactory: false,
     welcomeMessage: '',
+    aboutMe: '',
     templateProfileId: templateProfileId || templates.FACTORY_PROFILE_ID,
     settings: { chatroomEnabled: true, disableControlAt100: false },
     allowedParticipants: [],
@@ -93,6 +95,7 @@ function updateProfile(id, patch) {
     profile.name = n;
   }
   if (patch.welcomeMessage != null) profile.welcomeMessage = String(patch.welcomeMessage);
+  if (patch.aboutMe != null) profile.aboutMe = String(patch.aboutMe).slice(0, 4000);
   if (patch.templateProfileId != null) profile.templateProfileId = patch.templateProfileId;
   if (patch.triggerTemplateId !== undefined) {
     // Allow null/'' to detach; otherwise persist the id.

@@ -229,21 +229,50 @@ async function _runSubAction(step, sig) {
       if (step.freezeLastFrame) return;
       return _sleep(step.durationMs, sig);
     case 'video-overlay':
+      if (step.mode === 'clear') {
+        emitOverlay({ kind: 'video-overlay', mode: 'clear' });
+        return;
+      }
       emitOverlay({
         kind: 'video-overlay',
+        mode: 'add',
         path: step.path, durationMs: step.durationMs,
         freezeLastFrame: !!step.freezeLastFrame,
         loop: !!step.loop,
         muted: !!step.muted,
         xPct: step.xPct, yPct: step.yPct, widthPct: step.widthPct,
+        circleCrop: !!step.circleCrop,
+        endBehavior: step.endBehavior || 'default',
+        clearMode: step.clearMode,
+        fadeMs: step.fadeMs,
+        introOutroStyle: step.introOutroStyle,
+        cornerSlide: step.cornerSlide,
       });
       // Loop or freeze-last-frame: don't block. Otherwise hold the chain for
-      // the configured duration (or until clearOverlay swaps it out).
+      // the configured duration plus any extra time the end-behavior animation
+      // needs (fade-out, slide-out).
       if (step.loop || step.freezeLastFrame) return;
-      return _sleep(step.durationMs, sig);
+      {
+        let extra = 0;
+        if (step.endBehavior === 'clear' && step.clearMode === 'fade') {
+          extra = Math.max(0, Number(step.fadeMs) || 0);
+        } else if (step.endBehavior === 'intro-outro' && step.cornerSlide) {
+          extra = Math.max(0, Number(step.cornerSlide.inMs) || 0)
+                + Math.max(0, Number(step.cornerSlide.outMs) || 0);
+        }
+        return _sleep(step.durationMs + extra, sig);
+      }
     case 'play-sound':
       emitOverlay({ kind: 'play-sound', path: step.path, volume: step.volume });
       if (step.blocking && step.estDurationMs > 0) return _sleep(step.estDurationMs, sig);
+      return;
+    case 'cam-toast':
+      emitOverlay({
+        kind: 'action-flash',
+        text: step.text,
+        textColor: step.textColor,
+        bgColor: step.bgColor,
+      });
       return;
     case 'device-control':
       return _runDeviceControl(step, sig);

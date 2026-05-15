@@ -41,11 +41,21 @@ const SUB_ACTION_KINDS = {
   'lottie-overlay':    { enabled: true,  validate: _validateLottieOverlay },
   'video-overlay':     { enabled: true,  validate: _validateVideoOverlay },
   'play-sound':        { enabled: true,  validate: _validatePlaySound },
+  'cam-toast':         { enabled: true,  validate: _validateCamToast },
   'device-control':    { enabled: true,  validate: _validateDeviceControl },
   'wait':              { enabled: true,  validate: _validateWait },
   'turn-off-host-cam': { enabled: true,  validate: () => ({}) },
   'end-session':       { enabled: true,  validate: _validateEndSession },
 };
+
+function _validateCamToast(s) {
+  if (typeof s.text !== 'string' || !s.text.trim()) throw new Error('cam-toast: text required');
+  const hex6 = /^#[0-9a-fA-F]{6}$/;
+  const out = { text: s.text.slice(0, 200) };
+  if (typeof s.textColor === 'string' && hex6.test(s.textColor)) out.textColor = s.textColor;
+  if (typeof s.bgColor   === 'string' && hex6.test(s.bgColor))   out.bgColor   = s.bgColor;
+  return out;
+}
 
 function _validateEndSession(s) {
   const mode = s.mode === 'delayed' ? 'delayed' : 'instant';
@@ -99,7 +109,14 @@ function _validateLottieOverlay(s) {
     xPct, yPct, widthPct,
   };
 }
+const CORNER_SLIDE_DIRS = ['left', 'right', 'top', 'bottom'];
+const CORNER_SLIDE_ANCHORS = ['TL', 'TR', 'BL', 'BR', 'C'];
+
 function _validateVideoOverlay(s) {
+  // mode='clear' wipes the trigger-fx-stage on every client. No other fields
+  // are required for clear — it's a one-shot wipe event.
+  const mode = s.mode === 'clear' ? 'clear' : 'add';
+  if (mode === 'clear') return { mode };
   if (typeof s.path !== 'string' || !s.path.trim()) throw new Error('video-overlay: path required');
   // durationMs is the hard cap when neither loop nor freezeLastFrame is set.
   // For loop / freeze cases the chain falls through immediately and the
@@ -109,14 +126,42 @@ function _validateVideoOverlay(s) {
   const xPct     = Math.max(0, Math.min(100, Number(s.xPct     != null ? s.xPct     : 50)));
   const yPct     = Math.max(0, Math.min(100, Number(s.yPct     != null ? s.yPct     : 50)));
   const widthPct = Math.max(5, Math.min(100, Number(s.widthPct != null ? s.widthPct : 40)));
-  return {
+  const out = {
+    mode: 'add',
     path: s.path.trim(),
     durationMs,
     freezeLastFrame: !!s.freezeLastFrame,
     loop: !!s.loop,
     muted: !!s.muted,
     xPct, yPct, widthPct,
+    circleCrop: !!s.circleCrop,
   };
+  // Migrate legacy clearOnComplete → endBehavior:'clear' for any old configs.
+  let endBehavior = s.endBehavior;
+  if (!endBehavior && s.clearOnComplete) endBehavior = 'clear';
+  if (endBehavior !== 'clear' && endBehavior !== 'intro-outro') endBehavior = 'default';
+  out.endBehavior = endBehavior;
+  if (endBehavior === 'clear') {
+    out.clearMode = s.clearMode === 'fade' ? 'fade' : 'vanish';
+    if (out.clearMode === 'fade') {
+      const fadeMs = Number(s.fadeMs);
+      if (!Number.isFinite(fadeMs) || fadeMs <= 0 || fadeMs > 60_000) throw new Error('video-overlay fade: fadeMs must be 1–60000');
+      out.fadeMs = fadeMs;
+    }
+  } else if (endBehavior === 'intro-outro') {
+    // Single style available today; the schema leaves room to add more later.
+    out.introOutroStyle = 'corner-slide';
+    const cs = s.cornerSlide || {};
+    const anchor = CORNER_SLIDE_ANCHORS.includes(cs.anchor) ? cs.anchor : 'BR';
+    const slideIn = CORNER_SLIDE_DIRS.includes(cs.slideIn) ? cs.slideIn : 'right';
+    const slideOut = CORNER_SLIDE_DIRS.includes(cs.slideOut) ? cs.slideOut : 'right';
+    const inMs = Number(cs.inMs);
+    const outMs = Number(cs.outMs);
+    if (!Number.isFinite(inMs) || inMs < 100 || inMs > 10_000) throw new Error('corner-slide: inMs must be 100–10000');
+    if (!Number.isFinite(outMs) || outMs < 100 || outMs > 10_000) throw new Error('corner-slide: outMs must be 100–10000');
+    out.cornerSlide = { anchor, slideIn, slideOut, inMs, outMs };
+  }
+  return out;
 }
 function _validatePlaySound(s) {
   if (typeof s.path !== 'string' || !s.path.trim()) throw new Error('play-sound: path required');

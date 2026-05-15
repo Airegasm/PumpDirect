@@ -171,7 +171,7 @@ router.get('/', (req, res) => {
             : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>`}
         </p>
         ${state.active && state.introPending && profile.introButton?.enabled && profile.introButton?.target ? `
-          <p style="margin-top:8px">
+          <p id="lp-intro-row" style="margin-top:8px">
             <button onclick="lpIntro()" style="background:#2a8a6d;color:#fff;font-weight:700;min-width:180px">${escape(profile.introButton.text || 'Start Intro')}</button>
           </p>` : ''}
         ${state.active && profile.customEndButton?.enabled && profile.customEndButton?.target ? `
@@ -179,7 +179,7 @@ router.get('/', (req, res) => {
             <button onclick="lpCustomEnd()" style="background:#7b3fd6;color:#fff;font-weight:700;min-width:180px">${escape(profile.customEndButton.text || 'Custom End')}</button>
           </p>` : ''}
         ${state.active && state.introPending ? `
-          <p class="muted" style="margin-top:6px;font-size:0.82rem;text-align:center;line-height:1.3">Pump action panel locked until intro completes.</p>` : ''}
+          <p id="lp-intro-lock-note" class="muted" style="margin-top:6px;font-size:0.82rem;text-align:center;line-height:1.3">Pump action panel locked until intro completes.</p>` : ''}
         ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin-top:6px">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
       </div>
       <div class="card milestone-pane">
@@ -493,6 +493,11 @@ router.get('/', (req, res) => {
             +   '<p><label>Button Text <input type="text" id="m-ceb-text" value="' + (ceb.text || '').replace(/"/g, '&quot;') + '" placeholder="e.g. Burst &amp; Wrap" style="width:100%"></label></p>'
             +   '<p><label>Trigger or Group <select id="m-ceb-target" style="min-width:280px">' + cebTargetOpts + '</select></label></p>'
             +   '<p class="muted" style="font-size:0.85rem;margin:4px 0 0">Appears below the Stop / E-STOP / Standby cluster on Launchpad. Fires the chosen trigger sequence — include an <code>end-session</code> sub-action in it if you want it to also end the session.</p>'
+            + '</div>'
+            + '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">'
+            +   '<label style="display:block;margin-bottom:4px;font-weight:600">About me / Rules</label>'
+            +   '<p class="muted" style="font-size:0.85rem;margin:0 0 6px">Shown on the mobile visitor screen below the chat input — use for your bio, session rules, safe-words, anything they should keep visible.</p>'
+            +   '<textarea id="m-aboutme" rows="6" style="width:100%;font-family:inherit;resize:vertical" placeholder="e.g. 18+ adults only. Yellow flag = ease up. Red flag = full stop. ...">' + (p.aboutMe || '').replace(/</g, '&lt;') + '</textarea>'
             + '</div>',
             async () => {
               const ibEnabled = document.getElementById('m-ib-en').checked;
@@ -526,6 +531,7 @@ router.get('/', (req, res) => {
                   text: document.getElementById('m-ceb-text').value || '',
                   target: cebTarget,
                 },
+                aboutMe: document.getElementById('m-aboutme').value || '',
               };
               const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
               const d2 = await r.json();
@@ -758,14 +764,14 @@ router.get('/', (req, res) => {
           return;
         }
         window.__lpActive = nowActive;
-        // Intro-pending transition: the action grid + intro button are
-        // server-rendered with the gated/ungated shape baked in, so re-fetch
-        // when the gate flips.
+        // Intro-pending: when the gate clears, just hide the intro button +
+        // lock notice in place rather than reloading (a reload would tear
+        // down the WebRTC mesh and kill the host cam stream mid-session).
         const nowIntro = !!s.introPending;
-        if (window.__lpIntro !== undefined && window.__lpIntro !== nowIntro) {
-          setTimeout(() => location.reload(), 250);
-          return;
-        }
+        const introRow  = document.getElementById('lp-intro-row');
+        const introNote = document.getElementById('lp-intro-lock-note');
+        if (introRow)  introRow.style.display  = nowIntro ? '' : 'none';
+        if (introNote) introNote.style.display = nowIntro ? '' : 'none';
         window.__lpIntro = nowIntro;
         applyStandby(s);
         maybeAutoToggleCam(s);
@@ -789,11 +795,17 @@ router.get('/', (req, res) => {
         if (texts[0]) { texts[0].textContent = Math.round(cap) + '%'; texts[0].setAttribute('fill', over ? '#f0c674' : '#e8e8e8'); }
         if (texts[1]) texts[1].textContent = over ? 'over capacity' : 'capacity';
         // Template action buttons lock during run; the always-on (pump toggle / timed / cycle)
-        // buttons get their own treatment below.
+        // buttons get their own treatment below. Intro-gate overrides both.
         const running = s.currentActionTemplateId;
+        const introGate = !!s.introPending;
         document.querySelectorAll('.action-btn[data-action-id]').forEach(btn => {
           const id = btn.dataset.actionId;
-          if (running) {
+          if (introGate) {
+            btn.disabled = true;
+            btn.style.background = '';
+            btn.style.color = '';
+            btn.innerHTML = btn.innerHTML.replace(/ ●$/, '');
+          } else if (running) {
             btn.disabled = running !== id;
             if (running === id) { btn.style.background = '#6ddc9b'; btn.style.color = '#0f1115'; btn.innerHTML = btn.innerHTML.replace(/ ●$/, '') + ' ●'; }
           } else {
@@ -808,9 +820,10 @@ router.get('/', (req, res) => {
           toggle.textContent = running ? '⏻ Pump Off' : '⏵ Pump On';
           toggle.style.background = running ? '#a13030' : '#1a8a4d';
           toggle.style.color = '#fff';
+          toggle.disabled = introGate;
         }
-        document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running; });
-        document.querySelectorAll('.minigame-btn').forEach(b => { b.disabled = !!running; });
+        document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running || introGate; });
+        document.querySelectorAll('.minigame-btn').forEach(b => { b.disabled = !!running || introGate; });
         // Presence: paint the dot + italicize AFK names in the participant list.
         const presenceByEmail = Object.fromEntries((s.participants || []).map(p => [p.email, p.presence || null]));
         document.querySelectorAll('.participants-pane .p-item[data-email]').forEach(item => {

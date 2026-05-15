@@ -174,6 +174,9 @@ function renderVisitorPage(req) {
     .chat-pane .chat-input-row { margin-top: 10px; display: flex; gap: 8px; }
     .chat-pane .chat-input-row input { flex:1; min-height:48px; padding:12px 14px; background:var(--bg-3); color:var(--text); border:1px solid var(--border); border-radius:10px; font-size:1rem; font-family:inherit; }
     .chat-pane .chat-input-row button { min-height:48px; padding:0 22px; background:var(--accent); color:#fff; border:0; border-radius:10px; font-size:1rem; cursor:pointer; }
+    .about-me-card { margin-top: 12px; padding: 12px 14px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 10px; }
+    .about-me-title { margin: 0 0 6px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); font-weight: 700; }
+    .about-me-body { font-size: 0.95rem; line-height: 1.45; color: var(--text); white-space: pre-wrap; word-wrap: break-word; }
     .participants-pane .p-list { display: flex; flex-direction: column; gap: 4px; height: 340px; max-height: 50vh; overflow-y: auto; }
     .participants-pane .p-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; font-size: 0.95rem; }
     .participants-pane .p-section-title { font-size: 0.78rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; margin: 10px 0 4px; font-weight: 700; }
@@ -306,9 +309,7 @@ function renderVisitorPage(req) {
     </div>`;
   }).join('');
   const hasAnyV = visibleActionIds.length || visibleMinigameIds.length;
-  const introNote = introGatedV
-    ? '<p class="muted" style="color:#f0c674;font-size:0.95rem;margin:0 0 8px">Host is presenting an intro — pump controls unlock when it finishes.</p>'
-    : '';
+  const introNote = '<p id="v-intro-lock-note" class="muted" style="color:#f0c674;font-size:0.95rem;margin:0 0 8px;display:' + (introGatedV ? 'block' : 'none') + '">Host is presenting an intro — pump controls unlock when it finishes.</p>';
   const actionGrid = !state.active
     ? '<p class="muted" style="color:#7a8597">No active session.</p>'
     : !canControl
@@ -386,6 +387,11 @@ function renderVisitorPage(req) {
             <div class="chat-input-row">
               <input id="chat-input" type="text" placeholder="say something…" autocomplete="off" enterkeyhint="send" onkeydown="if(event.key==='Enter') vSend()">
               <button onclick="vSend()">Send</button>
+            </div>` : ''}
+          ${profile?.aboutMe ? `
+            <div class="about-me-card" id="about-me-card">
+              <h4 class="about-me-title">About me / Rules</h4>
+              <div class="about-me-body">${escapeHtml(profile.aboutMe).replace(/\n/g, '<br>')}</div>
             </div>` : ''}
         </div>
         <div class="card participants-pane">
@@ -927,12 +933,12 @@ function renderVisitorPage(req) {
           if (window.__visitorActive !== undefined) location.reload();
           window.__visitorActive = s.active;
         }
-        // Intro pending transition: server-rendered introNote + button disabled
-        // states need a re-render. Reload on flip.
-        if (s.introPending !== window.__visitorIntro) {
-          if (window.__visitorIntro !== undefined && s.active) { location.reload(); return; }
-          window.__visitorIntro = s.introPending;
-        }
+        // Intro pending: toggle the lock notice in place. No reload — a reload
+        // would tear down the WebRTC mesh and visitors would lose their host
+        // cam stream every time an intro ends.
+        const introNoteEl = document.getElementById('v-intro-lock-note');
+        if (introNoteEl) introNoteEl.style.display = s.introPending ? 'block' : 'none';
+        window.__visitorIntro = s.introPending;
       }
       async function renderChat(m) {
         const log = document.getElementById('chat-log');
