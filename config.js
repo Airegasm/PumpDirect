@@ -26,6 +26,7 @@ const DEFAULTS = {
   accounts: [],
   owner: {
     displayName: '',
+    tosAcceptedVersion: 0,                             // bumps on TOS revision force re-accept
     camera: {
       mode: 'off',                                     // 'off' | 'live' | 'snapshot'
       crop: { xPct: 25, yPct: 12.5, sizePct: 50 },     // 1:1 square crop of source video, % of width/height

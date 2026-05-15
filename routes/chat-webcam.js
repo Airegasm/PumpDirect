@@ -20,9 +20,9 @@ router.get('/chat-webcam', (_req, res) => {
     <div class="card">
       <h3>Owner display name</h3>
       <p>
-        <input id="cw-name" type="text" value="${escape(owner.displayName || '')}" placeholder="e.g. Airegasm" style="width:60%">
+        <input id="cw-name" type="text" value="${escape(owner.displayName || '')}" placeholder="e.g. Airegasm" style="width:60%" onblur="cwSaveName(true)" onkeydown="if(event.key==='Enter') cwSaveName(true)">
         <button onclick="cwSaveName()">Save</button>
-        <span class="muted" style="font-size:0.95rem">Shown in chat as your nickname and in the browser tab title.</span>
+        <span class="muted" style="font-size:0.95rem">Saves automatically when you click out or hit Enter — Save button is optional. Shown in chat and in the browser tab title.</span>
       </p>
     </div>
 
@@ -136,11 +136,14 @@ router.get('/chat-webcam', (_req, res) => {
         const v = document.getElementById('cw-video');
         v.srcObject = null;
       }
-      async function cwSaveName() {
+      let __lastSavedName = ${JSON.stringify(owner.displayName || '')};
+      async function cwSaveName(silentIfUnchanged) {
         const displayName = document.getElementById('cw-name').value.trim();
+        if (silentIfUnchanged && displayName === __lastSavedName) return;
         const r = await fetch('/api/launchpad/owner', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ displayName }) });
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        __lastSavedName = displayName;
         document.title = 'PumpDirect — ' + (displayName || 'owner');
         flash('saved', 'ok');
       }

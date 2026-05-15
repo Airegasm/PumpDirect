@@ -213,25 +213,27 @@ function deleteProfile(id) {
 // --- milestones (nested inside a profile) ---
 
 function _ensureMilestoneOK(profile, m) {
+  if (m.is100Plus) return { min: 100, max: 999, is100Plus: true };
   const min = Number(m.capacityMin), max = Number(m.capacityMax);
-  if (!Number.isFinite(min) || min < 0 || min > 100) throw new Error('capacityMin must be 0–100');
-  if (!Number.isFinite(max) || max <= min || max > 100) throw new Error('capacityMax must be > capacityMin and ≤ 100');
-  return { min, max };
+  if (!Number.isFinite(min) || min < 0 || min > 99) throw new Error('capacityMin must be 0–99 (use the "100%+ milestone" toggle for 100 and above)');
+  if (!Number.isFinite(max) || max <= min || max > 99) throw new Error('capacityMax must be > capacityMin and ≤ 99 (use the "100%+ milestone" toggle for 100 and above)');
+  return { min, max, is100Plus: false };
 }
 
-function addMilestone(profileId, { name, capacityMin, capacityMax, announcement, actionTemplateIds }) {
+function addMilestone(profileId, { name, capacityMin, capacityMax, announcement, actionTemplateIds, is100Plus }) {
   const data = load();
   const profile = data.templateProfiles.find(p => p.id === profileId);
   if (!profile) throw new Error('profile not found');
   if (profile.isFactory) throw new Error('factory profile has no milestones');
   name = (name || '').trim();
   if (!name) throw new Error('milestone name required');
-  const { min, max } = _ensureMilestoneOK(profile, { capacityMin, capacityMax });
+  const { min, max, is100Plus: top } = _ensureMilestoneOK(profile, { capacityMin, capacityMax, is100Plus });
   const milestone = {
     id: randomUUID(),
     name,
     capacityMin: min,
     capacityMax: max,
+    is100Plus: top,
     announcement: (announcement || '').toString(),
     actionTemplateIds: Array.isArray(actionTemplateIds) ? actionTemplateIds : [],
   };
@@ -249,12 +251,14 @@ function updateMilestone(profileId, milestoneId, patch) {
   const m = profile.milestones.find(x => x.id === milestoneId);
   if (!m) throw new Error('milestone not found');
   if (patch.name != null) m.name = patch.name.toString().trim() || m.name;
-  if (patch.capacityMin != null || patch.capacityMax != null) {
+  const willBe100Plus = patch.is100Plus != null ? !!patch.is100Plus : !!m.is100Plus;
+  if (patch.is100Plus != null || patch.capacityMin != null || patch.capacityMax != null) {
     const min = patch.capacityMin != null ? Number(patch.capacityMin) : m.capacityMin;
     const max = patch.capacityMax != null ? Number(patch.capacityMax) : m.capacityMax;
-    _ensureMilestoneOK(profile, { capacityMin: min, capacityMax: max });
-    m.capacityMin = min;
-    m.capacityMax = max;
+    const r = _ensureMilestoneOK(profile, { capacityMin: min, capacityMax: max, is100Plus: willBe100Plus });
+    m.capacityMin = r.min;
+    m.capacityMax = r.max;
+    m.is100Plus = r.is100Plus;
   }
   if (patch.announcement != null) m.announcement = patch.announcement.toString();
   if (patch.actionTemplateIds != null) m.actionTemplateIds = patch.actionTemplateIds;

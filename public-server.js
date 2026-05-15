@@ -86,7 +86,8 @@ function start() {
     const reg = signaling.registerVisitor(email, ws, sendRaw);
     if (!reg.ok) { ws.close(1008, reg.reason); return; }
 
-    send('hello', { email, isOwner: false, peers: signaling.allPeers(ownerEmail) });
+    const peerListWithNicks = signaling.allPeers(ownerEmail).map(p => ({ ...p, nickname: nicknameFor(p.email) }));
+    send('hello', { email, nickname: nicknameFor(email), isOwner: false, peers: peerListWithNicks });
     send('state', { state: enrichState() });
     send('chat-history', { messages: chat.snapshot() });
 
@@ -94,7 +95,7 @@ function start() {
     visitorConns.set(email, prevCount + 1);
     if (prevCount === 0) {
       chat.system(`${nicknameFor(email)} joined`);
-      signaling.broadcast({ type: 'peer-joined', email, isOwner: false }, email);
+      signaling.broadcast({ type: 'peer-joined', email, nickname: nicknameFor(email), isOwner: false }, email);
     }
 
     const onState = () => send('state', { state: enrichState() });

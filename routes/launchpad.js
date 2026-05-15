@@ -19,17 +19,19 @@ function pill(state, label) {
 
 function gauge(pct) {
   const r = 80, c = 2 * Math.PI * r;
-  const filled = Math.min(100, Math.max(0, Number(pct) || 0));
-  const dash = (filled / 100) * c;
+  const cap = Math.max(0, Number(pct) || 0);
+  const needle = Math.min(100, cap);
+  const dash = (needle / 100) * c;
+  const over = cap > 100;
   return `<svg viewBox="0 0 200 200" style="width:240px;height:240px">
     <circle cx="100" cy="100" r="${r}" stroke="#2a2f3a" stroke-width="22" fill="none"/>
-    <circle cx="100" cy="100" r="${r}" stroke="#2a6df4" stroke-width="22" fill="none"
+    <circle cx="100" cy="100" r="${r}" stroke="${over ? '#f0c674' : '#2a6df4'}" stroke-width="22" fill="none"
             stroke-dasharray="${dash.toFixed(1)} ${(c - dash).toFixed(1)}"
             stroke-linecap="round"
             transform="rotate(-90 100 100)"
             style="transition:stroke-dasharray 0.4s ease"/>
-    <text x="100" y="108" text-anchor="middle" font-size="42" font-weight="700" fill="#e8e8e8">${filled.toFixed(0)}%</text>
-    <text x="100" y="138" text-anchor="middle" font-size="14" fill="#7a8597">capacity</text>
+    <text x="100" y="108" text-anchor="middle" font-size="42" font-weight="700" fill="${over ? '#f0c674' : '#e8e8e8'}">${cap.toFixed(0)}%</text>
+    <text x="100" y="138" text-anchor="middle" font-size="14" fill="#7a8597">${over ? 'over capacity' : 'capacity'}</text>
   </svg>`;
 }
 
@@ -46,12 +48,18 @@ router.get('/', (req, res) => {
   const cfg = config.load();
   const allAllowedEmails = (cfg.accounts || []).map(a => a.email);
 
-  // Determine active milestone (if session running and template has milestones)
+  // Determine active milestone (if session running and template has milestones).
+  // At ≥100% capacity, the special is100Plus milestone wins. Otherwise normal-range matching.
   let activeMilestone = null;
   if (state.active && templateProfile && templateProfile.milestones?.length) {
-    activeMilestone = templateProfile.milestones
-      .filter(m => state.capacity >= m.capacityMin && state.capacity <= m.capacityMax)
-      .sort((a, b) => (b.capacityMin) - (a.capacityMin))[0] || null;
+    if (state.capacity >= 100) {
+      activeMilestone = templateProfile.milestones.find(m => m.is100Plus) || null;
+    }
+    if (!activeMilestone) {
+      activeMilestone = templateProfile.milestones
+        .filter(m => !m.is100Plus && state.capacity >= m.capacityMin && state.capacity <= m.capacityMax)
+        .sort((a, b) => b.capacityMin - a.capacityMin)[0] || null;
+    }
   }
 
   const profileOptions = profiles
@@ -67,8 +75,9 @@ router.get('/', (req, res) => {
     <tr data-email="${escape(p.email)}">
       <td>${escape(cfg.accounts.find(a => a.email === p.email)?.nickname || '(unknown)')}</td>
       <td><code>${escape(p.email)}</code></td>
-      <td><input type="checkbox" data-flag="canConnect" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}', 'canConnect', this.checked)"></td>
-      <td><input type="checkbox" data-flag="canControl" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}', 'canControl', this.checked)"></td>
+      <td><input type="checkbox" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}', 'canConnect', this.checked)"></td>
+      <td><input type="checkbox" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}', 'canControl', this.checked)"></td>
+      <td><input type="checkbox" ${p.canBroadcast ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}', 'canBroadcast', this.checked)"></td>
       <td><button onclick="lpRemoveParticipant('${escape(p.email)}')">Remove</button></td>
     </tr>`).join('');
 
@@ -98,15 +107,6 @@ router.get('/', (req, res) => {
     <script>document.title = 'PumpDirect — ' + ${JSON.stringify(ownerNameForTitle)};</script>
 
     <div class="card">
-      <h3>Owner display name</h3>
-      <p>
-        <input id="lp-owner-input" type="text" value="${escape(ownerDisplayName)}" placeholder="e.g. Airegasm" style="width:50%">
-        <button onclick="lpSaveOwnerName()">Save</button>
-        <span class="muted" style="font-size:0.9rem">Shown in chat as your nickname and in the browser tab title. Will move to the Chat/Webcam tab once that tab is built.</span>
-      </p>
-    </div>
-
-    <div class="card">
       <h3>Session profile</h3>
       <p>
         <select id="sp-select" onchange="location.search='?profile=' + encodeURIComponent(this.value)" style="min-width:280px">
@@ -121,96 +121,84 @@ router.get('/', (req, res) => {
       <p class="muted">Template profile: <strong>${escape(templateProfile?.name || '?')}</strong></p>
     </div>
 
-    <div class="grid-2">
-      <div class="card" style="text-align:center">
-        <h3>Capacity</h3>
+    <div id="session-stage">
+      <div id="standby-overlay"><div class="standby-text">Please Stand By</div></div>
+    <div class="top-row">
+      <div class="card gauge-card">
         ${gauge(state.capacity)}
-        <p class="muted" style="margin-top:8px">
+        <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status">
+          Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
+        </p>
+        <p class="cycle-status" id="cycle-status"></p>
+        <p style="margin-top:10px">
           ${state.active
-            ? (state.emergencyStopped ? pill('bad', 'E-STOP active')
-              : state.paused ? pill('warn', 'paused')
-              : pill('ok', 'running'))
-            : pill('warn', 'idle')}
-          ${state.pumpOn ? pill('ok', 'pump on') : pill('warn', 'pump off')}
+            ? `<button onclick="lpStop()" style="background:#7a3a3a">Stop</button>
+               <button onclick="lpEstop()" style="background:#a13030;font-weight:700">E-STOP</button>
+               <button onclick="lpTogglePause()" style="background:${state.paused ? '#2a6df4' : '#7a8597'};min-width:140px">${state.paused ? 'Exit Standby' : 'Enter Standby'}</button>`
+            : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>`}
         </p>
-        <p class="muted" style="font-size:0.95rem">
-          Active milestone: ${activeMilestone ? `<strong>${escape(activeMilestone.name)}</strong> (${activeMilestone.capacityMin}–${activeMilestone.capacityMax}%)` : '<em>none</em>'}<br>
-          Running action: ${state.currentActionTemplateId ? `<strong>${escape(actionsById[state.currentActionTemplateId]?.name || '?')}</strong>` : '<em>idle</em>'}
-        </p>
+        ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin-top:6px">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
       </div>
-
-      <div class="card">
-        <h3>Currently Displayed Message</h3>
-        <p style="font-size:1.15rem;line-height:1.5;min-height:80px">${state.active ? escape(state.currentDisplayMessage || '(none)') : escape(profile.welcomeMessage || '(no welcome message)')}</p>
-        <p class="muted" style="font-size:0.9rem">${state.active
-          ? (activeMilestone ? 'Showing milestone announcement.' : 'Showing welcome message until first milestone is reached.')
-          : 'Visitors see the welcome message when no session is running.'}</p>
-        <p><button onclick="lpEditWelcome()">Edit welcome message</button></p>
+      <div class="card milestone-pane">
+        <p class="milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
+        <p class="milestone-announcement">${state.active ? escape(state.currentDisplayMessage || '(no message)') : escape(profile.welcomeMessage || '(no welcome message)')}</p>
+        <p class="muted" style="font-size:0.9rem;margin:0 0 14px">
+          ${state.active
+            ? (activeMilestone ? `${activeMilestone.capacityMin}–${activeMilestone.capacityMax}% · milestone announcement live` : 'Welcome message — replaced when first milestone is reached')
+            : 'Welcome message (visitors see this when no session is running)'}
+          · <a href="#" onclick="lpEditWelcome();return false" style="color:#9aa4b2">edit welcome</a>
+        </p>
+        <div class="action-grid">${actionButtons}</div>
       </div>
     </div>
 
-    <div class="card">
-      <h3>Session controls</h3>
-      <p>
-        ${state.active
-          ? `<button onclick="lpStop()" style="background:#7a3a3a">Stop Session</button>
-             <button onclick="lpEstop()" style="background:#a13030;font-weight:700">E-STOP</button>
-             <button onclick="lpTogglePause()">${state.paused ? 'Resume' : 'Pause'} Device Control</button>`
-          : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>
-             ${!sessionReady ? `<span class="muted" style="font-size:0.9rem">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</span>` : ''}`}
-      </p>
+    <div class="cam-grid">
+      <div class="cam-slot" id="cam-controller-slot"></div>
+      <div class="cam-slot" id="cam-owner-slot">
+        <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">Local cam off</div>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+          <button id="btn-cam" onclick="lpToggleCam()">${cfg.owner?.camera?.mode === 'live' ? 'Stop camera' : 'Start camera'}</button>
+          <button id="btn-vid" onclick="lpToggleVideo()" disabled>Mute video</button>
+          <button id="btn-aud" onclick="lpToggleAudio()" disabled>Mute audio</button>
+        </div>
+      </div>
     </div>
+    </div><!-- /session-stage -->
 
-    <div class="card">
-      <h3>Available actions ${state.active ? '' : '<span class="muted" style="font-size:0.9rem;font-weight:normal">(session not running)</span>'}</h3>
-      <div>${actionButtons}</div>
-    </div>
-
-    <div class="card">
-      <h3>Allowed participants</h3>
-      <p class="muted">Who can join when a session starts. Connect = can reach the visitor view. Control = can fire action templates.</p>
-      <table style="width:100%;border-collapse:collapse">
-        <thead><tr style="text-align:left;border-bottom:1px solid #2a2f3a">
-          <th style="padding:8px 0">Nickname</th><th>Email</th><th>Connect</th><th>Control</th><th></th>
-        </tr></thead>
-        <tbody>${allowedRows || '<tr><td colspan="5" class="muted">No participants yet — pick from your account list below.</td></tr>'}</tbody>
-      </table>
-      ${ineligible.length ? `
-        <p style="margin-top:16px">
-          Add from accounts:
-          <select id="lp-add-pick">${addParticipantOptions}</select>
-          <button onclick="lpAddParticipant()">Add</button>
-        </p>
-      ` : '<p class="muted" style="margin-top:12px">All known accounts already added. Manage accounts on the Users tab.</p>'}
-    </div>
-
-    <div class="card">
-      <h3>Webcam <span class="muted" style="font-size:0.9rem;font-weight:normal">— mode: ${escape(cfg.owner?.camera?.mode || 'off')}</span></h3>
-      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
-        <div>
-          <div id="local-tile" style="width:220px;height:220px;background:#0a0c10;border:1px solid #2a2f3a;border-radius:10px;overflow:hidden;display:grid;place-items:center;color:#7a8597;font-size:0.95rem">Local cam off</div>
-          <p style="margin:10px 0">
-            <button id="btn-cam" onclick="lpToggleCam()">${cfg.owner?.camera?.mode === 'live' ? 'Stop camera' : 'Start camera'}</button>
-            <button id="btn-vid" onclick="lpToggleVideo()" disabled>Mute video</button>
-            <button id="btn-aud" onclick="lpToggleAudio()" disabled>Mute audio</button>
+    <div class="chat-row">
+      <div class="card chat-pane">
+        <h3 style="margin:0 0 12px">Chat ${profile.settings.chatroomEnabled ? '' : '<span class="muted" style="font-size:0.9rem;font-weight:normal">(disabled for visitors in this profile)</span>'}</h3>
+        <div id="chat-log" class="chat-log"></div>
+        <div class="chat-input-row">
+          <input id="chat-input" type="text" placeholder="say something…" onkeydown="if(event.key==='Enter') lpSendChat()">
+          <button onclick="lpSendChat()">Send</button>
+        </div>
+      </div>
+      <div class="card participants-pane">
+        <h3 style="margin:0 0 12px">Participants <span class="muted" style="font-size:0.85rem;font-weight:normal">(${profile.allowedParticipants.length})</span></h3>
+        <div class="p-list">
+          ${profile.allowedParticipants.length
+            ? profile.allowedParticipants.map(p => `
+              <div class="p-item" data-email="${escape(p.email)}">
+                <span class="presence-dot"></span>
+                <span>${escape(cfg.accounts.find(a => a.email === p.email)?.nickname || p.email.split('@')[0])}</span>
+                <span class="p-flags">
+                  <label title="can connect"><input type="checkbox" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canConnect',this.checked)">C</label>
+                  <label title="can control"><input type="checkbox" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canControl',this.checked)">A</label>
+                  <label title="can broadcast cam"><input type="checkbox" ${p.canBroadcast ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canBroadcast',this.checked)">V</label>
+                  <button title="remove" onclick="lpRemoveParticipant('${escape(p.email)}')" style="background:#4a1b1b;padding:2px 8px;font-size:0.85rem">×</button>
+                </span>
+              </div>`).join('')
+            : '<p class="muted" style="font-size:0.95rem">No participants yet.</p>'}
+        </div>
+        ${ineligible.length ? `
+          <p style="margin-top:14px">
+            <select id="lp-add-pick" style="width:100%;margin-bottom:6px">${addParticipantOptions}</select>
+            <button onclick="lpAddParticipant()" style="width:100%">Add from accounts</button>
           </p>
-        </div>
-        <div>
-          <h4 style="margin:0 0 8px">Remote (controllers)</h4>
-          <div id="remote-tiles" style="display:flex;flex-wrap:wrap;gap:12px"></div>
-        </div>
+        ` : '<p class="muted" style="font-size:0.85rem;margin-top:12px">All accounts already added. Manage on Users tab.</p>'}
+        <p class="muted" style="font-size:0.75rem;margin-top:12px">C = connect · A = action control · V = video broadcast</p>
       </div>
-      <p class="muted" style="font-size:0.95rem;margin-top:10px">Live mode mesh-publishes to viewers via WebRTC (≤5). Switch the mode on the Chat/Webcam tab. Snapshot mode uses the cam preview there.</p>
-    </div>
-
-    <div class="card">
-      <h3>Chat ${profile.settings.chatroomEnabled ? '' : '<span class="muted" style="font-size:0.9rem;font-weight:normal">(disabled for visitors in this profile)</span>'}</h3>
-      <div id="chat-log" style="height:320px;overflow-y:auto;background:#0a0c10;border:1px solid #2a2f3a;border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:10px"></div>
-      <p style="margin-top:12px">
-        <input id="chat-input" type="text" placeholder="say something…" style="width:70%" onkeydown="if(event.key==='Enter') lpSendChat()">
-        <button onclick="lpSendChat()">Send</button>
-      </p>
-      <p class="muted" style="font-size:0.9rem">Live in this owner GUI. Visitor-side chat view + kick/ban/mute land in 7b-iv.</p>
     </div>
 
     <!-- modal -->
@@ -350,15 +338,6 @@ router.get('/', (req, res) => {
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
       }
-      async function lpSaveOwnerName() {
-        const displayName = document.getElementById('lp-owner-input').value;
-        const r = await fetch('/api/launchpad/owner', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ displayName }) });
-        const d = await r.json();
-        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
-        document.title = 'PumpDirect — ' + (displayName || 'owner');
-        document.getElementById('lp-owner-name').textContent = displayName || 'owner';
-        flash('owner name saved', 'ok');
-      }
       async function lpSendChat() {
         const input = document.getElementById('chat-input');
         const text = input.value.trim();
@@ -383,14 +362,65 @@ router.get('/', (req, res) => {
         log.scrollTop = log.scrollHeight;
       }
       function escapeHtml(s) { return String(s||'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
+      let wasActive = null;
+      function maybeAutoToggleCam(s) {
+        if (OWNER_CAM_MODE !== 'live') return;
+        const active = !!s.active;
+        if (wasActive === active) return;
+        if (active && !localStream) lpStartCam();
+        else if (!active && localStream) lpStopCam();
+        wasActive = active;
+      }
+      let __stepState = null, __repeatState = null, __pumpOnState = false;
+      function renderPumpLine() {
+        const el = document.getElementById('pump-status');
+        const count = document.getElementById('pump-count');
+        const cycEl = document.getElementById('cycle-status');
+        if (!el || !count || !cycEl) return;
+        const stateLabel = __pumpOnState ? 'Running' : 'Idle';
+        el.classList.toggle('idle', !__pumpOnState);
+        el.querySelector('.pump-state').textContent = stateLabel;
+        if (__stepState && __stepState.durationMs > 0) {
+          const elapsed = Date.now() - __stepState.startedAt;
+          const remaining = Math.max(0, Math.ceil((__stepState.durationMs - elapsed) / 1000));
+          count.textContent = '(' + remaining + 's)';
+        } else {
+          count.textContent = '';
+        }
+        cycEl.textContent = __repeatState ? 'Cycles: ' + __repeatState.iteration + '/' + __repeatState.times : '';
+      }
+      setInterval(renderPumpLine, 250);
+
+      function applyStandby(s) {
+        const stage = document.getElementById('session-stage');
+        const overlay = document.getElementById('standby-overlay');
+        const text = overlay.querySelector('.standby-text');
+        const standby = s.active && (s.paused || s.emergencyStopped);
+        stage.classList.toggle('standby', standby);
+        overlay.classList.toggle('active', standby);
+        if (s.emergencyStopped) { text.textContent = 'E-STOP'; text.style.color = '#f08484'; }
+        else { text.textContent = 'Please Stand By'; text.style.color = '#f0c674'; }
+      }
       function applyState(s) {
-        // gauge
-        const pct = Math.max(0, Math.min(100, s.capacity || 0));
-        const r = 80, c = 2 * Math.PI * r, dash = (pct / 100) * c;
-        const ring = document.querySelector('svg circle[stroke="#2a6df4"]');
-        if (ring) ring.setAttribute('stroke-dasharray', dash.toFixed(1) + ' ' + (c - dash).toFixed(1));
-        const text = document.querySelector('svg text');
-        if (text) text.textContent = Math.round(pct) + '%';
+        applyStandby(s);
+        maybeAutoToggleCam(s);
+        __pumpOnState = !!s.pumpOn;
+        __stepState = s.currentStep || null;
+        __repeatState = s.currentRepeat || null;
+        renderPumpLine();
+        // gauge: needle is capped at 100, displayed % is the raw capacity (can exceed 100)
+        const cap = Math.max(0, s.capacity || 0);
+        const needle = Math.min(100, cap);
+        const over = cap > 100;
+        const r = 80, c = 2 * Math.PI * r, dash = (needle / 100) * c;
+        const ring = document.querySelector('.gauge-card svg circle:nth-child(2)');
+        if (ring) {
+          ring.setAttribute('stroke-dasharray', dash.toFixed(1) + ' ' + (c - dash).toFixed(1));
+          ring.setAttribute('stroke', over ? '#f0c674' : '#2a6df4');
+        }
+        const texts = document.querySelectorAll('.gauge-card svg text');
+        if (texts[0]) { texts[0].textContent = Math.round(cap) + '%'; texts[0].setAttribute('fill', over ? '#f0c674' : '#e8e8e8'); }
+        if (texts[1]) texts[1].textContent = over ? 'over capacity' : 'capacity';
         // action buttons lock during run
         const running = s.currentActionTemplateId;
         document.querySelectorAll('.action-btn').forEach(btn => {
@@ -410,10 +440,17 @@ router.get('/', (req, res) => {
       let localStream = null;
       function setLocalTileFromStream(stream) {
         const tile = document.getElementById('local-tile');
-        tile.innerHTML = '<video autoplay muted playsinline style="width:100%;height:100%;object-fit:cover"></video>';
+        tile.style.display = 'block';
+        tile.innerHTML =
+          '<video autoplay muted playsinline></video>' +
+          '<div class="rt-label">you</div>';
         tile.querySelector('video').srcObject = stream;
       }
-      function resetLocalTile() { document.getElementById('local-tile').textContent = 'Local cam off'; }
+      function resetLocalTile() {
+        const tile = document.getElementById('local-tile');
+        tile.style.display = 'grid';
+        tile.innerHTML = 'Local cam off';
+      }
       async function lpStartCam() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           flash('Browser has no getUserMedia. Use Chrome/Firefox/Edge over http://localhost or https://.', 'bad');
@@ -470,15 +507,29 @@ router.get('/', (req, res) => {
         t.enabled = !t.enabled;
         document.getElementById('btn-aud').textContent = t.enabled ? 'Mute audio' : 'Unmute audio';
       }
-      function attachRemoteTile(email, stream) {
+      function attachRemoteTile(email, stream, nickname, isOwner) {
+        const label = nickname || email;
         let tile = document.getElementById('remote-' + cssId(email));
         if (!tile) {
           tile = document.createElement('div');
           tile.id = 'remote-' + cssId(email);
-          tile.style.cssText = 'width:200px;height:200px;background:#0a0c10;border:1px solid #2a2f3a;border-radius:10px;overflow:hidden;position:relative';
-          tile.innerHTML = '<video autoplay playsinline style="width:100%;height:100%;object-fit:cover"></video><div style="position:absolute;bottom:6px;left:8px;background:rgba(0,0,0,0.6);padding:2px 8px;border-radius:4px;font-size:0.85rem">' + escapeHtml(email) + '</div>';
-          document.getElementById('remote-tiles').appendChild(tile);
+          tile.className = 'cam-tile';
+          tile.innerHTML =
+            '<video autoplay playsinline></video>' +
+            '<div class="rt-label"></div>' +
+            '<div class="rt-ctrls">' +
+              '<button data-act="hide" title="hide video">👁</button>' +
+              '<button data-act="mute" title="mute audio">🔊</button>' +
+            '</div>';
+          // Owner Launchpad: remote tiles are controllers (never the owner themselves).
+          document.getElementById('cam-controller-slot').appendChild(tile);
+          const v = tile.querySelector('video');
+          const hideBtn = tile.querySelector('button[data-act="hide"]');
+          const muteBtn = tile.querySelector('button[data-act="mute"]');
+          hideBtn.onclick = () => { const hidden = tile.classList.toggle('muted-video'); hideBtn.textContent = hidden ? '🚫' : '👁'; };
+          muteBtn.onclick = () => { v.muted = !v.muted; muteBtn.textContent = v.muted ? '🔇' : '🔊'; };
         }
+        tile.querySelector('.rt-label').textContent = label;
         tile.querySelector('video').srcObject = stream;
       }
       function removeRemoteTile(email) {
@@ -511,7 +562,6 @@ router.get('/', (req, res) => {
             (m.messages || []).forEach(renderChatMessage);
           } else if (window.__rtc) {
             window.__rtc.onSignalingMsg(m);
-            if (m.type === 'hello' && OWNER_CAM_MODE === 'live' && !localStream) lpStartCam();
           }
         };
         ws.onclose = () => { wsSig = null; setTimeout(connectWs, 1500); };
@@ -563,6 +613,24 @@ router.delete('/api/launchpad/profiles/:id', (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+function syncLiveParticipantsFromProfile(profileId) {
+  // If a session is active AND it was started from this profile, mirror the
+  // profile's allowedParticipants into the live state so add/remove/patch
+  // takes effect immediately without restarting the session.
+  const state = session.getState();
+  if (!state.active || state.sessionProfileId !== profileId) return;
+  const profile = session.getProfile(profileId);
+  const existingByEmail = new Map(state.participants.map(p => [p.email, p]));
+  const nextLive = profile.allowedParticipants.map(p => {
+    const prev = existingByEmail.get(p.email);
+    return prev
+      ? { ...p, muted: prev.muted || false, connected: prev.connected || false }
+      : { ...p, muted: false, connected: false };
+  });
+  session._setLive({ participants: nextLive });
+  require('../services/event-bus').emitState(session.getState());
+}
+
 router.post('/api/launchpad/profiles/:id/participants', (req, res) => {
   try {
     const profile = session.getProfile(req.params.id);
@@ -571,6 +639,7 @@ router.post('/api/launchpad/profiles/:id/participants', (req, res) => {
     if (profile.allowedParticipants.some(p => p.email === email)) throw new Error('already added');
     const next = [...profile.allowedParticipants, { email, canConnect: true, canControl: false }];
     session.updateProfile(req.params.id, { allowedParticipants: next });
+    syncLiveParticipantsFromProfile(req.params.id);
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -580,6 +649,7 @@ router.delete('/api/launchpad/profiles/:id/participants/:email', (req, res) => {
     const profile = session.getProfile(req.params.id);
     const next = profile.allowedParticipants.filter(p => p.email !== email);
     session.updateProfile(req.params.id, { allowedParticipants: next });
+    syncLiveParticipantsFromProfile(req.params.id);
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -589,9 +659,9 @@ router.patch('/api/launchpad/profiles/:id/participants/:email', (req, res) => {
     const profile = session.getProfile(req.params.id);
     const next = profile.allowedParticipants.map(p => p.email === email ? { ...p, ...req.body } : p);
     session.updateProfile(req.params.id, { allowedParticipants: next });
-    // if session is active, also push to live state
-    if (session.getState().active) {
+    if (session.getState().active && session.getState().sessionProfileId === req.params.id) {
       try { session.updateParticipantFlags(email, req.body); } catch {}
+      require('../services/event-bus').emitState(session.getState());
     }
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
@@ -602,7 +672,7 @@ router.post('/api/launchpad/session/start', (req, res) => {
     const state = session.startSession(req.body?.profileId);
     const profile = session.getProfile(state.sessionProfileId);
     actionEngine.resetForNewSession(profile.welcomeMessage);
-    chat.system(`Session started: ${profile.name}`);
+    chat.system(`Session started: ${profile.name} — in standby`);
     res.json({ state });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -624,9 +694,9 @@ router.post('/api/launchpad/session/estop', (_req, res) => {
 router.post('/api/launchpad/session/pause', (_req, res) => {
   try {
     const wasPaused = session.getState().paused;
-    if (!wasPaused) actionEngine.abort('device control paused');
+    if (!wasPaused) actionEngine.abort('entering standby');
     const state = session.setPaused(!wasPaused);
-    chat.system(state.paused ? 'Device control paused' : 'Device control resumed');
+    chat.system(state.paused ? 'Entered standby' : 'Standby exited — session is live');
     res.json({ state });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });

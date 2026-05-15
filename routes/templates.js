@@ -41,8 +41,8 @@ router.get('/templates', (req, res) => {
           </tr></thead>
           <tbody>${activeProfile.milestones.map(m => `
             <tr data-mid="${escape(m.id)}">
-              <td><strong>${escape(m.name)}</strong></td>
-              <td><code>${m.capacityMin}–${m.capacityMax}%</code></td>
+              <td><strong>${escape(m.name)}</strong>${m.is100Plus ? ' <span class="pill ok" style="font-size:0.75rem">100%+</span>' : ''}</td>
+              <td><code>${m.is100Plus ? '100%+' : `${m.capacityMin}–${m.capacityMax}%`}</code></td>
               <td class="muted">${escape((m.announcement || '').slice(0, 80))}${(m.announcement || '').length > 80 ? '…' : ''}</td>
               <td>${(m.actionTemplateIds || []).map(id => `<span class="pill ok">${escape(actionsById[id]?.name || '?')}</span>`).join(' ') || '<span class="muted">none</span>'}</td>
               <td>
@@ -204,23 +204,30 @@ router.get('/templates', (req, res) => {
       // ---- milestones ----
       function _milestoneFormHtml(m) {
         const checked = new Set(m?.actionTemplateIds || []);
-        const actionList = ALL_ACTIONS.map(a => '<label style="display:block;padding:4px 0"><input type="checkbox" value="' + a.id + '"' + (checked.has(a.id) ? ' checked' : '') + '> ' + a.name + '</label>').join('') || '<p class="muted">No action templates exist yet.</p>';
+        const actionList = ALL_ACTIONS.map(a => '<label style="display:block;padding:4px 0"><input type="checkbox" data-role="action" value="' + a.id + '"' + (checked.has(a.id) ? ' checked' : '') + '> ' + a.name + '</label>').join('') || '<p class="muted">No action templates exist yet.</p>';
+        const is100 = !!m?.is100Plus;
         return ''
           + '<p><label>Name <input id="m-name" type="text" value="' + (m?.name?.replace(/"/g, '&quot;') || '') + '" style="width:100%"></label></p>'
+          + '<p><label><input type="checkbox" id="m-is100"' + (is100 ? ' checked' : '') + ' onchange="document.getElementById(\\'m-range\\').style.display = this.checked ? \\'none\\' : \\'\\'">'
+          + ' <strong>100%+ milestone</strong> — fires whenever capacity reaches 100% or above (replaces any range)</label></p>'
+          + '<div id="m-range" style="' + (is100 ? 'display:none' : '') + '">'
           + '<p><label>Capacity range '
-          + '<input id="m-min" type="number" min="0" max="100" value="' + (m?.capacityMin ?? 0) + '" style="width:80px"> – '
-          + '<input id="m-max" type="number" min="0" max="100" value="' + (m?.capacityMax ?? 10) + '" style="width:80px"> %</label></p>'
+          + '<input id="m-min" type="number" min="0" max="99" value="' + (m?.capacityMin ?? 0) + '" style="width:80px"> – '
+          + '<input id="m-max" type="number" min="0" max="99" value="' + (Math.min(99, m?.capacityMax ?? 10)) + '" style="width:80px"> %</label></p>'
+          + '</div>'
           + '<p><label>Announcement <textarea id="m-announcement" rows="3" style="width:100%;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:6px;padding:10px">' + (m?.announcement || '') + '</textarea></label></p>'
           + '<p>Assigned action templates:</p>'
           + '<div style="max-height:200px;overflow:auto;border:1px solid #2a2f3a;border-radius:6px;padding:8px">' + actionList + '</div>';
       }
       function _readMilestoneForm() {
+        const is100Plus = document.getElementById('m-is100').checked;
         return {
           name: document.getElementById('m-name').value.trim(),
-          capacityMin: Number(document.getElementById('m-min').value),
-          capacityMax: Number(document.getElementById('m-max').value),
+          is100Plus,
+          capacityMin: is100Plus ? 100 : Number(document.getElementById('m-min').value),
+          capacityMax: is100Plus ? 999 : Number(document.getElementById('m-max').value),
           announcement: document.getElementById('m-announcement').value,
-          actionTemplateIds: Array.from(document.querySelectorAll('#modal-body input[type="checkbox"]:checked')).map(c => c.value),
+          actionTemplateIds: Array.from(document.querySelectorAll('#modal-body input[data-role="action"]:checked')).map(c => c.value),
         };
       }
       function tplNewMilestone(profileId) {

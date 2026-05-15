@@ -8,6 +8,7 @@ const { bus } = require('./services/event-bus');
 const chat = require('./services/chat-service');
 const session = require('./services/session-service');
 const signaling = require('./services/signaling-service');
+const { TOS_VERSION } = require('./views/tos');
 
 const logger = createLogger('Owner');
 
@@ -30,6 +31,16 @@ function start() {
     res.status(403).type('text').send('owner GUI is loopback-only');
   });
 
+  // TOS gate — every route except the TOS page + accept API requires acceptance.
+  app.use(require('./routes/tos'));
+  app.use((req, res, next) => {
+    if (req.path === '/tos' || req.path.startsWith('/api/owner/tos') || req.path.startsWith('/api/owner/update-check')) return next();
+    const cfg = config.load();
+    if (cfg.owner?.tosAcceptedVersion === TOS_VERSION) return next();
+    if ((req.headers.accept || '').includes('text/html')) return res.redirect('/tos');
+    res.status(403).json({ error: 'TOS not accepted — open /tos in a browser to accept' });
+  });
+
   app.use(require('./routes/launchpad'));
   app.use(require('./routes/chat-webcam'));
   app.use(require('./routes/templates'));
@@ -43,6 +54,17 @@ function start() {
   function enrichState() {
     const cfg = config.load();
     return { ...session.getState(), ownerCamera: cfg.owner?.camera || {} };
+  }
+
+  function nicknameFor(email) {
+    const cfg = config.load();
+    if (email === cfg.cloudflare?.ownerEmail && cfg.owner?.displayName) return cfg.owner.displayName;
+    const acct = (cfg.accounts || []).find(a => a.email === email);
+    return acct?.nickname || (String(email || '').split('@')[0] || 'unknown');
+  }
+
+  function peerListWithNicks(myEmail) {
+    return signaling.allPeers(myEmail).map(p => ({ ...p, nickname: nicknameFor(p.email) }));
   }
 
   wss.on('connection', (ws, req) => {
@@ -60,10 +82,10 @@ function start() {
     const reg = signaling.registerOwner(ownerEmail, ws, sendRaw);
     if (!reg.ok) { ws.close(1008, reg.reason); return; }
 
-    send('hello', { email: ownerEmail, isOwner: true, peers: signaling.allPeers(ownerEmail) });
+    send('hello', { email: ownerEmail, nickname: nicknameFor(ownerEmail), isOwner: true, peers: peerListWithNicks(ownerEmail) });
     send('state', { state: enrichState() });
     send('chat-history', { messages: chat.snapshot() });
-    signaling.broadcast({ type: 'peer-joined', email: ownerEmail, isOwner: true }, ownerEmail);
+    signaling.broadcast({ type: 'peer-joined', email: ownerEmail, nickname: nicknameFor(ownerEmail), isOwner: true }, ownerEmail);
 
     const onState = () => send('state', { state: enrichState() });
     const onChat = (message) => send('chat', { message });

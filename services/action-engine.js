@@ -49,6 +49,8 @@ const live = {
   currentActionTemplateId: null,
   currentMilestoneId: null,
   currentDisplayMessage: '',
+  currentStep: null,
+  currentRepeat: null,
 };
 
 function _setPump(v) {
@@ -60,7 +62,10 @@ function _setRunning(id) {
   session._setLive && session._setLive(live);
 }
 function _setCapacity(c) {
-  live.capacity = Math.max(0, Math.min(100, c));
+  // No upper clamp here — the disableControlAt100 setting is enforced by the
+  // capacity-tick loop (which aborts the running action) rather than by hiding
+  // the number. Gauge UI handles the visual cap separately.
+  live.capacity = Math.max(0, c);
   session._setLive && session._setLive(live);
 }
 
@@ -76,12 +81,16 @@ function _maybeAdvanceMilestone() {
   const tplData = templates.load();
   const tpl = tplData.templateProfiles.find(p => p.id === s.templateProfileId);
   if (!tpl) return;
-  const candidates = (tpl.milestones || []).filter(m => live.capacity >= m.capacityMin && live.capacity <= m.capacityMax);
-  if (!candidates.length) return;
-  // pick most-specific (highest min)
-  candidates.sort((a, b) => b.capacityMin - a.capacityMin);
-  const top = candidates[0];
-  if (live.currentMilestoneId !== top.id) {
+  let top = null;
+  if (live.capacity >= 100) {
+    top = (tpl.milestones || []).find(m => m.is100Plus) || null;
+  }
+  if (!top) {
+    const candidates = (tpl.milestones || []).filter(m => !m.is100Plus && live.capacity >= m.capacityMin && live.capacity <= m.capacityMax);
+    candidates.sort((a, b) => b.capacityMin - a.capacityMin);
+    top = candidates[0] || null;
+  }
+  if (top && live.currentMilestoneId !== top.id) {
     live.currentMilestoneId = top.id;
     live.currentDisplayMessage = top.announcement || live.currentDisplayMessage;
     session._setLive && session._setLive(live);
@@ -106,6 +115,16 @@ function startCapacityLoop() {
     _setCapacity(live.capacity + elapsed * rate);
     _maybeAdvanceMilestone();
     _publish();
+
+    // Enforce disableControlAt100 mid-action: if capacity crossed 100 while a
+    // session profile has that setting on, abort the running action.
+    if (live.capacity >= 100 && live.currentActionTemplateId) {
+      const sessData = session.load();
+      const profile = sessData.sessionProfiles.find(p => p.id === s.sessionProfileId);
+      if (profile?.settings?.disableControlAt100) {
+        abort('100% reached — device control disabled by session setting');
+      }
+    }
   }, 200);
 }
 
@@ -113,21 +132,36 @@ function stopCapacityLoop() {
   if (capacityTickHandle) { clearInterval(capacityTickHandle); capacityTickHandle = null; }
 }
 
-async function _runSteps(steps, primary, signal) {
+function _setStep(step) {
+  live.currentStep = step;
+  session._setLive({ currentStep: step });
+  _publish();
+}
+function _setRepeat(rep) {
+  live.currentRepeat = rep;
+  session._setLive({ currentRepeat: rep });
+  _publish();
+}
+
+async function _runSteps(steps, primary, signal, repeatContext = null) {
+  if (repeatContext) _setRepeat(repeatContext);
   for (const step of steps) {
     if (signal.aborted) return;
     if (step.type === 'on') {
+      _setStep({ type: 'on', durationMs: step.durationMs, startedAt: Date.now() });
       await _pumpOn(primary);
       await _sleep(step.durationMs, signal);
       await _pumpOff(primary);
     } else if (step.type === 'off') {
+      _setStep({ type: 'off', durationMs: step.durationMs, startedAt: Date.now() });
       await _pumpOff(primary);
       await _sleep(step.durationMs, signal);
     } else if (step.type === 'repeat') {
       for (let i = 0; i < step.times; i++) {
         if (signal.aborted) return;
-        await _runSteps(step.steps, primary, signal);
+        await _runSteps(step.steps, primary, signal, { iteration: i + 1, times: step.times });
       }
+      _setRepeat(null);
     }
   }
 }
@@ -165,7 +199,8 @@ async function fireAction({ actionTemplateId, byEmail, byNickname }) {
   } finally {
     abortController = null;
     _setRunning(null);
-    // ensure pump is off at end
+    _setStep(null);
+    _setRepeat(null);
     try { await control.turnOff(primary); } catch {}
     _setPump(false);
     chat.system(`${action.name} finished`);

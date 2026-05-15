@@ -11,10 +11,15 @@ function rtcClientJs({ myEmail }) {
       const RTC_CFG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
       const pcs = new Map();
       const knownPeers = new Set();
+      const nicknames = new Map();   // email -> nickname
+      const owners = new Set();      // emails that are isOwner
       let sendSig = () => {};
       let getLocalStream = () => null;
       let onRemoteStream = () => {};
       let onRemoteGone = () => {};
+
+      function nicknameOf(email) { return nicknames.get(email) || (String(email).split('@')[0]); }
+      function isOwnerOf(email) { return owners.has(email); }
 
       function init(opts) {
         sendSig = opts.sendSig;
@@ -28,7 +33,7 @@ function rtcClientJs({ myEmail }) {
         if (pc) return pc;
         pc = new RTCPeerConnection(RTC_CFG);
         pc.onicecandidate = e => { if (e.candidate) sendSig({ type: 'webrtc-ice', toEmail: remote, candidate: e.candidate }); };
-        pc.ontrack = e => { if (e.streams && e.streams[0]) onRemoteStream(remote, e.streams[0]); };
+        pc.ontrack = e => { if (e.streams && e.streams[0]) onRemoteStream(remote, e.streams[0], nicknameOf(remote), isOwnerOf(remote)); };
         pc.onconnectionstatechange = () => {
           if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
             closePc(remote);
@@ -92,13 +97,22 @@ function rtcClientJs({ myEmail }) {
 
       function onSignalingMsg(msg) {
         if (msg.type === 'hello') {
-          (msg.peers || []).forEach(p => { if (p.email !== MY_EMAIL) knownPeers.add(p.email); });
+          (msg.peers || []).forEach(p => {
+            if (p.email !== MY_EMAIL) knownPeers.add(p.email);
+            if (p.nickname) nicknames.set(p.email, p.nickname);
+            if (p.isOwner) owners.add(p.email);
+          });
+          if (msg.nickname) nicknames.set(msg.email, msg.nickname);
+          if (msg.isOwner) owners.add(msg.email);
         } else if (msg.type === 'peer-joined') {
+          if (msg.nickname) nicknames.set(msg.email, msg.nickname);
+          if (msg.isOwner) owners.add(msg.email);
           if (msg.email !== MY_EMAIL) {
             knownPeers.add(msg.email);
             if (getLocalStream()) publishTo(msg.email);
           }
         } else if (msg.type === 'peer-left') {
+          owners.delete(msg.email);
           knownPeers.delete(msg.email);
           closePc(msg.email);
         } else if (msg.type === 'webrtc-offer') handleOffer(msg);

@@ -51,6 +51,55 @@ function ownerLayout({ title, active, body }) {
   @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
   table { font-size: 1rem; }
   th, td { padding: 10px 4px; }
+  /* Universal layout — compact + functional defaults for the owner GUI */
+  main { padding: 22px 28px; max-width: 1400px; }
+  .card { padding: 18px; margin-bottom: 14px; }
+  h2 { font-size: 1.6rem; margin-top: 0; margin-bottom: 14px; }
+  h3 { font-size: 1.15rem; margin: 0 0 12px; }
+  .top-row { display: grid; grid-template-columns: 300px 1fr; gap: 14px; align-items: stretch; margin-bottom: 14px; }
+  .top-row > .card { margin: 0; }
+  .gauge-card { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .pump-status { font-size: 1.05rem; font-weight: 600; margin: 8px 0 0; min-height: 1.5em; color:#e8e8e8; }
+  .pump-status .pump-state { color: #6ddc9b; }
+  .pump-status.idle .pump-state { color: #7a8597; }
+  .pump-status .pump-count { color: #f0c674; margin-left: 4px; font-weight: 500; }
+  .cycle-status { font-size: 0.9rem; color: #f0c674; margin: 2px 0 0; min-height: 1.1em; }
+  .milestone-pane .milestone-title { font-size: 1.35rem; font-weight: 700; margin: 0 0 6px; }
+  .milestone-pane .milestone-announcement { font-size: 1.05rem; line-height: 1.45; margin: 0 0 14px; color: #e8e8e8; }
+  .milestone-pane .action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .milestone-pane .action-grid button { min-height: 54px; padding: 10px 14px; }
+  .cam-grid { display: flex; justify-content: center; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; width: 100%; }
+  .cam-grid .cam-slot { flex: 1 1 0; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+  .cam-grid .cam-slot:empty { display: none; }
+  .cam-tile { width: 100%; aspect-ratio: 1; background:#0a0c10; border:1px solid #2a2f3a; border-radius:14px; overflow:hidden; position:relative; }
+  .cam-tile video { width:100%; height:100%; object-fit:cover; }
+  .cam-tile .rt-label { position:absolute; bottom:10px; left:12px; background:rgba(0,0,0,0.65); padding:5px 12px; border-radius:6px; font-size:1rem; }
+  .cam-tile .rt-ctrls { position:absolute; top:10px; right:10px; display:flex; gap:6px; }
+  .cam-tile .rt-ctrls button { background:rgba(0,0,0,0.6); border:0; color:#fff; border-radius:6px; padding:6px 10px; font-size:1rem; cursor:pointer; }
+  .cam-tile.muted-video video { visibility: hidden; }
+  .chat-row { display: grid; grid-template-columns: 1fr 260px; gap: 14px; }
+  .chat-row > .card { margin: 0; display: flex; flex-direction: column; }
+  .chat-pane .chat-log { flex: 1; min-height: 320px; max-height: 60vh; overflow-y: auto; background:#0a0c10; border:1px solid #2a2f3a; border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px; }
+  .chat-pane .chat-input-row { margin-top: 10px; display:flex; gap:8px; }
+  .chat-pane .chat-input-row input { flex:1; }
+  .participants-pane .p-list { display: flex; flex-direction: column; gap: 4px; max-height: 56vh; overflow-y: auto; }
+  .participants-pane .p-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background:#0a0c10; border:1px solid #2a2f3a; border-radius:6px; font-size: 0.92rem; }
+  .participants-pane .p-flags { margin-left: auto; display: flex; gap: 2px; font-size: 0.75rem; }
+  .participants-pane .p-flags label { display: inline-flex; align-items: center; gap: 1px; }
+  .participants-pane .p-flags input { transform: scale(0.85); margin: 0 1px; }
+  .presence-dot { width: 8px; height: 8px; border-radius: 50%; background: #7a8597; flex-shrink: 0; }
+  .presence-dot.online { background: #6ddc9b; }
+  @media (max-width: 900px) {
+    .top-row { grid-template-columns: 1fr; }
+    .chat-row { grid-template-columns: 1fr; }
+    .cam-grid .cam-slot { max-width: 100%; }
+  }
+  /* Standby overlay — sits over the session stage (gauge + cam) but never over the chat-row */
+  #session-stage { position: relative; }
+  #standby-overlay { display:none; position:absolute; inset:0; background: rgba(15,17,21,0.78); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 50; align-items: center; justify-content: center; border-radius: 12px; }
+  #standby-overlay.active { display: flex; }
+  .standby-text { font-size: clamp(3rem, 9vw, 7rem); font-weight: 900; letter-spacing: 0.15em; text-transform: uppercase; color: #f0c674; text-shadow: 0 6px 40px rgba(0,0,0,0.6); text-align: center; padding: 0 20px; }
+  #session-stage.standby > :not(#standby-overlay) { filter: grayscale(0.6); }
   details summary { cursor: pointer; padding: 8px 0; font-size: 1.05rem; }
   input[type="text"], input[type="email"], input[type="password"], input[type="number"], select {
     padding: 10px 12px !important; background: #0a0c10 !important; color: #e8e8e8 !important;

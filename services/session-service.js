@@ -127,6 +127,9 @@ const sessionState = {
   currentMilestoneId: null,
   currentDisplayMessage: '',
   participants: [],
+  // Live action-step telemetry — clients render countdown from these.
+  currentStep: null,    // { type: 'on'|'off', durationMs, startedAt }
+  currentRepeat: null,  // { iteration, times }
 };
 
 function getState() { return { ...sessionState }; }
@@ -142,7 +145,7 @@ function startSession(profileId) {
   if (sessionState.active) throw new Error('a session is already active — stop it first');
   const profile = getProfile(profileId || FACTORY_SESSION_PROFILE_ID);
   sessionState.active = true;
-  sessionState.paused = false;
+  sessionState.paused = true;  // sessions start in standby — owner clicks "Exit Standby" to go live.
   sessionState.emergencyStopped = false;
   sessionState.startedAt = new Date().toISOString();
   sessionState.sessionProfileId = profile.id;
@@ -153,7 +156,10 @@ function startSession(profileId) {
   sessionState.currentActionTemplateId = null;
   sessionState.currentMilestoneId = null;
   sessionState.currentDisplayMessage = profile.welcomeMessage || '';
-  sessionState.participants = (profile.allowedParticipants || []).map(p => ({ ...p, muted: false, connected: false }));
+  sessionState.participants = (profile.allowedParticipants || []).map(p => ({
+    canConnect: true, canControl: false, canBroadcast: false, ...p,
+    muted: false, connected: false,
+  }));
   logger.info(`session started from profile "${profile.name}"`);
   return getState();
 }
@@ -193,6 +199,7 @@ function updateParticipantFlags(email, patch) {
   if (!p) throw new Error('participant not in current session');
   if (typeof patch.canConnect === 'boolean') p.canConnect = patch.canConnect;
   if (typeof patch.canControl === 'boolean') p.canControl = patch.canControl;
+  if (typeof patch.canBroadcast === 'boolean') p.canBroadcast = patch.canBroadcast;
   if (typeof patch.muted === 'boolean') p.muted = patch.muted;
   return getState();
 }

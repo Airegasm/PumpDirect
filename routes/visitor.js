@@ -34,14 +34,16 @@ function activeProfile() {
 
 function gauge(pct) {
   const r = 70, c = 2 * Math.PI * r;
-  const filled = Math.min(100, Math.max(0, Number(pct) || 0));
-  const dash = (filled / 100) * c;
+  const cap = Math.max(0, Number(pct) || 0);
+  const needle = Math.min(100, cap);
+  const dash = (needle / 100) * c;
+  const over = cap > 100;
   return `<svg id="gauge" viewBox="0 0 180 180" style="width:180px;height:180px">
     <circle cx="90" cy="90" r="${r}" stroke="#2a2f3a" stroke-width="20" fill="none"/>
-    <circle id="gauge-fill" cx="90" cy="90" r="${r}" stroke="#2a6df4" stroke-width="20" fill="none"
+    <circle id="gauge-fill" cx="90" cy="90" r="${r}" stroke="${over ? '#f0c674' : '#2a6df4'}" stroke-width="20" fill="none"
             stroke-dasharray="${dash.toFixed(1)} ${(c - dash).toFixed(1)}" stroke-linecap="round"
             transform="rotate(-90 90 90)" style="transition:stroke-dasharray 0.4s ease"/>
-    <text id="gauge-pct" x="90" y="100" text-anchor="middle" font-size="38" font-weight="700" fill="#e8e8e8">${filled.toFixed(0)}%</text>
+    <text id="gauge-pct" x="90" y="100" text-anchor="middle" font-size="38" font-weight="700" fill="${over ? '#f0c674' : '#e8e8e8'}">${cap.toFixed(0)}%</text>
   </svg>`;
 }
 
@@ -62,12 +64,17 @@ function renderVisitorPage(req) {
   const canControl = !!(state.active && participant && participant.canControl);
   const chatEnabled = !!(profile && profile.settings?.chatroomEnabled);
 
-  // Resolve action buttons (same logic as owner side)
+  // Resolve active milestone — at ≥100% capacity, is100Plus milestone wins.
   let activeMilestone = null;
   if (state.active && tpl && tpl.milestones?.length) {
-    activeMilestone = tpl.milestones
-      .filter(m => state.capacity >= m.capacityMin && state.capacity <= m.capacityMax)
-      .sort((a, b) => b.capacityMin - a.capacityMin)[0] || null;
+    if (state.capacity >= 100) {
+      activeMilestone = tpl.milestones.find(m => m.is100Plus) || null;
+    }
+    if (!activeMilestone) {
+      activeMilestone = tpl.milestones
+        .filter(m => !m.is100Plus && state.capacity >= m.capacityMin && state.capacity <= m.capacityMax)
+        .sort((a, b) => b.capacityMin - a.capacityMin)[0] || null;
+    }
   }
   const milestoneActionIds = activeMilestone ? (activeMilestone.actionTemplateIds || []) : [];
   const alwaysActionIds = tpl?.defaultActionTemplateIds || [];
@@ -82,27 +89,55 @@ function renderVisitorPage(req) {
     .topbar { background: #161922; padding: 14px 16px; border-bottom: 1px solid #2a2f3a; display: flex; align-items: center; justify-content: space-between; }
     .topbar h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
     .you { font-size: 0.85rem; color: #7a8597; }
-    main { flex: 1; padding: 18px 16px 110px; max-width: 720px; margin: 0 auto; width: 100%; }
+    main { flex: 1; padding: 18px 16px 18px; max-width: 1100px; margin: 0 auto; width: 100%; }
     .card { background: #161922; border: 1px solid #2a2f3a; border-radius: 12px; padding: 18px; margin-bottom: 16px; }
-    .gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     .pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.85rem; }
     .pill.ok { background: #133d2b; color: #6ddc9b; }
     .pill.warn { background: #4a3413; color: #f0c674; }
     .pill.bad { background: #4a1b1b; color: #f08484; }
-    .message { font-size: 1.1rem; line-height: 1.5; min-height: 60px; }
-    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .action-btn { min-height: 56px; padding: 14px 18px; background: #2a6df4; color: #fff; border: 0; border-radius: 10px; font-size: 1rem; font-family: inherit; cursor: pointer; }
     .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .action-btn.running { background: #6ddc9b; color: #0f1115; }
-    .chat-log { height: 280px; overflow-y: auto; background: #0a0c10; border: 1px solid #2a2f3a; border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; font-size: 1rem; }
-    .chat-row { line-height: 1.4; }
-    .chat-row.system { color: #7a8597; font-style: italic; font-size: 0.95rem; }
-    .chat-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #161922; border-top: 1px solid #2a2f3a; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 10px; }
-    .chat-bar input { flex: 1; min-height: 48px; padding: 12px 14px; background: #0a0c10; color: #e8e8e8; border: 1px solid #2a2f3a; border-radius: 10px; font-size: 1rem; font-family: inherit; }
-    .chat-bar button { min-height: 48px; padding: 0 22px; background: #2a6df4; color: #fff; border: 0; border-radius: 10px; font-size: 1rem; font-family: inherit; cursor: pointer; }
-    @media (min-width: 720px) {
-      .actions { grid-template-columns: repeat(3, 1fr); }
+    .top-row { display: grid; grid-template-columns: 300px 1fr; gap: 16px; margin-bottom: 16px; align-items: stretch; }
+    .top-row > .card { margin: 0; min-height: 360px; }
+    .gauge-card { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .pump-status { font-size: 1.1rem; font-weight: 600; margin: 10px 0 0; min-height: 1.5em; color: #e8e8e8; }
+    .pump-status .pump-state { color: #6ddc9b; }
+    .pump-status.idle .pump-state { color: #7a8597; }
+    .pump-status .pump-count { color: #f0c674; margin-left: 4px; font-weight: 500; }
+    .cycle-status { font-size: 0.95rem; color: #f0c674; margin: 2px 0 0; min-height: 1.1em; }
+    .milestone-pane .milestone-title { font-size: 1.5rem; font-weight: 700; margin: 0 0 10px; }
+    .milestone-pane .milestone-announcement { font-size: 1.1rem; line-height: 1.5; min-height: 80px; margin: 0 0 18px; }
+    .milestone-pane .action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    .cam-grid { display: flex; justify-content: center; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; width: 100%; }
+    .cam-slot { flex: 1 1 0; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+    .cam-slot:empty { display: none; }
+    .cam-tile { width: 100%; aspect-ratio: 1; background:#0a0c10; border:1px solid #2a2f3a; border-radius:14px; overflow:hidden; position:relative; }
+    .cam-tile video { width:100%; height:100%; object-fit:cover; }
+    .cam-tile .rt-label { position:absolute; bottom:8px; left:10px; background:rgba(0,0,0,0.65); padding:4px 10px; border-radius:6px; font-size:0.9rem; }
+    .cam-tile .rt-ctrls { position:absolute; top:8px; right:8px; display:flex; gap:6px; }
+    .cam-tile .rt-ctrls button { background:rgba(0,0,0,0.6); border:0; color:#fff; border-radius:6px; padding:6px 10px; font-size:1rem; cursor:pointer; }
+    .cam-tile.muted-video video { visibility: hidden; }
+    .chat-row { display: grid; grid-template-columns: 1fr 220px; gap: 12px; }
+    .chat-row > .card { margin: 0; display: flex; flex-direction: column; }
+    .chat-pane .chat-log { flex: 1; min-height: 280px; max-height: 56vh; overflow-y: auto; background:#0a0c10; border:1px solid #2a2f3a; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:10px; }
+    .chat-pane .chat-input-row { margin-top: 10px; display: flex; gap: 8px; }
+    .chat-pane .chat-input-row input { flex:1; min-height:48px; padding:12px 14px; background:#0a0c10; color:#e8e8e8; border:1px solid #2a2f3a; border-radius:10px; font-size:1rem; font-family:inherit; }
+    .chat-pane .chat-input-row button { min-height:48px; padding:0 22px; background:#2a6df4; color:#fff; border:0; border-radius:10px; font-size:1rem; cursor:pointer; }
+    .participants-pane .p-list { display: flex; flex-direction: column; gap: 6px; max-height: 56vh; overflow-y: auto; }
+    .participants-pane .p-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background:#0a0c10; border:1px solid #2a2f3a; border-radius:6px; font-size: 0.95rem; }
+    .presence-dot { width: 8px; height: 8px; border-radius: 50%; background:#7a8597; flex-shrink:0; }
+    @media (max-width: 760px) {
+      .top-row { grid-template-columns: 1fr; }
+      .chat-row { grid-template-columns: 1fr; }
+      .cam-slot { max-width: 100%; }
+      .milestone-pane .action-grid { grid-template-columns: 1fr 1fr; }
     }
+    #session-stage { position: relative; }
+    #standby-overlay { display:none; position:absolute; inset:0; background: rgba(15,17,21,0.78); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 50; align-items: center; justify-content: center; border-radius: 12px; }
+    #standby-overlay.active { display: flex; }
+    .standby-text { font-size: clamp(2.5rem, 12vw, 6rem); font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; color: #f0c674; text-shadow: 0 6px 40px rgba(0,0,0,0.6); text-align: center; padding: 0 20px; }
+    #session-stage.standby > :not(#standby-overlay) { filter: grayscale(0.6); }
   `;
 
   if (!canConnect) {
@@ -110,35 +145,72 @@ function renderVisitorPage(req) {
       <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
       <title>PumpDirect</title><style>${css}</style></head>
       <body><main><div class="card"><h2>Not on the participant list</h2>
-      <p class="message">Hi <strong>${escapeHtml(nickname)}</strong>. You're on the owner's account allowlist but haven't been added to the active session.</p>
+      <p style="font-size:1.05rem">Hi <strong>${escapeHtml(nickname)}</strong>. You're on the owner's account allowlist but haven't been added to the active session.</p>
       </div></main></body></html>`;
   }
 
-  const messageBlock = state.active
-    ? `<p class="message">${escapeHtml(state.currentDisplayMessage || profile?.welcomeMessage || '')}</p>`
-    : `<p class="message">${escapeHtml(profile?.welcomeMessage || cfg.cloudflare?.hostname ? 'Session not active.' : '')}</p>`;
+  if (!state.active) {
+    return `<!doctype html><html lang="en"><head>
+      <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+      <title>PumpDirect</title>
+      <style>
+        ${css}
+        body { display:flex; align-items:center; justify-content:center; }
+        .splash { text-align:center; padding:40px 24px; max-width:520px; }
+        .splash h1 { font-size:2rem; margin:0 0 18px; }
+        .splash .welcome { font-size:1.1rem; color:#9aa4b2; line-height:1.5; margin:18px 0 0; }
+        .splash .dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:#7a8597; margin-right:8px; vertical-align:middle; animation:pulse 2s infinite; }
+        @keyframes pulse { 0%,100%{opacity:0.4} 50%{opacity:1} }
+      </style></head>
+      <body>
+        <div class="topbar" style="position:absolute;top:0;left:0;right:0">
+          <h1>PumpDirect</h1>
+          <span class="you">${escapeHtml(nickname)}</span>
+        </div>
+        <div class="splash">
+          <h1><span class="dot"></span>No active session</h1>
+          <p style="color:#9aa4b2">The owner hasn't started a session yet. This page will refresh automatically when one begins.</p>
+          ${profile?.welcomeMessage ? `<p class="welcome">${escapeHtml(profile.welcomeMessage)}</p>` : ''}
+        </div>
+        <script>
+          // Reload as soon as the session goes live.
+          function connect() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const ws = new WebSocket(proto + '://' + location.host + '/ws/visitor');
+            ws.onmessage = (e) => {
+              const m = JSON.parse(e.data);
+              if (m.type === 'state' && m.state && m.state.active) location.reload();
+            };
+            ws.onclose = () => setTimeout(connect, 1500);
+          }
+          connect();
+        </script>
+      </body></html>`;
+  }
 
-  const actionsBlock = !state.active
+  const actionGrid = !state.active
     ? '<p class="muted" style="color:#7a8597">No active session.</p>'
     : !canControl
       ? '<p class="muted" style="color:#7a8597">You can watch + chat, but the owner has not enabled device control for you.</p>'
       : visibleActionIds.length
-        ? `<div class="actions">${visibleActionIds.map(id => {
+        ? `<div class="action-grid">${visibleActionIds.map(id => {
             const a = actionsById[id];
             return `<button class="action-btn" data-action-id="${escapeHtml(id)}" onclick="vFire('${escapeHtml(id)}')">${escapeHtml(a?.name || '?')}</button>`;
           }).join('')}</div>`
         : '<p class="muted" style="color:#7a8597">No actions available at this capacity.</p>';
 
-  const chatBlock = chatEnabled
-    ? `<div class="card">
-        <h3 style="margin:0 0 12px;font-size:1.05rem">Chat</h3>
-        <div id="chat-log" class="chat-log"></div>
-      </div>
-      <div class="chat-bar">
-        <input id="chat-input" type="text" placeholder="say something…" autocomplete="off" enterkeyhint="send" onkeydown="if(event.key==='Enter') vSend()">
-        <button onclick="vSend()">Send</button>
-      </div>`
-    : '<p class="muted" style="color:#7a8597">Chat is disabled in this session profile.</p>';
+  // Participant list — live during session, allowlist preview when idle.
+  const ownerEmailCfg = cfg.cloudflare?.ownerEmail || '';
+  const partList = (state.active ? (state.participants || []) : (profile?.allowedParticipants || []))
+    .map(p => {
+      const nick = (cfg.accounts || []).find(a => a.email === p.email)?.nickname || (p.email.split('@')[0]);
+      const isOwner = p.email === ownerEmailCfg;
+      const isMe = p.email === email;
+      return `<div class="p-item">
+        <span class="presence-dot"></span>
+        <span>${escapeHtml(nick)}${isOwner ? ' <span class="pill ok" style="font-size:0.7rem;padding:1px 6px">owner</span>' : ''}${isMe ? ' <span class="muted" style="font-size:0.8rem">(you)</span>' : ''}</span>
+      </div>`;
+    }).join('');
 
   return `<!doctype html><html lang="en"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -149,41 +221,76 @@ function renderVisitorPage(req) {
       <span class="you">${escapeHtml(nickname)}</span>
     </div>
     <main>
-      <div class="card gauge-wrap">
-        ${gauge(state.capacity)}
-        <p>
-          ${state.active
-            ? (state.emergencyStopped ? '<span class="pill bad">E-STOP</span>'
-              : state.paused ? '<span class="pill warn">paused</span>'
-              : '<span class="pill ok">live</span>')
-            : '<span class="pill warn">idle</span>'}
-          <span id="gauge-milestone" class="pill ${activeMilestone ? 'ok' : 'warn'}" style="margin-left:8px">${activeMilestone ? escapeHtml(activeMilestone.name) : 'no milestone'}</span>
+      <div id="session-stage">
+        <div id="standby-overlay"><div class="standby-text">Please Stand By</div></div>
+      <div class="top-row">
+        <div class="card gauge-card">
+          ${gauge(state.capacity)}
+          <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status">
+            Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
+          </p>
+          <p class="cycle-status" id="cycle-status"></p>
+        </div>
+        <div class="card milestone-pane">
+          <p class="milestone-title">${activeMilestone ? escapeHtml(activeMilestone.name) : (state.active ? escapeHtml(tpl?.name || 'Default') : 'Idle')}</p>
+          <p class="milestone-announcement">${state.active ? escapeHtml(state.currentDisplayMessage || profile?.welcomeMessage || '') : escapeHtml(profile?.welcomeMessage || '')}</p>
+          ${actionGrid}
+        </div>
+      </div>
+
+      <div class="cam-grid">
+        <div class="cam-slot" id="cam-controller-slot"></div>
+        <div class="cam-slot" id="cam-owner-slot"></div>
+      </div>
+      </div><!-- /session-stage -->
+
+      <div class="card" id="cam-broadcast-card" style="display:none">
+        <h3 style="margin:0 0 8px;font-size:1.05rem">Your webcam</h3>
+        <p id="cam-broadcast-msg" class="muted" style="margin:0 0 12px;font-size:0.95rem">You have been given cam broadcast permissions. Your preview will appear in the cam grid above.</p>
+        <p style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0">
+          <button id="cam-broadcast-btn" class="action-btn" onclick="vToggleBroadcast()">Enable my webcam</button>
+          <span id="cam-broadcast-controls" style="display:none">
+            <button id="my-vid-btn" onclick="vMuteMyVideo()">Hide video</button>
+            <button id="my-aud-btn" onclick="vMuteMyAudio()">Mute audio</button>
+          </span>
         </p>
       </div>
 
-      <div class="card">
-        ${messageBlock}
+      <div class="chat-row">
+        <div class="card chat-pane">
+          <h3 style="margin:0 0 10px;font-size:1.05rem">Chat${chatEnabled ? '' : ' <span class="muted" style="font-size:0.9rem;font-weight:normal">(disabled)</span>'}</h3>
+          <div id="chat-log" class="chat-log"></div>
+          ${chatEnabled ? `
+            <div class="chat-input-row">
+              <input id="chat-input" type="text" placeholder="say something…" autocomplete="off" enterkeyhint="send" onkeydown="if(event.key==='Enter') vSend()">
+              <button onclick="vSend()">Send</button>
+            </div>` : ''}
+        </div>
+        <div class="card participants-pane">
+          <h3 style="margin:0 0 10px;font-size:1.05rem">Participants</h3>
+          <div class="p-list">${partList || '<p class="muted" style="font-size:0.9rem">No one yet.</p>'}</div>
+        </div>
       </div>
-
-      <div class="card" id="cam-tiles-card" style="display:none">
-        <h3 style="margin:0 0 12px;font-size:1.05rem">Cams</h3>
-        <div id="remote-tiles" style="display:flex;flex-wrap:wrap;gap:10px"></div>
-      </div>
-
-      <div class="card">
-        <h3 style="margin:0 0 12px;font-size:1.05rem">Actions</h3>
-        <div id="actions-host">${actionsBlock}</div>
-      </div>
-
-      <div class="card" id="cam-broadcast-card" style="display:none">
-        <h3 style="margin:0 0 8px;font-size:1.05rem">Webcam broadcast</h3>
-        <p id="cam-broadcast-msg" style="margin:0 0 12px">You have been given cam broadcast permissions.</p>
-        <p><button id="cam-broadcast-btn" class="action-btn" onclick="vToggleBroadcast()">Enable my webcam</button></p>
-        <video id="cam-broadcast-preview" autoplay muted playsinline style="display:none;width:180px;height:180px;object-fit:cover;border-radius:10px;margin-top:10px"></video>
-      </div>
-
-      ${chatBlock}
     </main>
+
+    <!-- Age-confirmation gate. Sessions only count once the owner runs them, so
+         this fires only when state.active is true. Stored in sessionStorage so it
+         appears once per browser session, not on every page reload. -->
+    <div id="age-gate" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:9999;align-items:center;justify-content:center;padding:24px">
+      <div style="max-width:520px;background:#161922;border:1px solid #f0c674;border-radius:14px;padding:30px;text-align:center">
+        <h1 style="font-size:1.6rem;margin:0 0 14px;color:#f0c674">Age confirmation required</h1>
+        <p style="font-size:1.05rem;line-height:1.5;margin:0 0 18px">
+          By continuing, you confirm that you are <strong>at least 18 years of age, or 21 if the law in your jurisdiction requires it</strong> to engage with this content.
+        </p>
+        <p style="font-size:0.95rem;color:#9aa4b2;margin:0 0 22px">
+          The owner of this instance is responsible for verifying participant ages and consent. If you are not of legal age, leave this page now.
+        </p>
+        <p style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:0">
+          <button onclick="vAgeConfirm()" class="action-btn">I am of legal age — continue</button>
+          <button onclick="vAgeDecline()" style="background:#4a1b1b">Leave</button>
+        </p>
+      </div>
+    </div>
 
     <script>
       ${rtcClientJs({ myEmail: email })}
@@ -193,75 +300,184 @@ function renderVisitorPage(req) {
       const CHAT_ENABLED = ${JSON.stringify(chatEnabled)};
       const NICKNAME = ${JSON.stringify(nickname)};
       const MY_EMAIL = ${JSON.stringify(email)};
+      // Show age gate on a live session unless already confirmed this browser session.
+      if (!sessionStorage.getItem('pd_age_ok')) {
+        document.getElementById('age-gate').style.display = 'flex';
+      }
+      function vAgeConfirm() {
+        sessionStorage.setItem('pd_age_ok', '1');
+        document.getElementById('age-gate').style.display = 'none';
+      }
+      function vAgeDecline() {
+        window.location.href = 'about:blank';
+      }
       let wsSig = null;
       function cssId(s) { return String(s).replace(/[^a-z0-9_-]/gi, '_'); }
-      function attachRemoteTile(email, stream) {
-        const card = document.getElementById('cam-tiles-card');
-        card.style.display = '';
+      function attachRemoteTile(email, stream, nickname, isOwner) {
+        const label = nickname || email;
         let tile = document.getElementById('rt-' + cssId(email));
         if (!tile) {
           tile = document.createElement('div');
           tile.id = 'rt-' + cssId(email);
-          tile.style.cssText = 'width:46vw;max-width:200px;aspect-ratio:1/1;background:#0a0c10;border:1px solid #2a2f3a;border-radius:10px;overflow:hidden;position:relative';
-          tile.innerHTML = '<video autoplay playsinline style="width:100%;height:100%;object-fit:cover"></video><div style="position:absolute;bottom:6px;left:8px;background:rgba(0,0,0,0.6);padding:2px 8px;border-radius:4px;font-size:0.8rem">' + escapeHtml(email) + '</div>';
-          document.getElementById('remote-tiles').appendChild(tile);
+          tile.className = 'cam-tile';
+          tile.innerHTML =
+            '<video autoplay playsinline></video>' +
+            '<div class="rt-label"></div>' +
+            '<div class="rt-ctrls">' +
+              '<button data-act="hide">👁</button>' +
+              '<button data-act="mute">🔊</button>' +
+            '</div>';
+          const slot = isOwner
+            ? document.getElementById('cam-owner-slot')
+            : document.getElementById('cam-controller-slot');
+          slot.appendChild(tile);
+          const v = tile.querySelector('video');
+          const hideBtn = tile.querySelector('button[data-act="hide"]');
+          const muteBtn = tile.querySelector('button[data-act="mute"]');
+          hideBtn.onclick = () => { const hidden = tile.classList.toggle('muted-video'); hideBtn.textContent = hidden ? '🚫' : '👁'; };
+          muteBtn.onclick = () => { v.muted = !v.muted; muteBtn.textContent = v.muted ? '🔇' : '🔊'; };
         }
+        tile.querySelector('.rt-label').textContent = label;
         tile.querySelector('video').srcObject = stream;
       }
       function removeRemoteTile(email) {
         const tile = document.getElementById('rt-' + cssId(email));
         if (tile) tile.remove();
-        if (!document.getElementById('remote-tiles').children.length) {
-          document.getElementById('cam-tiles-card').style.display = 'none';
-        }
       }
       function escapeHtml(s) { return String(s||'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
       let myBroadcastStream = null;
+      function addLocalBroadcastTile(stream) {
+        const slot = document.getElementById('cam-controller-slot');
+        let tile = document.getElementById('local-broadcast-tile');
+        if (!tile) {
+          tile = document.createElement('div');
+          tile.id = 'local-broadcast-tile';
+          tile.className = 'cam-tile';
+          tile.innerHTML = '<video autoplay muted playsinline></video><div class="rt-label">' + escapeHtml(NICKNAME) + ' (you)</div>';
+          slot.insertBefore(tile, slot.firstChild);
+        }
+        tile.querySelector('video').srcObject = stream;
+      }
+      function removeLocalBroadcastTile() {
+        const tile = document.getElementById('local-broadcast-tile');
+        if (tile) tile.remove();
+      }
       async function vToggleBroadcast() {
         const btn = document.getElementById('cam-broadcast-btn');
-        const preview = document.getElementById('cam-broadcast-preview');
+        const controls = document.getElementById('cam-broadcast-controls');
         if (myBroadcastStream) {
           myBroadcastStream.getTracks().forEach(t => t.stop());
           myBroadcastStream = null;
-          preview.srcObject = null;
-          preview.style.display = 'none';
+          removeLocalBroadcastTile();
+          controls.style.display = 'none';
           btn.textContent = 'Enable my webcam';
           if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: false }));
           if (window.__rtc) window.__rtc.tearDownAll();
           return;
         }
         try {
-          myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: true });
-          preview.srcObject = myBroadcastStream;
-          preview.style.display = '';
+          try {
+            myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          } catch (e1) {
+            myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
+          addLocalBroadcastTile(myBroadcastStream);
+          controls.style.display = '';
+          document.getElementById('my-vid-btn').textContent = 'Hide video';
+          document.getElementById('my-aud-btn').textContent = 'Mute audio';
+          document.getElementById('my-aud-btn').disabled = !myBroadcastStream.getAudioTracks()[0];
           btn.textContent = 'Stop broadcasting';
           if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: true }));
           if (window.__rtc) await window.__rtc.publishToAll();
         } catch (e) { alert('Camera failed: ' + e.message); }
       }
+      function vMuteMyVideo() {
+        if (!myBroadcastStream) return;
+        const t = myBroadcastStream.getVideoTracks()[0]; if (!t) return;
+        t.enabled = !t.enabled;
+        document.getElementById('my-vid-btn').textContent = t.enabled ? 'Hide video' : 'Show video';
+      }
+      function vMuteMyAudio() {
+        if (!myBroadcastStream) return;
+        const t = myBroadcastStream.getAudioTracks()[0]; if (!t) return;
+        t.enabled = !t.enabled;
+        document.getElementById('my-aud-btn').textContent = t.enabled ? 'Mute audio' : 'Unmute audio';
+      }
       function applyBroadcastCard(s) {
         const card = document.getElementById('cam-broadcast-card');
         if (!card) return;
-        const allowed = CAN_CONTROL && s?.ownerCamera?.allowControllerBroadcast;
+        const myP = (s.participants || []).find(p => p.email === MY_EMAIL);
+        const allowed = CAN_CONTROL && s?.ownerCamera?.allowControllerBroadcast && !!(myP && myP.canBroadcast);
         card.style.display = allowed ? '' : 'none';
         if (!allowed && myBroadcastStream) {
           myBroadcastStream.getTracks().forEach(t => t.stop());
           myBroadcastStream = null;
-          const preview = document.getElementById('cam-broadcast-preview');
-          preview.srcObject = null;
-          preview.style.display = 'none';
+          removeLocalBroadcastTile();
+          document.getElementById('cam-broadcast-controls').style.display = 'none';
           document.getElementById('cam-broadcast-btn').textContent = 'Enable my webcam';
         }
       }
+      let __stepState = null, __repeatState = null, __pumpOnState = false;
+      function renderPumpLine() {
+        const el = document.getElementById('pump-status');
+        const count = document.getElementById('pump-count');
+        const cycEl = document.getElementById('cycle-status');
+        if (!el || !count || !cycEl) return;
+        const stateLabel = __pumpOnState ? 'Running' : 'Idle';
+        el.classList.toggle('idle', !__pumpOnState);
+        el.querySelector('.pump-state').textContent = stateLabel;
+        if (__stepState && __stepState.durationMs > 0) {
+          const elapsed = Date.now() - __stepState.startedAt;
+          const remaining = Math.max(0, Math.ceil((__stepState.durationMs - elapsed) / 1000));
+          count.textContent = '(' + remaining + 's)';
+        } else {
+          count.textContent = '';
+        }
+        cycEl.textContent = __repeatState ? 'Cycles: ' + __repeatState.iteration + '/' + __repeatState.times : '';
+      }
+      setInterval(renderPumpLine, 250);
+
+      function applyStandby(s) {
+        const stage = document.getElementById('session-stage');
+        const overlay = document.getElementById('standby-overlay');
+        const text = overlay && overlay.querySelector('.standby-text');
+        if (!stage || !overlay) return;
+        const standby = s.active && (s.paused || s.emergencyStopped);
+        stage.classList.toggle('standby', standby);
+        overlay.classList.toggle('active', standby);
+        if (text) {
+          if (s.emergencyStopped) { text.textContent = 'E-STOP'; text.style.color = '#f08484'; }
+          else { text.textContent = 'Please Stand By'; text.style.color = '#f0c674'; }
+        }
+      }
       function applyState(s) {
+        applyStandby(s);
+        __pumpOnState = !!s.pumpOn;
+        __stepState = s.currentStep || null;
+        __repeatState = s.currentRepeat || null;
+        renderPumpLine();
+        // If my own participant flags changed since page load, reload so server-rendered
+        // sections (action buttons / "not in session" banner / etc.) match the new permissions.
+        const myP = (s.participants || []).find(p => p.email === MY_EMAIL);
+        const sig = myP ? (Number(!!myP.canConnect) + ':' + Number(!!myP.canControl) + ':' + Number(!!myP.canBroadcast) + ':' + Number(!!myP.muted)) : 'gone';
+        if (window.__mySig !== undefined && window.__mySig !== sig && s.active) {
+          location.reload();
+          return;
+        }
+        window.__mySig = sig;
         applyBroadcastCard(s);
         const r = 70, c = 2 * Math.PI * r;
-        const pct = Math.max(0, Math.min(100, s.capacity || 0));
-        const dash = (pct / 100) * c;
+        const cap = Math.max(0, s.capacity || 0);
+        const needle = Math.min(100, cap);
+        const over = cap > 100;
+        const dash = (needle / 100) * c;
         const fill = document.getElementById('gauge-fill');
-        if (fill) fill.setAttribute('stroke-dasharray', dash.toFixed(1) + ' ' + (c - dash).toFixed(1));
+        if (fill) {
+          fill.setAttribute('stroke-dasharray', dash.toFixed(1) + ' ' + (c - dash).toFixed(1));
+          fill.setAttribute('stroke', over ? '#f0c674' : '#2a6df4');
+        }
         const text = document.getElementById('gauge-pct');
-        if (text) text.textContent = Math.round(pct) + '%';
+        if (text) { text.textContent = Math.round(cap) + '%'; text.setAttribute('fill', over ? '#f0c674' : '#e8e8e8'); }
         // action button lock
         const running = s.currentActionTemplateId;
         document.querySelectorAll('.action-btn').forEach(btn => {
