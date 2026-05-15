@@ -71,8 +71,12 @@ router.get('/', (req, res) => {
     .map(p => `<option value="${escape(p.id)}" ${p.id === profile.templateProfileId ? 'selected' : ''}>${escape(p.name)}</option>`)
     .join('');
 
-  // Allowed participants table (per profile, edited on this page)
-  const allowedRows = profile.allowedParticipants.map(p => `
+  // Owner is implicitly the Host — exclude from the manageable participants list
+  // and from the "add from accounts" dropdown so they can't be added as a guest.
+  const ownerEmailLp = cfg.cloudflare?.ownerEmail || '';
+  const allowedRows = profile.allowedParticipants
+    .filter(p => p.email !== ownerEmailLp)
+    .map(p => `
     <tr data-email="${escape(p.email)}">
       <td>${escape(cfg.accounts.find(a => a.email === p.email)?.nickname || '(unknown)')}</td>
       <td><code>${escape(p.email)}</code></td>
@@ -82,7 +86,8 @@ router.get('/', (req, res) => {
       <td><button onclick="lpRemoveParticipant('${escape(p.email)}')">Remove</button></td>
     </tr>`).join('');
 
-  const ineligible = allAllowedEmails.filter(e => !profile.allowedParticipants.some(p => p.email === e));
+  const candidateEmails = allAllowedEmails.filter(e => e !== ownerEmailLp);
+  const ineligible = candidateEmails.filter(e => !profile.allowedParticipants.some(p => p.email === e));
   const addParticipantOptions = ineligible.map(e => `<option value="${escape(e)}">${escape(e)}</option>`).join('');
 
   // Action buttons (milestone-specific + always-available)
@@ -175,10 +180,10 @@ router.get('/', (req, res) => {
         </div>
       </div>
       <div class="card participants-pane">
-        <h3 style="margin:0 0 12px">Participants <span class="muted" style="font-size:0.85rem;font-weight:normal">(${profile.allowedParticipants.length})</span></h3>
+        <h3 style="margin:0 0 12px">Participants <span class="muted" style="font-size:0.85rem;font-weight:normal">(${profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).length})</span></h3>
         <div class="p-list">
-          ${profile.allowedParticipants.length
-            ? profile.allowedParticipants.map(p => `
+          ${profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).length
+            ? profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).map(p => `
               <div class="p-item" data-email="${escape(p.email)}">
                 <span class="presence-dot"></span>
                 <span>${escape(cfg.accounts.find(a => a.email === p.email)?.nickname || p.email.split('@')[0])}</span>
