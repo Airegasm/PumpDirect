@@ -107,6 +107,66 @@ function ownerLayout({ title, active, body }) {
   .cam-grid { display: flex; justify-content: center; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; width: 100%; }
   .cam-grid .cam-slot { flex: 1 1 0; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
   .cam-grid .cam-slot:empty { display: none; }
+  /* ====== Dual-Target mode layout ====== */
+  /* Wide cam-pair stack — vertical pairs, each cam tile with a bare gauge
+     floating to the right (partially overlapping). Mobile reflow shrinks
+     gauges into top-right corner chips. */
+  .dual-controls-row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; padding: 6px 0; margin-bottom: 12px; }
+  .dual-cam-stack { display: flex; flex-direction: column; gap: 20px; margin-bottom: 14px; }
+  .cam-pair { position: relative; width: 100%; }
+  .cam-pair .cam-slot.wide { width: 100%; max-width: none; }
+  .cam-pair .cam-slot.wide .cam-buttons { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
+  .cam-pair .gauge-float {
+    position: absolute; right: -8px; top: 12px;
+    background: rgba(22, 25, 34, 0.92);
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 8px 12px 10px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+    z-index: 5;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    pointer-events: auto;
+  }
+  .cam-pair .gauge-float svg { width: 150px; height: 150px; }
+  .cam-pair .gauge-float .gauge-name { font-weight: 600; font-size: 0.92rem; color: var(--text); margin-bottom: 2px; }
+  .cam-pair .gauge-float .pump-status { font-size: 0.85rem; min-height: 1em; }
+  .cam-pair .gauge-float .pump-status .pump-state { font-weight: 600; }
+  .cam-pair .gauge-float .pump-status.idle .pump-state { color: var(--text-faint); }
+  .cam-pair .gauge-float .set-cap-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+    padding: 2px 8px; font-size: 0.8rem; margin-top: 4px; border-radius: 999px;
+  }
+  /* The host cam tile in dual mode (cam-slot.wide) takes the full width;
+     keep its --cam-aspect so 16:9 looks natural rather than square. */
+  .cam-pair .cam-slot.wide .cam-tile { width: 100%; aspect-ratio: var(--cam-aspect, 16/9); }
+  @media (max-width: 900px) {
+    /* On mobile the gauge becomes a chip overlay in the top-right corner. */
+    .cam-pair .gauge-float {
+      right: 8px; top: 8px;
+      padding: 4px 6px 5px;
+      background: rgba(15, 17, 21, 0.85);
+      backdrop-filter: blur(4px);
+    }
+    .cam-pair .gauge-float svg { width: 84px; height: 84px; }
+    .cam-pair .gauge-float .gauge-name { font-size: 0.75rem; }
+    .cam-pair .gauge-float .pump-status { font-size: 0.75rem; }
+    .cam-pair .gauge-float .set-cap-btn { display: none; }
+  }
+  /* Compact milestone in dual mode (smaller welcome + title + announcement) */
+  .milestone-pane.mini .milestone-title { font-size: 1.1rem; margin: 0 0 4px; }
+  .milestone-pane.mini .milestone-welcome { font-size: 0.95rem; margin: 0 0 4px; }
+  .milestone-pane.mini .milestone-announcement { font-size: 0.9rem; margin: 0 0 8px; padding: 3px 8px; }
+  /* A/B toggle pill — picks which pump the next button press fires on. */
+  .ab-toggle { display: inline-flex; background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px; gap: 3px; margin: 0 0 10px; }
+  .ab-toggle .ab-btn { background: transparent; color: var(--text-muted); border: 0; padding: 6px 14px; border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 0.92rem; transition: background 0.12s ease, color 0.12s ease; line-height: 1.15; }
+  .ab-toggle .ab-btn.active { background: var(--accent); color: #fff; }
+  .ab-toggle .ab-btn:not(.active):hover { color: var(--text); }
+  .ab-toggle .ab-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+  /* Mutual-consent banner for dual-target session start. */
+  .dual-consent-bar { display: flex; gap: 14px; align-items: center; justify-content: center; flex-wrap: wrap; padding: 12px 16px; margin: 0 0 14px; border: 1px solid #b88dff; background: rgba(123, 63, 214, 0.12); border-radius: 12px; }
+  .dual-consent-bar .status { font-size: 0.98rem; color: var(--text); }
+  .dual-consent-bar .consent-btn { background: #2a8a6d; color: #fff; border: 0; border-radius: 999px; padding: 8px 22px; font-size: 0.95rem; font-weight: 700; cursor: pointer; }
+  .dual-consent-bar .consent-btn:hover { background: #34a584; }
+  .dual-consent-bar .muted { font-size: 0.9rem; color: var(--text-muted); }
   .cam-tile { width: 100%; aspect-ratio: var(--cam-aspect, 1); background:#0a0c10; border:1px solid #2a2f3a; border-radius:14px; overflow:hidden; position:relative; }
   .cam-tile video { width:100%; height:100%; object-fit:cover; }
   .cam-tile .rt-label { position:absolute; bottom:10px; left:12px; background:rgba(0,0,0,0.65); padding:5px 12px; border-radius:6px; font-size:1rem; }

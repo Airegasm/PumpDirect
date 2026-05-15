@@ -60,6 +60,7 @@ PumpDirect lets you:
 - Stream your webcam (Live mode, WebRTC mesh, ≤5 viewers, peer-to-peer DTLS-SRTP) or post auto-snapshots at capacity thresholds.
 - Grant select controllers permission to publish their own cam into the mesh.
 - Run **Mini Games** (Dice Roll, Prize Wheel) and **Triggers** (capacity-threshold-fired action chains) for synchronized in-session theatre — animated overlays, persistent text captions over the host webcam, sound effects, and delayed end-session countdowns, all broadcast in lockstep to every viewer.
+- **Dual-Target sessions** (opt-in per profile): operate a second person's pump alongside your own, both on cam, with one shared action library and an A/B toggle picking which pump fires. Target runs PumpDirect locally; satellite endpoints bridged via their browser. Mutual session-start consent, self-healing handshake, target-side safety button. See the Help tab → *Dual-Target session mode* for full details.
 
 There's a clear separation between:
 

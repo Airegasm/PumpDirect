@@ -57,6 +57,9 @@ function start() {
   app.use(require('./routes/triggers'));
   app.use(require('./routes/minigames'));
   app.use(require('./routes/help'));
+  // Satellite endpoints — localhost-only, used when this instance acts
+  // as the Target for someone else's Dual-Target session.
+  app.use(require('./routes/satellite'));
 
   const server = http.createServer(app);
   const wss = new WebSocket.Server({ server, path: '/ws/owner' });

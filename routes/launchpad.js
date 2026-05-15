@@ -150,65 +150,164 @@ router.get('/', (req, res) => {
       <p class="muted">Template profile: <strong>${escape(templateProfile?.name || '?')}</strong> · Trigger profile: <strong>${escape((profile.triggerTemplateId && (triggersSvc.listTemplates().find(t => t.id === profile.triggerTemplateId)?.name)) || '(none)')}</strong></p>
     </div>`}
 
-    <div id="session-stage">
-    <div class="top-row">
-      <div class="card gauge-card">
-        <h3 style="margin:0 0 2px;font-size:1.1rem;text-align:center">Inflation Capacity</h3>
-        <p class="muted" style="margin:0 0 8px;font-size:0.82rem;text-align:center;line-height:1.35">Real, calibrated and calculated display of <strong>${escape(ownerNameForTitle)}</strong>'s current fullness.</p>
-        ${gauge(state.capacity)}
-        <p style="margin:6px 0 0">
-          <button onclick="lpEditCapacity()" ${state.active ? '' : 'disabled'} style="background:#2a2f3a;padding:4px 10px;font-size:0.85rem">✎ Set capacity</button>
-        </p>
-        <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status">
-          Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
-        </p>
-        <p class="cycle-status" id="cycle-status"></p>
-        <p style="margin-top:10px">
-          ${state.active
-            ? `<button onclick="lpStop()" style="background:#7a3a3a">Stop</button>
-               <button onclick="lpEstop()" style="background:#a13030;font-weight:700">E-STOP</button>
-               <button onclick="lpTogglePause()" style="background:${state.paused ? '#2a6df4' : '#7a8597'};min-width:140px">${state.paused ? 'Exit Standby' : 'Enter Standby'}</button>`
-            : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>`}
-        </p>
+    <div id="session-stage" data-mode="${escape(profile.mode || 'single-target')}">
+    ${profile.mode === 'dual-target' ? `
+      <!-- ====== DUAL-TARGET LAYOUT ====== -->
+      <!-- Session controls: one row, full width, applies to whole session. -->
+      <div class="dual-controls-row">
+        ${state.active
+          ? `<button onclick="lpStop()" style="background:#7a3a3a">Stop</button>
+             <button onclick="lpEstop()" style="background:#a13030;font-weight:700">E-STOP</button>
+             <button onclick="lpTogglePause()" style="background:${state.paused ? '#2a6df4' : '#7a8597'};min-width:140px">${state.paused ? 'Exit Standby' : 'Enter Standby'}</button>`
+          : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>`}
         ${state.active && state.introPending && profile.introButton?.enabled && profile.introButton?.target ? `
-          <p id="lp-intro-row" style="margin-top:8px">
-            <button onclick="lpIntro()" style="background:#2a8a6d;color:#fff;font-weight:700;min-width:180px">${escape(profile.introButton.text || 'Start Intro')}</button>
-          </p>` : ''}
+          <button id="lp-intro-btn" onclick="lpIntro()" style="background:#2a8a6d;color:#fff;font-weight:700">${escape(profile.introButton.text || 'Start Intro')}</button>` : ''}
         ${state.active && profile.customEndButton?.enabled && profile.customEndButton?.target ? `
-          <p style="margin-top:8px">
-            <button onclick="lpCustomEnd()" style="background:#7b3fd6;color:#fff;font-weight:700;min-width:180px">${escape(profile.customEndButton.text || 'Custom End')}</button>
-          </p>` : ''}
-        ${state.active && state.introPending ? `
-          <p id="lp-intro-lock-note" class="muted" style="margin-top:6px;font-size:0.82rem;text-align:center;line-height:1.3">Pump action panel locked until intro completes.</p>` : ''}
-        ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin-top:6px">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
+          <button onclick="lpCustomEnd()" style="background:#7b3fd6;color:#fff;font-weight:700">${escape(profile.customEndButton.text || 'Custom End')}</button>` : ''}
+        ${!state.active && !sessionReady ? `<span class="muted" style="font-size:0.85rem;align-self:center">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</span>` : ''}
       </div>
-      <div class="card milestone-pane">
+      ${state.active && state.introPending ? `<p id="lp-intro-lock-note" class="muted" style="text-align:center;font-size:0.85rem;margin:6px 0 10px">Pump action panel locked until intro completes.</p>` : ''}
+
+      ${state.active && state.mode === 'dual-target' && !((() => {
+        const t = (state.participants || []).find(p => p.canTarget === true);
+        return state.hostStartAccepted && state.targetStartAccepted && !!t;
+      })()) ? `
+        <div id="lp-consent-bar" class="dual-consent-bar">
+          ${(() => {
+            const t = (state.participants || []).find(p => p.canTarget === true);
+            if (!t) return '<span class="status">⏳ Waiting for a target to pair…</span>';
+            if (!state.hostStartAccepted && !state.targetStartAccepted) return '<span class="status">🤝 Both parties must confirm to begin</span>';
+            if (!state.hostStartAccepted) return '<span class="status">🤝 Your turn — confirm to begin</span>';
+            if (!state.targetStartAccepted) return '<span class="status">⏳ Waiting for target to confirm…</span>';
+            return '';
+          })()}
+          ${!state.hostStartAccepted && (state.participants || []).some(p => p.canTarget === true) ? `<button onclick="lpConfirmStart()" class="consent-btn">✓ Confirm Start</button>` : ''}
+          ${state.hostStartAccepted && !state.targetStartAccepted ? '<span class="muted">✓ You confirmed</span>' : ''}
+        </div>` : ''}
+
+      <!-- Cam-pair stack: each pair = wide cam tile + floating bare gauge on the right -->
+      <div class="dual-cam-stack">
+        <div class="cam-pair">
+          <div class="cam-slot wide" id="cam-owner-slot">
+            <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">Local cam off</div>
+            <div class="cam-buttons">
+              <button id="btn-cam" onclick="lpToggleCam()">Start camera</button>
+              <button id="btn-vid" onclick="lpToggleVideo()" disabled>Mute video</button>
+              <button id="btn-aud" onclick="lpToggleAudio()" disabled>Mute audio</button>
+            </div>
+          </div>
+          <div class="gauge-float gauge-host">
+            <div class="gauge-name">🔵 ${escape(ownerNameForTitle)}</div>
+            ${gauge(state.capacity)}
+            <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status" style="margin:2px 0 0">
+              <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
+            </p>
+            <p class="cycle-status" id="cycle-status" style="margin:2px 0 0"></p>
+            <button onclick="lpEditCapacity()" ${state.active ? '' : 'disabled'} class="set-cap-btn" title="Set host capacity">✎</button>
+          </div>
+        </div>
+        <div class="cam-pair">
+          <div class="cam-slot wide" id="cam-controller-slot"></div>
+          <div class="gauge-float gauge-target" id="gauge-target">
+            <div class="gauge-name">⚪ <span id="target-nickname">${(() => {
+              const t = (state.participants || []).find(p => p.canTarget === true);
+              const acct = t ? cfg.accounts.find(a => a.email === t.email) : null;
+              return escape(acct?.nickname || (t ? t.email.split('@')[0] : 'Waiting…'));
+            })()}</span></div>
+            ${gauge(state.targetState?.capacity || 0)}
+            <p class="pump-status ${state.targetState?.pumpOn ? '' : 'idle'}" id="target-pump-status" style="margin:2px 0 0">
+              <span class="pump-state">${state.targetState?.pumpOn ? 'Running' : 'Idle'}</span>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Compact milestone strip + A/B toggle + action grid -->
+      <div class="card milestone-pane mini">
         <p class="milestone-welcome">${escape(profile.welcomeMessage || '(no welcome message)')}</p>
         <p class="milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
         <p class="milestone-announcement">${activeMilestone ? escape(activeMilestone.announcement || '') : ''}</p>
-        <p class="muted" id="milestone-meta" style="font-size:0.9rem;margin:0 0 14px">
+        <p class="muted" id="milestone-meta" style="font-size:0.88rem;margin:0 0 10px">
           ${state.active
             ? (activeMilestone ? `${activeMilestone.capacityMin}–${activeMilestone.capacityMax}% · milestone announcement live` : 'Welcome message — replaced when first milestone is reached')
             : 'Welcome message (visitors see this when no session is running)'}
           · <a href="#" onclick="lpEditWelcome();return false" style="color:#9aa4b2">edit welcome</a>
         </p>
+        <!-- A/B toggle: picks which pump the next button press fires on. -->
+        <div class="ab-toggle" id="ab-toggle" role="group" aria-label="Pump target">
+          <button type="button" class="ab-btn ab-host active" data-ab="host" onclick="_setAbTarget('host')">🔵 ${escape(ownerNameForTitle)}</button>
+          <button type="button" class="ab-btn ab-target" data-ab="target" onclick="_setAbTarget('target')" id="ab-btn-target">⚪ <span id="ab-target-label">${(() => {
+            const t = (state.participants || []).find(p => p.canTarget === true);
+            const acct = t ? cfg.accounts.find(a => a.email === t.email) : null;
+            return escape(acct?.nickname || (t ? t.email.split('@')[0] : 'Waiting…'));
+          })()}</span></button>
+        </div>
         <div class="action-grid">${actionButtons}</div>
       </div>
-    </div>
 
-    <div class="cam-grid">
-      <div class="cam-slot" id="cam-controller-slot"></div>
-      <div class="cam-slot" id="cam-owner-slot">
-        <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">Local cam off</div>
-        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          <button id="btn-cam" onclick="lpToggleCam()">Start camera</button>
-          <button id="btn-vid" onclick="lpToggleVideo()" disabled>Mute video</button>
-          <button id="btn-aud" onclick="lpToggleAudio()" disabled>Mute audio</button>
-        </div>
-      </div>
       <div id="trigger-fx-stage"></div>
       <div id="action-flash-stage"></div>
-    </div>
+    ` : `
+      <!-- ====== SINGLE-TARGET LAYOUT (unchanged) ====== -->
+      <div class="top-row">
+        <div class="card gauge-card">
+          <h3 style="margin:0 0 2px;font-size:1.1rem;text-align:center">Inflation Capacity</h3>
+          <p class="muted" style="margin:0 0 8px;font-size:0.82rem;text-align:center;line-height:1.35">Real, calibrated and calculated display of <strong>${escape(ownerNameForTitle)}</strong>'s current fullness.</p>
+          ${gauge(state.capacity)}
+          <p style="margin:6px 0 0">
+            <button onclick="lpEditCapacity()" ${state.active ? '' : 'disabled'} style="background:#2a2f3a;padding:4px 10px;font-size:0.85rem">✎ Set capacity</button>
+          </p>
+          <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status">
+            Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
+          </p>
+          <p class="cycle-status" id="cycle-status"></p>
+          <p style="margin-top:10px">
+            ${state.active
+              ? `<button onclick="lpStop()" style="background:#7a3a3a">Stop</button>
+                 <button onclick="lpEstop()" style="background:#a13030;font-weight:700">E-STOP</button>
+                 <button onclick="lpTogglePause()" style="background:${state.paused ? '#2a6df4' : '#7a8597'};min-width:140px">${state.paused ? 'Exit Standby' : 'Enter Standby'}</button>`
+              : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>`}
+          </p>
+          ${state.active && state.introPending && profile.introButton?.enabled && profile.introButton?.target ? `
+            <p id="lp-intro-row" style="margin-top:8px">
+              <button onclick="lpIntro()" style="background:#2a8a6d;color:#fff;font-weight:700;min-width:180px">${escape(profile.introButton.text || 'Start Intro')}</button>
+            </p>` : ''}
+          ${state.active && profile.customEndButton?.enabled && profile.customEndButton?.target ? `
+            <p style="margin-top:8px">
+              <button onclick="lpCustomEnd()" style="background:#7b3fd6;color:#fff;font-weight:700;min-width:180px">${escape(profile.customEndButton.text || 'Custom End')}</button>
+            </p>` : ''}
+          ${state.active && state.introPending ? `
+            <p id="lp-intro-lock-note" class="muted" style="margin-top:6px;font-size:0.82rem;text-align:center;line-height:1.3">Pump action panel locked until intro completes.</p>` : ''}
+          ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin-top:6px">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
+        </div>
+        <div class="card milestone-pane">
+          <p class="milestone-welcome">${escape(profile.welcomeMessage || '(no welcome message)')}</p>
+          <p class="milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
+          <p class="milestone-announcement">${activeMilestone ? escape(activeMilestone.announcement || '') : ''}</p>
+          <p class="muted" id="milestone-meta" style="font-size:0.9rem;margin:0 0 14px">
+            ${state.active
+              ? (activeMilestone ? `${activeMilestone.capacityMin}–${activeMilestone.capacityMax}% · milestone announcement live` : 'Welcome message — replaced when first milestone is reached')
+              : 'Welcome message (visitors see this when no session is running)'}
+            · <a href="#" onclick="lpEditWelcome();return false" style="color:#9aa4b2">edit welcome</a>
+          </p>
+          <div class="action-grid">${actionButtons}</div>
+        </div>
+      </div>
+
+      <div class="cam-grid">
+        <div class="cam-slot" id="cam-controller-slot"></div>
+        <div class="cam-slot" id="cam-owner-slot">
+          <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">Local cam off</div>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+            <button id="btn-cam" onclick="lpToggleCam()">Start camera</button>
+            <button id="btn-vid" onclick="lpToggleVideo()" disabled>Mute video</button>
+            <button id="btn-aud" onclick="lpToggleAudio()" disabled>Mute audio</button>
+          </div>
+        </div>
+        <div id="trigger-fx-stage"></div>
+        <div id="action-flash-stage"></div>
+      </div>
+    `}
     <div id="overlay-stage"></div>
     <div id="countdown-stage"></div>
     </div><!-- /session-stage -->
@@ -237,7 +336,8 @@ router.get('/', (req, res) => {
                   <button title="make sole controller (revokes others)" onclick="lpMakeSoleController('${escape(p.email)}')" style="background:${p.canControl ? '#6ddc9b' : '#2a6df4'};color:${p.canControl ? '#0f1115' : '#fff'};padding:2px 8px;font-size:0.85rem">▶</button>
                   <label title="can connect"><input type="checkbox" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canConnect',this.checked)">C</label>
                   <label title="can control"><input type="checkbox" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canControl',this.checked)">A</label>
-                  <label title="can broadcast cam"><input type="checkbox" ${p.canBroadcast ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canBroadcast',this.checked)">V</label>
+                  <label title="can broadcast cam"${profile.mode === 'dual-target' ? ' style="opacity:0.5"' : ''}><input type="checkbox" ${p.canBroadcast ? 'checked' : ''}${profile.mode === 'dual-target' ? ' disabled' : ''} onchange="lpSetFlag('${escape(p.email)}','canBroadcast',this.checked)">V</label>
+                  ${profile.mode === 'dual-target' ? `<label title="Target — operates their own pump (only one at a time; their PumpDirect must be running)" data-tflag="${escape(p.email)}"><input type="checkbox" ${p.canTarget ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canTarget',this.checked)">T<span class="t-badge" data-tbadge="${escape(p.email)}" style="display:none;margin-left:2px;font-size:0.65rem"></span></label>` : ''}
                   <button title="remove" onclick="lpRemoveParticipant('${escape(p.email)}')" style="background:#4a1b1b;padding:2px 8px;font-size:0.85rem">×</button>
                 </span>
               </div>`).join('')
@@ -474,9 +574,20 @@ router.get('/', (req, res) => {
             + '</optgroup>';
           const cebTargetOpts = buildTargetOpts(ceb.target);
           const ibTargetOpts  = buildTargetOpts(ib.target);
+          const mode = p.mode === 'dual-target' ? 'dual-target' : 'single-target';
+          const allowControllersInDual = !!p.settings?.allowVisitorControllersInDual;
           modalOpen('Settings — ' + p.name, ''
             + '<p><label>Pump template <select id="m-tpl">' + tplOptions + '</select></label></p>'
             + '<p><label>Trigger template <select id="m-trig">' + triggerOptions + '</select></label></p>'
+            + '<div style="margin:10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-3)">'
+            +   '<div style="font-weight:600;margin-bottom:4px">Session mode</div>'
+            +   '<label style="display:block;margin-bottom:4px"><input type="radio" name="m-mode" value="single-target"' + (mode === 'single-target' ? ' checked' : '') + ' onchange="document.getElementById(\\'m-mode-allow-row\\').style.display = this.checked ? \\'none\\' : \\'block\\'"> <strong>Single Target</strong> — Host (you) + up to 5 guests. Controllers fire on your pump.</label>'
+            +   '<label style="display:block"><input type="radio" name="m-mode" value="dual-target"' + (mode === 'dual-target' ? ' checked' : '') + ' onchange="document.getElementById(\\'m-mode-allow-row\\').style.display = this.checked ? \\'block\\' : \\'none\\'"> <strong>Dual Target</strong> — Host + 1 target guest + 4 guests. Target runs PumpDirect locally; A/B toggle picks which pump to fire on.</label>'
+            +   '<div id="m-mode-allow-row" style="display:' + (mode === 'dual-target' ? 'block' : 'none') + ';margin-top:8px;margin-left:22px">'
+            +     '<label><input type="checkbox" id="m-allow-vc-dual"' + (allowControllersInDual ? ' checked' : '') + '> Allow visitor controllers in dual mode</label>'
+            +     '<div class="muted" style="font-size:0.85rem;margin-top:2px">When ticked, any visitor with the <strong>A</strong> flag also gets the A/B toggle and can fire on either pump.</div>'
+            +   '</div>'
+            + '</div>'
             + '<p><label><input type="checkbox" id="m-chat"' + (p.settings.chatroomEnabled ? ' checked' : '') + '> Enable chatroom</label></p>'
             + '<p><label><input type="checkbox" id="m-d100"' + (p.settings.disableControlAt100 ? ' checked' : '') + '> Disable device control at 100% capacity</label></p>'
             + '<p style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
@@ -514,12 +625,16 @@ router.get('/', (req, res) => {
                 const [kind, id] = t.split(':');
                 if (id) cebTarget = { kind, id };
               }
+              const modeSel = document.querySelector('input[name="m-mode"]:checked');
+              const newMode = modeSel ? modeSel.value : 'single-target';
               const body = {
                 templateProfileId: document.getElementById('m-tpl').value,
                 triggerTemplateId: document.getElementById('m-trig').value || null,
+                mode: newMode,
                 settings: {
                   chatroomEnabled: document.getElementById('m-chat').checked,
                   disableControlAt100: document.getElementById('m-d100').checked,
+                  allowVisitorControllersInDual: document.getElementById('m-allow-vc-dual').checked,
                 },
                 introButton: {
                   enabled: ibEnabled,
@@ -589,36 +704,65 @@ router.get('/', (req, res) => {
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
       }
+      async function lpConfirmStart() {
+        const r = await fetch('/api/launchpad/session/accept-start', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('confirmed', 'ok');
+      }
       async function lpIntro() {
         const r = await fetch('/api/launchpad/session/intro', { method: 'POST' });
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
         flash('intro running…', 'ok');
       }
+      // A/B toggle state — picks which pump the next button press fires on.
+      // Per-tab via sessionStorage so the host's view and a 2nd tab don't
+      // share the same selection. Default to 'host'.
+      function _abTarget() {
+        try { return sessionStorage.getItem('pd-ab-target') === 'target' ? 'target' : 'host'; } catch { return 'host'; }
+      }
+      function _setAbTarget(v) {
+        const next = v === 'target' ? 'target' : 'host';
+        try { sessionStorage.setItem('pd-ab-target', next); } catch {}
+        document.querySelectorAll('.ab-toggle .ab-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.ab === next);
+        });
+      }
+      // Init: paint the saved selection on every load.
+      window.addEventListener('DOMContentLoaded', () => _setAbTarget(_abTarget()));
+
       async function lpFireAction(actionId) {
-        const r = await fetch('/api/launchpad/session/fire-action', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ actionTemplateId: actionId }) });
+        const r = await fetch('/api/launchpad/session/fire-action', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ actionTemplateId: actionId, target: _abTarget() }) });
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
       }
       async function lpPumpOff() {
-        const r = await fetch('/api/launchpad/session/pump-off', { method: 'POST' });
+        const r = await fetch('/api/launchpad/session/pump-off', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ target: _abTarget() }) });
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
       }
       async function lpPumpOn() {
-        const r = await fetch('/api/launchpad/session/pump-on', { method: 'POST' });
+        const r = await fetch('/api/launchpad/session/pump-on', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ target: _abTarget() }) });
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
       }
       function lpPumpToggle() {
-        const running = !!(window.__lastState && window.__lastState.currentActionTemplateId);
+        // In dual mode, the "running" flag we check has to reflect the chosen
+        // pump. For host pump: state.currentActionTemplateId. For target pump:
+        // state.targetState.currentActionTemplateId once step 9 wires relay.
+        const s = window.__lastState || {};
+        const ab = _abTarget();
+        const running = ab === 'target'
+          ? !!(s.targetState && s.targetState.currentActionTemplateId)
+          : !!s.currentActionTemplateId;
         if (running) lpPumpOff(); else lpPumpOn();
       }
       function lpTimed() {
         modalOpen('Timed pump on', '<p><label>Duration (seconds) <input id="m-sec" type="number" min="0.1" step="0.1" value="10" autofocus></label></p>',
           async () => {
             const seconds = parseFloat(document.getElementById('m-sec').value);
-            const r = await fetch('/api/launchpad/session/timed', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ seconds }) });
+            const r = await fetch('/api/launchpad/session/timed', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ seconds, target: _abTarget() }) });
             const d = await r.json();
             if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
             modalClose();
@@ -634,7 +778,7 @@ router.get('/', (req, res) => {
             const onSec = parseFloat(document.getElementById('m-on').value);
             const offSec = parseFloat(document.getElementById('m-off').value);
             const times = parseInt(document.getElementById('m-rep').value, 10);
-            const r = await fetch('/api/launchpad/session/cycle', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ onSec, offSec, times }) });
+            const r = await fetch('/api/launchpad/session/cycle', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ onSec, offSec, times, target: _abTarget() }) });
             const d = await r.json();
             if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
             modalClose();
@@ -1141,16 +1285,35 @@ router.delete('/api/launchpad/profiles/:id/participants/:email', (req, res) => {
 router.patch('/api/launchpad/profiles/:id/participants/:email', (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).toLowerCase();
+    const body = req.body || {};
+    // canTarget gets special treatment: only valid in dual-target mode,
+    // mutex with other participants, triggers pending-handshake live.
+    if ('canTarget' in body) {
+      const profile = session.getProfile(req.params.id);
+      if (profile.mode !== 'dual-target') throw new Error('T flag only valid in dual-target session profiles');
+      const want = !!body.canTarget;
+      // Profile-side mutex: setting one clears the rest.
+      const next = profile.allowedParticipants.map(p => {
+        if (p.email === email) return { ...p, canTarget: want };
+        return want ? { ...p, canTarget: false } : p;
+      });
+      session.updateProfile(req.params.id, { allowedParticipants: next });
+      // Live-side: if session is active, flip to 'pending' (or false), which
+      // makes the target's visitor JS fire the satellite handshake.
+      if (session.getState().active && session.getState().sessionProfileId === req.params.id) {
+        try { session.setParticipantTarget(email, want ? 'pending' : false); } catch (e) { logger.warn('setParticipantTarget failed: ' + e.message); }
+      }
+      return res.json({ ok: true });
+    }
+    // Standard C/A/V flag path.
     const profile = session.getProfile(req.params.id);
     const prev = profile.allowedParticipants.find(p => p.email === email) || {};
-    const next = profile.allowedParticipants.map(p => p.email === email ? { ...p, ...req.body } : p);
+    const next = profile.allowedParticipants.map(p => p.email === email ? { ...p, ...body } : p);
     session.updateProfile(req.params.id, { allowedParticipants: next });
     if (session.getState().active && session.getState().sessionProfileId === req.params.id) {
-      try { session.updateParticipantFlags(email, req.body); } catch {}
+      try { session.updateParticipantFlags(email, body); } catch {}
       require('../services/event-bus').emitState(session.getState());
     }
-    // Permission flips are visible via the participant-list flags on every
-    // client — no longer narrated in chat per host preference.
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -1225,6 +1388,20 @@ router.post('/api/launchpad/session/custom-end', async (_req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Host accepts the dual-mode session start. No-op in single mode (consent
+// is implicit on startSession there). Returns 400 if the session isn't
+// active or isn't dual-target.
+router.post('/api/launchpad/session/accept-start', (_req, res) => {
+  try {
+    const s = session.getState();
+    if (!s.active) throw new Error('no active session');
+    if (s.mode !== 'dual-target') throw new Error('mutual consent only applies in dual-target mode');
+    session.acceptStart('host');
+    logger.info('host accepted dual-target session start');
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 router.post('/api/launchpad/session/intro', async (_req, res) => {
   try {
     const s = session.getState();
@@ -1254,14 +1431,25 @@ router.post('/api/launchpad/session/intro', async (_req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-router.post('/api/launchpad/session/pump-off', (_req, res) => {
+router.post('/api/launchpad/session/pump-off', (req, res) => {
   try {
     const s = session.getState();
     if (!s.active) throw new Error('no active session');
     if (s.introPending) throw new Error('intro in progress — action panel locked');
+    if (s.mode === 'dual-target' && !session.isSessionFullyStarted()) throw new Error('session not started — both parties must confirm');
     const cfg = config.load();
     const ownerEmail = cfg.cloudflare?.ownerEmail || 'owner@local';
     const ownerName = cfg.owner?.displayName?.trim() || ownerEmail.split('@')[0] || 'owner';
+    const target = _resolveTarget(req);
+    if (target === 'target') {
+      const pair = session.getActiveTargetPair();
+      if (!pair || !pair.token) throw new Error('no paired target with token');
+      const signaling = require('../services/signaling-service');
+      const delivered = signaling.deliver(pair.email, { type: 'remote-pump-off', token: pair.token });
+      if (!delivered) throw new Error('target not connected');
+      require('../services/event-bus').emitOverlay({ kind: 'action-flash', text: `${ownerName} stopped ${pair.deviceLabel || 'target'}` });
+      return res.json({ ok: true, target: 'target' });
+    }
     actionEngine.abort(null);
     require('../services/event-bus').emitOverlay({ kind: 'action-flash', text: `${ownerName} stopped the pump` });
     res.json({ ok: true });
@@ -1289,9 +1477,52 @@ function _ownerInfo() {
   return { ownerEmail, ownerName };
 }
 
+// Resolves req.body.target into 'host' or 'target'. Single-target sessions
+// always return 'host' regardless of what the body says.
+function _resolveTarget(req) {
+  const t = req.body?.target;
+  const s = session.getState();
+  if (s.mode !== 'dual-target') return 'host';
+  return t === 'target' ? 'target' : 'host';
+}
+
+// Look up the paired target + token, then push a remote-action WS message
+// to that visitor only (signaling-service.deliver is per-email). Logs the
+// chain length + label so server logs reflect what was dispatched.
+function _emitRemoteAction(label, steps) {
+  const pair = session.getActiveTargetPair();
+  if (!pair || !pair.token) {
+    logger.warn(`remote-action "${label}" dropped — no paired target with token`);
+    return false;
+  }
+  const signaling = require('../services/signaling-service');
+  const delivered = signaling.deliver(pair.email, { type: 'remote-action', token: pair.token, label, steps });
+  if (!delivered) {
+    logger.warn(`remote-action "${label}" — no WS connection for target ${pair.email}`);
+    return false;
+  }
+  logger.info(`remote-action → ${pair.email} — "${label}" (${(steps || []).length} step(s))`);
+  // Echo the fire as an action-flash so all clients (including the host's
+  // own Launchpad) see what was dispatched against the target's pump.
+  try {
+    const { emitOverlay } = require('../services/event-bus');
+    emitOverlay({ kind: 'action-flash', text: `→ ${pair.deviceLabel || 'target'}: ${label}` });
+  } catch {}
+  return true;
+}
+
 router.post('/api/launchpad/session/fire-action', async (req, res) => {
   try {
     if (session.getState().introPending) throw new Error('intro in progress — action panel locked');
+    if (session.getState().mode === 'dual-target' && !session.isSessionFullyStarted()) throw new Error('session not started — both parties must confirm');
+    const target = _resolveTarget(req);
+    if (target === 'target') {
+      const tplData = require('../services/templates-service').load();
+      const action = tplData.actionTemplates.find(a => a.id === req.body?.actionTemplateId);
+      if (!action) throw new Error('action template not found');
+      _emitRemoteAction(action.name, action.steps);
+      return res.json({ ok: true, target: 'target', stubbed: true });
+    }
     const { ownerEmail, ownerName } = _ownerInfo();
     await actionEngine.fireAction({
       actionTemplateId: req.body?.actionTemplateId,
@@ -1301,9 +1532,15 @@ router.post('/api/launchpad/session/fire-action', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-router.post('/api/launchpad/session/pump-on', async (_req, res) => {
+router.post('/api/launchpad/session/pump-on', async (req, res) => {
   try {
     if (session.getState().introPending) throw new Error('intro in progress — action panel locked');
+    if (session.getState().mode === 'dual-target' && !session.isSessionFullyStarted()) throw new Error('session not started — both parties must confirm');
+    const target = _resolveTarget(req);
+    if (target === 'target') {
+      _emitRemoteAction('Pump On', [{ type: 'on', durationMs: 24 * 3600 * 1000, indefinite: true }]);
+      return res.json({ ok: true, target: 'target', stubbed: true });
+    }
     const { ownerEmail, ownerName } = _ownerInfo();
     await actionEngine.fireAction({
       inline: { name: 'Pump On', steps: [{ type: 'on', durationMs: 24 * 3600 * 1000, indefinite: true }] },
@@ -1316,11 +1553,18 @@ router.post('/api/launchpad/session/pump-on', async (_req, res) => {
 router.post('/api/launchpad/session/timed', async (req, res) => {
   try {
     if (session.getState().introPending) throw new Error('intro in progress — action panel locked');
+    if (session.getState().mode === 'dual-target' && !session.isSessionFullyStarted()) throw new Error('session not started — both parties must confirm');
     const sec = parseFloat(req.body?.seconds);
     if (!Number.isFinite(sec) || sec <= 0) throw new Error('positive seconds required');
+    const target = _resolveTarget(req);
+    const steps = [{ type: 'on', durationMs: Math.round(sec * 1000) }];
+    if (target === 'target') {
+      _emitRemoteAction(`Timed ${sec}s`, steps);
+      return res.json({ ok: true, target: 'target', stubbed: true });
+    }
     const { ownerEmail, ownerName } = _ownerInfo();
     await actionEngine.fireAction({
-      inline: { name: `Timed ${sec}s`, steps: [{ type: 'on', durationMs: Math.round(sec * 1000) }] },
+      inline: { name: `Timed ${sec}s`, steps },
       byEmail: ownerEmail, byNickname: ownerName,
     });
     res.json({ ok: true });
@@ -1330,20 +1574,25 @@ router.post('/api/launchpad/session/timed', async (req, res) => {
 router.post('/api/launchpad/session/cycle', async (req, res) => {
   try {
     if (session.getState().introPending) throw new Error('intro in progress — action panel locked');
+    if (session.getState().mode === 'dual-target' && !session.isSessionFullyStarted()) throw new Error('session not started — both parties must confirm');
     const onSec = parseFloat(req.body?.onSec);
     const offSec = parseFloat(req.body?.offSec);
     const times = parseInt(req.body?.times, 10);
     if (!Number.isFinite(onSec) || onSec <= 0) throw new Error('on seconds required');
     if (!Number.isFinite(offSec) || offSec <= 0) throw new Error('off seconds required');
     if (!Number.isInteger(times) || times <= 0) throw new Error('repeat times required');
+    const target = _resolveTarget(req);
+    const steps = [{ type: 'repeat', times, steps: [
+      { type: 'on', durationMs: Math.round(onSec * 1000) },
+      { type: 'off', durationMs: Math.round(offSec * 1000) },
+    ]}];
+    if (target === 'target') {
+      _emitRemoteAction(`Cycle ${onSec}/${offSec} ×${times}`, steps);
+      return res.json({ ok: true, target: 'target', stubbed: true });
+    }
     const { ownerEmail, ownerName } = _ownerInfo();
     await actionEngine.fireAction({
-      inline: { name: `Cycle ${onSec}/${offSec} ×${times}`, steps: [{
-        type: 'repeat', times, steps: [
-          { type: 'on', durationMs: Math.round(onSec * 1000) },
-          { type: 'off', durationMs: Math.round(offSec * 1000) },
-        ]
-      }] },
+      inline: { name: `Cycle ${onSec}/${offSec} ×${times}`, steps },
       byEmail: ownerEmail, byNickname: ownerName,
     });
     res.json({ ok: true });

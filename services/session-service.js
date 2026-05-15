@@ -21,9 +21,11 @@ const SEED = {
       welcomeMessage: 'Welcome to PumpDirect. The session has not started yet.',
       aboutMe: '',
       templateProfileId: templates.FACTORY_PROFILE_ID,
+      mode: 'single-target',
       settings: {
         chatroomEnabled: true,
         disableControlAt100: false,
+        allowVisitorControllersInDual: false,
       },
       allowedParticipants: [],  // populated when owner adds guests
     },
@@ -76,7 +78,8 @@ function createProfile({ name, templateProfileId }) {
     welcomeMessage: '',
     aboutMe: '',
     templateProfileId: templateProfileId || templates.FACTORY_PROFILE_ID,
-    settings: { chatroomEnabled: true, disableControlAt100: false },
+    mode: 'single-target',
+    settings: { chatroomEnabled: true, disableControlAt100: false, allowVisitorControllersInDual: false },
     allowedParticipants: [],
   };
   data.sessionProfiles.push(profile);
@@ -131,6 +134,32 @@ function updateProfile(id, patch) {
   if (patch.settings) {
     if (typeof patch.settings.chatroomEnabled === 'boolean') profile.settings.chatroomEnabled = patch.settings.chatroomEnabled;
     if (typeof patch.settings.disableControlAt100 === 'boolean') profile.settings.disableControlAt100 = patch.settings.disableControlAt100;
+    if (typeof patch.settings.allowVisitorControllersInDual === 'boolean') profile.settings.allowVisitorControllersInDual = patch.settings.allowVisitorControllersInDual;
+  }
+  if (patch.mode != null) {
+    // Dual mode allows a second person's device to be operated alongside the host's.
+    const nextMode = patch.mode === 'dual-target' ? 'dual-target' : 'single-target';
+    const prevMode = profile.mode === 'dual-target' ? 'dual-target' : 'single-target';
+    profile.mode = nextMode;
+    // Mode swap cleanup: reset T flags on profile + live state, wipe token cache
+    // and target state cache so the next session starts clean.
+    if (prevMode !== nextMode) {
+      profile.allowedParticipants = (profile.allowedParticipants || []).map(p => ({ ...p, canTarget: false }));
+      if (sessionState.active && sessionState.sessionProfileId === profile.id) {
+        sessionState.mode = nextMode;
+        for (const lp of sessionState.participants || []) {
+          lp.canTarget = false;
+          lp.targetDeviceLabel = null;
+        }
+        sessionState.targetState = null;
+        _targetTokens.clear();
+        // In dual→single swap, mutual-consent fields become irrelevant.
+        if (nextMode === 'single-target') {
+          sessionState.hostStartAccepted = true;
+          sessionState.targetStartAccepted = true;
+        }
+      }
+    }
   }
   if (Array.isArray(patch.allowedParticipants)) profile.allowedParticipants = patch.allowedParticipants;
   save(data);
@@ -156,6 +185,13 @@ const sessionState = {
   sessionProfileId: null,
   templateProfileId: null,
   triggerTemplateId: null,
+  // Mode mirror (set on startSession). 'single-target' or 'dual-target'.
+  mode: 'single-target',
+  allowVisitorControllersInDual: false,
+  // Latest snapshot of the target pump's state, populated by the
+  // target's browser via 'target-state-update' WS. Null in single mode
+  // or before a target is paired.
+  targetState: null,
   capacity: 0,
   pumpRuntimeMs: 0,
   pumpOn: false,
@@ -174,6 +210,11 @@ const sessionState = {
   // While true, every pump-action endpoint refuses to fire; the action grid
   // renders disabled on both owner and visitor sides.
   introPending: false,
+  // Mutual session-start consent (dual-target mode only). Both must be true
+  // before pump actions can fire. Auto-true on startSession in single mode.
+  // Cleared on stopSession.
+  hostStartAccepted: false,
+  targetStartAccepted: false,
 };
 
 function getState() { return { ...sessionState }; }
@@ -203,10 +244,31 @@ function startSession(profileId) {
   sessionState.currentDisplayMessage = profile.welcomeMessage || '';
   sessionState.textOverlays = {};
   sessionState.introPending = !!(profile.introButton?.enabled && profile.introButton?.target?.id);
-  sessionState.participants = (profile.allowedParticipants || []).map(p => ({
-    canConnect: true, canControl: false, canBroadcast: false, ...p,
-    muted: false, connected: false,
-  }));
+  // Live mode mirror so endpoints can branch without re-loading the profile.
+  sessionState.mode = profile.mode === 'dual-target' ? 'dual-target' : 'single-target';
+  sessionState.allowVisitorControllersInDual = !!profile.settings?.allowVisitorControllersInDual;
+  // Enforce mutex on profile.canTarget at start time too: pick the first
+  // profile-T-flagged participant and clear the rest.
+  let claimedTarget = false;
+  sessionState.participants = (profile.allowedParticipants || []).map(p => {
+    const wantsT = sessionState.mode === 'dual-target' && !!p.canTarget;
+    let canTarget = false;
+    if (wantsT && !claimedTarget) { canTarget = 'pending'; claimedTarget = true; }
+    return {
+      canConnect: true, canControl: false, canBroadcast: false, ...p,
+      muted: false, connected: false,
+      // canTarget: false | 'pending' | true — only meaningful in dual-target mode.
+      // 'pending' on start means the host pre-set T; handshake will follow
+      // once the target's visitor connects.
+      canTarget,
+      // deviceLabel + paired flag set after a successful satellite handshake.
+      targetDeviceLabel: null,
+    };
+  });
+  // Single-target mode is implicitly mutually accepted. Dual-target needs
+  // both host and target to tap Confirm Start.
+  sessionState.hostStartAccepted = sessionState.mode === 'single-target';
+  sessionState.targetStartAccepted = sessionState.mode === 'single-target';
   logger.info(`session started from profile "${profile.name}"`);
   emitState(getState());
   return getState();
@@ -221,6 +283,12 @@ function stopSession() {
   sessionState.currentActionTemplateId = null;
   sessionState.textOverlays = {};
   sessionState.introPending = false;
+  // Clear dual-target state. canTarget is on the participant array which
+  // gets rebuilt on the next startSession; targetState is a separate slot.
+  sessionState.targetState = null;
+  sessionState.hostStartAccepted = false;
+  sessionState.targetStartAccepted = false;
+  _targetTokens.clear();
   logger.info('session stopped');
   emitState(getState());
   return getState();
@@ -258,9 +326,79 @@ function updateParticipantFlags(email, patch) {
   return getState();
 }
 
+// Per-email satellite pairing tokens for the active dual-target session.
+// Stored side-band (NOT in sessionState.participants so tokens don't get
+// serialized + broadcast to viewers). Wiped on session stop or target swap.
+const _targetTokens = new Map();
+function setParticipantTargetToken(email, token) {
+  if (token) _targetTokens.set(email, token);
+  else _targetTokens.delete(email);
+}
+function getTargetToken(email) { return _targetTokens.get(email) || null; }
+function getActiveTargetPair() {
+  const t = (sessionState.participants || []).find(p => p.canTarget === true);
+  if (!t) return null;
+  return { email: t.email, token: _targetTokens.get(t.email) || null, deviceLabel: t.targetDeviceLabel || null };
+}
+
+// Set / clear / pending-flip the T (canTarget) flag for one participant.
+// Enforces the "at most one with non-false canTarget" invariant by clearing
+// any other holder when value is truthy ('pending' or true).
+function setParticipantTarget(email, value, deviceLabel) {
+  if (sessionState.mode !== 'dual-target') throw new Error('T flag only valid in dual-target mode');
+  const p = sessionState.participants.find(x => x.email === email);
+  if (!p) throw new Error('participant not in current session');
+  const next = (value === 'pending' || value === true) ? value : false;
+  if (next) {
+    for (const other of sessionState.participants) {
+      if (other !== p && other.canTarget) { other.canTarget = false; other.targetDeviceLabel = null; }
+    }
+  }
+  p.canTarget = next;
+  if (next === true && deviceLabel) p.targetDeviceLabel = deviceLabel;
+  if (!next) {
+    p.targetDeviceLabel = null;
+    _targetTokens.delete(email);
+  }
+  // Wipe the target state cache when the active target changes / clears.
+  if (!next || next === 'pending') sessionState.targetState = null;
+  emitState(getState());
+  return getState();
+}
+
+// Apply a target-state snapshot from the paired visitor's relay.
+function setTargetState(snapshot) {
+  sessionState.targetState = snapshot || null;
+  emitState(getState());
+}
+
+// Dual-mode mutual session-start consent. side is 'host' or 'target'.
+// In single mode these are no-ops (consent is implicit on startSession).
+function acceptStart(side) {
+  if (sessionState.mode !== 'dual-target') return getState();
+  if (side === 'host')   sessionState.hostStartAccepted = true;
+  if (side === 'target') sessionState.targetStartAccepted = true;
+  emitState(getState());
+  return getState();
+}
+
+// Single predicate every pump-action endpoint checks. A dual-mode session
+// isn't "fully started" until a target is paired AND both parties have
+// accepted. Single-mode sessions pass through.
+function isSessionFullyStarted() {
+  if (!sessionState.active) return false;
+  if (sessionState.mode !== 'dual-target') return true;
+  if (!sessionState.hostStartAccepted || !sessionState.targetStartAccepted) return false;
+  const t = (sessionState.participants || []).find(p => p.canTarget === true);
+  return !!t;
+}
+
 module.exports = {
   FACTORY_SESSION_PROFILE_ID,
   load,
   listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
-  getState, _setLive, startSession, stopSession, emergencyStop, setPaused, updateParticipantFlags,
+  getState, _setLive, startSession, stopSession, emergencyStop, setPaused,
+  updateParticipantFlags, setParticipantTarget, setTargetState,
+  acceptStart, isSessionFullyStarted,
+  setParticipantTargetToken, getTargetToken, getActiveTargetPair,
 };

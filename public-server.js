@@ -14,6 +14,15 @@ const visitorRoutes = require('./routes/visitor');
 
 const logger = createLogger('Public');
 
+// Host's own PumpDirect version — used as the compatibility baseline for
+// Dual-Target pairings. Major-version mismatch on the target's satellite
+// rejects the handshake (different step-shape risks unsafe execution).
+let HOST_PKG_VERSION = '0.0.0';
+try {
+  HOST_PKG_VERSION = require('./package.json').version || '0.0.0';
+} catch {}
+function _majorOf(v) { return String(v || '').split('.')[0] || '0'; }
+
 function start() {
   const app = express();
   const PORT = parseInt(process.env.PUBLIC_PORT || process.env.PORT || '3000', 10);
@@ -211,6 +220,62 @@ function start() {
         signaling.broadcast({ type: 'track-state', email, videoMuted: !!msg.videoMuted, audioMuted: !!msg.audioMuted }, email);
       } else if (msg && msg.type === 'visibility') {
         signaling.setPresence(email, msg.hidden ? 'afk' : 'connected');
+      } else if (msg && msg.type === 'target-state-update') {
+        // Only the active target's relay is honored. Anything else is dropped
+        // (prevents a non-paired visitor from spoofing target state).
+        const s = session.getState();
+        if (!s.active || s.mode !== 'dual-target') return;
+        const pair = session.getActiveTargetPair();
+        if (!pair || pair.email !== email) return;
+        if (msg.snapshot && typeof msg.snapshot === 'object') {
+          session.setTargetState(msg.snapshot);
+        }
+      } else if (msg && msg.type === 'satellite-claim') {
+        // Dual-Target handshake response from the paired visitor. Translates
+        // their satellite probe result into a canTarget state flip.
+        const s = session.getState();
+        if (!s.active || s.mode !== 'dual-target') {
+          logger.warn(`satellite-claim from ${email} ignored — session not active or not dual-target`);
+          return;
+        }
+        const p = (s.participants || []).find(x => x.email === email);
+        if (!p || p.canTarget !== 'pending') {
+          logger.warn(`satellite-claim from ${email} ignored — not in pending T state`);
+          return;
+        }
+        if (msg.ok && msg.token) {
+          // Version compatibility — reject if major version differs.
+          if (_majorOf(msg.version) !== _majorOf(HOST_PKG_VERSION)) {
+            try { session.setParticipantTarget(email, false); } catch {}
+            logger.warn(`satellite-claim rejected: ${email} runs PumpDirect v${msg.version || '?'} but host is v${HOST_PKG_VERSION} (major mismatch)`);
+            return;
+          }
+          try {
+            session.setParticipantTarget(email, true, String(msg.deviceLabel || ''));
+            session.setParticipantTargetToken(email, String(msg.token));
+            logger.info(`satellite-claim accepted: ${email} now T (device: ${msg.deviceLabel || '?'}, version: ${msg.version || '?'})`);
+            // Push the host's action template library to the newly-paired
+            // target so their browser can render the shared button grid.
+            try {
+              const templates = require('./services/templates-service');
+              const templateSvc = require('./services/templates-service');
+              const profile = session.getProfile(s.sessionProfileId);
+              const tplProfile = profile?.templateProfileId
+                ? templateSvc.load().templateProfiles.find(t => t.id === profile.templateProfileId)
+                : null;
+              send('template-snapshot', {
+                templates: templateSvc.listActions(),
+                templateProfile: tplProfile || null,
+                profileMode: profile?.mode || 'single-target',
+              });
+            } catch (e) { logger.warn('template-snapshot push failed: ' + e.message); }
+          } catch (e) { logger.warn(`satellite-claim accept failed: ${e.message}`); }
+        } else {
+          try {
+            session.setParticipantTarget(email, false);
+            logger.info(`satellite-claim rejected: ${email} (${msg.reason || 'no reason'}) — demoted to standard guest`);
+          } catch (e) { logger.warn(`satellite-claim reject failed: ${e.message}`); }
+        }
       }
     });
 
@@ -230,6 +295,18 @@ function start() {
           pendingLeave.delete(email);
           signaling.clearPresence(email);
           emitPresenceMsg({ text: `${nick} left`, ts: Date.now() });
+          // Dual-Target: if this email was the active T, free the slot so
+          // the host can re-assign. Their pairing token also gets wiped.
+          try {
+            const s = session.getState();
+            if (s.active && s.mode === 'dual-target') {
+              const pair = session.getActiveTargetPair();
+              if (pair && pair.email === email) {
+                session.setParticipantTarget(email, false);
+                logger.info(`dual-target slot released — ${email} disconnected past rejoin grace`);
+              }
+            }
+          } catch (e) { logger.warn('target cleanup on disconnect failed: ' + e.message); }
         }, REJOIN_GRACE_MS);
         pendingLeave.set(email, { timer, nickname: nick });
       } else {

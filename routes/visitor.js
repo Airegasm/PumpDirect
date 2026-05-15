@@ -65,6 +65,13 @@ function renderVisitorPage(req) {
   const participant = findParticipant(email);
   const canConnect = !state.active || (participant && participant.canConnect !== false);
   const canControl = !!(state.active && participant && participant.canControl);
+  // Dual-mode: paired T (canTarget=true) gets action authority too, even
+  // without canControl. Non-target controllers only get authority when the
+  // host has ticked "Allow visitor controllers in dual mode" on the profile.
+  const isTargetUser = !!(state.active && participant && participant.canTarget === true);
+  const dualMode = (state.mode === 'dual-target');
+  const allowVisCtrl = dualMode ? !!state.allowVisitorControllersInDual : true;
+  const hasActionAuthority = (canControl && allowVisCtrl) || (dualMode && isTargetUser);
   const chatEnabled = !!(profile && profile.settings?.chatroomEnabled);
 
   const minigamesList = minigames.list();
@@ -163,6 +170,63 @@ function renderVisitorPage(req) {
     .cam-tile .rt-ctrls { position:absolute; top:8px; right:8px; display:flex; gap:6px; }
     .cam-tile .rt-ctrls button { background:rgba(0,0,0,0.6); border:0; color:#fff; border-radius:6px; padding:6px 10px; font-size:1rem; cursor:pointer; }
     .cam-tile.muted-video video { visibility: hidden; }
+    /* ====== Dual-Target visitor layout ====== */
+    .dual-cam-stack { display: flex; flex-direction: column; gap: 20px; margin-bottom: 14px; }
+    .cam-pair { position: relative; width: 100%; }
+    .cam-pair .cam-slot.wide { width: 100%; max-width: none; flex: none; }
+    .cam-pair .cam-slot.wide .cam-tile { width: 100%; aspect-ratio: var(--cam-aspect, 16/9); }
+    .cam-pair .gauge-float {
+      position: absolute; right: -8px; top: 12px;
+      background: rgba(15, 17, 21, 0.92);
+      border: 1px solid var(--border); border-radius: 12px;
+      padding: 8px 12px 10px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+      z-index: 5;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+    }
+    .cam-pair .gauge-float svg { width: 150px; height: 150px; }
+    .cam-pair .gauge-float .gauge-name { font-weight: 600; font-size: 0.92rem; color: var(--text); margin-bottom: 2px; }
+    .cam-pair .gauge-float .pump-status { font-size: 0.85rem; min-height: 1em; margin: 0; }
+    .cam-pair .gauge-float .pump-status .pump-state { font-weight: 600; }
+    .cam-pair .gauge-float .pump-status.idle .pump-state { color: var(--text-faint); }
+    .milestone-pane.mini .milestone-title { font-size: 1.1rem; margin: 0 0 4px; }
+    .milestone-pane.mini .milestone-welcome { font-size: 0.95rem; margin: 0 0 4px; }
+    .milestone-pane.mini .milestone-announcement { font-size: 0.9rem; margin: 0 0 8px; padding: 3px 8px; }
+    .ab-toggle { display: inline-flex; background: var(--bg-3); border: 1px solid var(--border); border-radius: 999px; padding: 3px; gap: 3px; margin: 0 0 10px; }
+    .ab-toggle .ab-btn { background: transparent; color: var(--text-muted); border: 0; padding: 6px 14px; border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 0.92rem; transition: background 0.12s ease, color 0.12s ease; line-height: 1.15; }
+    .ab-toggle .ab-btn.active { background: var(--accent); color: #fff; }
+    .ab-toggle .ab-btn:not(.active):hover { color: var(--text); }
+    .ab-toggle .ab-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+    .dual-consent-bar { display: flex; gap: 14px; align-items: center; justify-content: center; flex-wrap: wrap; padding: 12px 16px; margin: 0 0 14px; border: 1px solid #b88dff; background: rgba(123, 63, 214, 0.12); border-radius: 12px; }
+    .dual-consent-bar .status { font-size: 0.98rem; color: var(--text); }
+    .dual-consent-bar .consent-btn { background: #2a8a6d; color: #fff; border: 0; border-radius: 999px; padding: 10px 26px; font-size: 1rem; font-weight: 700; cursor: pointer; }
+    .dual-consent-bar .consent-btn:hover { background: #34a584; }
+    .dual-consent-bar .muted { font-size: 0.9rem; color: var(--text-muted); }
+    /* Sticky safety button on the target's own cam tile — bypasses the host
+       and hits localhost satellite directly. Always available while paired. */
+    .safety-stop-btn {
+      position: absolute; left: 50%; bottom: 14px;
+      transform: translateX(-50%);
+      background: rgba(160, 35, 35, 0.92);
+      color: #fff; border: 1px solid rgba(220, 70, 70, 0.7);
+      border-radius: 999px; padding: 8px 18px;
+      font-size: 0.95rem; font-weight: 700;
+      cursor: pointer; z-index: 6;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+    }
+    .safety-stop-btn:hover { background: rgba(180, 45, 45, 0.95); }
+    .safety-stop-btn:active { transform: translateX(-50%) scale(0.96); }
+    @media (max-width: 900px) {
+      .cam-pair .gauge-float {
+        right: 8px; top: 8px;
+        padding: 4px 6px 5px;
+        background: rgba(15, 17, 21, 0.85);
+        backdrop-filter: blur(4px);
+      }
+      .cam-pair .gauge-float svg { width: 84px; height: 84px; }
+      .cam-pair .gauge-float .gauge-name { font-size: 0.75rem; }
+      .cam-pair .gauge-float .pump-status { font-size: 0.75rem; }
+    }
     .chat-row { display: grid; grid-template-columns: 1fr 220px; gap: 12px; }
     .chat-row > .card { margin: 0; display: flex; flex-direction: column; }
     /* Give the scrollable panes an explicit height (with scroll) so they DON'T
@@ -289,7 +353,7 @@ function renderVisitorPage(req) {
   const isRunningV = !!state.currentActionTemplateId;
   const introGatedV = !!state.introPending;
   const lockBtnsV = isRunningV || introGatedV;
-  const alwaysBtns = (state.active && canControl) ? `
+  const alwaysBtns = (state.active && hasActionAuthority) ? `
     <button class="action-btn pump-toggle" onclick="vPumpToggle()" style="background:${isRunningV ? '#a13030' : '#1a8a4d'};color:#fff" ${introGatedV ? 'disabled' : ''}>${isRunningV ? '⏻ Pump Off' : '⏵ Pump On'}</button>
     <button class="action-btn misc-action-btn" onclick="vTimed()" style="background:#1a8a4d;color:#fff" ${lockBtnsV ? 'disabled' : ''}>⏱ Timed</button>
     <button class="action-btn misc-action-btn" onclick="vCycle()" style="background:#1a8a4d;color:#fff" ${lockBtnsV ? 'disabled' : ''}>↻ Cycle</button>
@@ -310,11 +374,25 @@ function renderVisitorPage(req) {
   }).join('');
   const hasAnyV = visibleActionIds.length || visibleMinigameIds.length;
   const introNote = '<p id="v-intro-lock-note" class="muted" style="color:#f0c674;font-size:0.95rem;margin:0 0 8px;display:' + (introGatedV ? 'block' : 'none') + '">Host is presenting an intro — pump controls unlock when it finishes.</p>';
+  // A/B toggle (dual mode + has action authority). Nicknames come from accounts.
+  const abTargetNick = (() => {
+    if (!dualMode) return '';
+    const t = (state.participants || []).find(p => p.canTarget === true);
+    if (!t) return 'Waiting…';
+    const a = config.load().accounts.find(x => x.email === t.email);
+    return a?.nickname || t.email.split('@')[0];
+  })();
+  const abHostNick = ownerDisplayName || 'Host';
+  const abToggle = (dualMode && hasActionAuthority) ? `
+    <div class="ab-toggle" id="ab-toggle" role="group" aria-label="Pump target">
+      <button type="button" class="ab-btn ab-host active" data-ab="host" onclick="_setAbTarget('host')">🔵 ${escapeHtml(abHostNick)}</button>
+      <button type="button" class="ab-btn ab-target" data-ab="target" onclick="_setAbTarget('target')" id="ab-btn-target">⚪ <span id="ab-target-label">${escapeHtml(abTargetNick)}</span></button>
+    </div>` : '';
   const actionGrid = !state.active
     ? '<p class="muted" style="color:#7a8597">No active session.</p>'
-    : !canControl
+    : !hasActionAuthority
       ? '<p class="muted" style="color:#7a8597">You can watch + chat, but the owner has not enabled device control for you.</p>'
-      : introNote + `<div class="action-grid">${alwaysBtns}${hasAnyV
+      : introNote + abToggle + `<div class="action-grid">${alwaysBtns}${hasAnyV
           ? actionCellsV + minigameCellsV
           : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No template actions or minigames at this capacity — Pump On / Timed / Cycle still work.</p>'}</div>`;
 
@@ -346,32 +424,94 @@ function renderVisitorPage(req) {
       </div>
     </div>
     <main>
-      <div id="session-stage">
+      <div id="session-stage" data-mode="${escapeHtml(profile?.mode || 'single-target')}">
         <div id="standby-overlay"><div class="standby-text">Please Stand By</div></div>
-      <div class="top-row">
-        <div class="card gauge-card">
-          <h3 style="margin:0 0 4px;font-size:1.15rem;text-align:center">Inflation Capacity</h3>
-          <p class="muted" style="margin:0 0 10px;font-size:0.85rem;text-align:center;line-height:1.35">Real, calibrated and calculated display of <strong>${escapeHtml(ownerDisplayName)}</strong>'s current fullness.</p>
-          ${gauge(state.capacity)}
-          <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status">
-            Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
-          </p>
-          <p class="cycle-status" id="cycle-status"></p>
+      ${profile?.mode === 'dual-target' ? `
+        ${state.active && !((() => {
+          const t = (state.participants || []).find(p => p.canTarget === true);
+          return state.hostStartAccepted && state.targetStartAccepted && !!t;
+        })()) ? `
+          <div id="v-consent-bar" class="dual-consent-bar">
+            ${(() => {
+              const t = (state.participants || []).find(p => p.canTarget === true);
+              if (!t) return '<span class="status">⏳ Waiting for a target to pair…</span>';
+              if (!state.hostStartAccepted && !state.targetStartAccepted) return '<span class="status">🤝 Both parties must confirm to begin</span>';
+              if (!state.hostStartAccepted) return '<span class="status">⏳ Waiting for host to confirm…</span>';
+              if (!state.targetStartAccepted) return isTargetUser
+                ? '<span class="status">🤝 Your turn — confirm to begin</span>'
+                : '<span class="status">⏳ Waiting for target to confirm…</span>';
+              return '';
+            })()}
+            ${isTargetUser && !state.targetStartAccepted ? `<button onclick="vConfirmStart()" class="consent-btn">✓ Confirm Start</button>` : ''}
+            ${isTargetUser && state.targetStartAccepted && !state.hostStartAccepted ? '<span class="muted">✓ You confirmed</span>' : ''}
+          </div>` : ''}
+        <!-- ====== DUAL-TARGET VISITOR LAYOUT ====== -->
+        <div class="dual-cam-stack">
+          <div class="cam-pair">
+            <div class="cam-slot wide" id="cam-owner-slot"></div>
+            <div class="gauge-float gauge-host">
+              <div class="gauge-name">🔵 ${escapeHtml(ownerDisplayName)}</div>
+              ${gauge(state.capacity)}
+              <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status" style="margin:2px 0 0">
+                <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
+              </p>
+              <p class="cycle-status" id="cycle-status" style="margin:2px 0 0"></p>
+            </div>
+          </div>
+          <div class="cam-pair">
+            <div class="cam-slot wide" id="cam-controller-slot"></div>
+            <div class="gauge-float gauge-target" id="gauge-target">
+              <div class="gauge-name">⚪ <span id="target-nickname">${(() => {
+                const t = (state.participants || []).find(p => p.canTarget === true);
+                const acct = t ? config.load().accounts.find(a => a.email === t.email) : null;
+                return escapeHtml(acct?.nickname || (t ? t.email.split('@')[0] : 'Waiting…'));
+              })()}</span></div>
+              ${gauge(state.targetState?.capacity || 0)}
+              <p class="pump-status ${state.targetState?.pumpOn ? '' : 'idle'}" id="target-pump-status" style="margin:2px 0 0">
+                <span class="pump-state">${state.targetState?.pumpOn ? 'Running' : 'Idle'}</span>
+              </p>
+            </div>
+            ${isTargetUser ? `
+              <button id="v-safety-stop" class="safety-stop-btn" onclick="vStopMyPump()" title="Force-stop your local pump (bypasses host)">
+                ⏹ Stop my pump
+              </button>` : ''}
+          </div>
         </div>
-        <div class="card milestone-pane">
+        <div class="card milestone-pane mini">
           <p class="milestone-welcome">${escapeHtml(profile?.welcomeMessage || '')}</p>
           <p class="milestone-title">${activeMilestone ? escapeHtml(activeMilestone.name) : (state.active ? escapeHtml(tpl?.name || 'Default') : 'Idle')}</p>
           <p class="milestone-announcement">${activeMilestone ? escapeHtml(activeMilestone.announcement || '') : ''}</p>
           ${actionGrid}
         </div>
-      </div>
-
-      <div class="cam-grid">
-        <div class="cam-slot" id="cam-controller-slot"></div>
-        <div class="cam-slot" id="cam-owner-slot"></div>
         <div id="trigger-fx-stage"></div>
         <div id="action-flash-stage"></div>
-      </div>
+      ` : `
+        <!-- ====== SINGLE-TARGET VISITOR LAYOUT (unchanged) ====== -->
+        <div class="top-row">
+          <div class="card gauge-card">
+            <h3 style="margin:0 0 4px;font-size:1.15rem;text-align:center">Inflation Capacity</h3>
+            <p class="muted" style="margin:0 0 10px;font-size:0.85rem;text-align:center;line-height:1.35">Real, calibrated and calculated display of <strong>${escapeHtml(ownerDisplayName)}</strong>'s current fullness.</p>
+            ${gauge(state.capacity)}
+            <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status">
+              Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
+            </p>
+            <p class="cycle-status" id="cycle-status"></p>
+          </div>
+          <div class="card milestone-pane">
+            <p class="milestone-welcome">${escapeHtml(profile?.welcomeMessage || '')}</p>
+            <p class="milestone-title">${activeMilestone ? escapeHtml(activeMilestone.name) : (state.active ? escapeHtml(tpl?.name || 'Default') : 'Idle')}</p>
+            <p class="milestone-announcement">${activeMilestone ? escapeHtml(activeMilestone.announcement || '') : ''}</p>
+            ${actionGrid}
+          </div>
+        </div>
+
+        <div class="cam-grid">
+          <div class="cam-slot" id="cam-controller-slot"></div>
+          <div class="cam-slot" id="cam-owner-slot"></div>
+          <div id="trigger-fx-stage"></div>
+          <div id="action-flash-stage"></div>
+        </div>
+      `}
       <div id="overlay-stage"></div>
       <div id="countdown-stage"></div>
       </div><!-- /session-stage -->
@@ -869,6 +1009,91 @@ function renderVisitorPage(req) {
         document.querySelectorAll('.cam-tile').forEach(t => t.classList.toggle('standby-blackout', __isStandby));
         applyMyBroadcastTrackState();
       }
+      // --- Dual-Target satellite handshake (local PumpDirect bridge) ---
+      // Fired when my own participant entry shows canTarget==='pending'.
+      // Probes localhost satellite endpoints, claims a pairing token, and
+      // reports back via WS so the host can flip canTarget to true/false.
+      function _satSend(obj) {
+        try { if (wsSig && wsSig.readyState === 1) wsSig.send(JSON.stringify(obj)); } catch {}
+      }
+      async function _runSatelliteHandshake(sessionId) {
+        try {
+          const sr = await fetch('http://localhost:3001/api/satellite/status', { cache: 'no-store' });
+          if (!sr.ok) throw new Error('localhost satellite returned ' + sr.status);
+          const status = await sr.json();
+          if (!status.ready) {
+            _satSend({ type: 'satellite-claim', ok: false, reason: 'device not calibrated' });
+            return;
+          }
+          const cr = await fetch('http://localhost:3001/api/satellite/claim', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ hostUrl: location.origin, hostEmail: OWNER_EMAIL, sessionId: sessionId || '' }),
+          });
+          if (!cr.ok) {
+            const e = await cr.json().catch(() => ({}));
+            _satSend({ type: 'satellite-claim', ok: false, reason: e.error || 'claim refused' });
+            return;
+          }
+          const claim = await cr.json();
+          window.__satellitePairing = claim;
+          _satSend({ type: 'satellite-claim', ok: true, token: claim.token, deviceLabel: claim.deviceLabel, version: claim.version });
+          // Open the state-relay SSE stream so the host can render our pump's
+          // capacity / pumpOn / current-step on the second gauge in real time.
+          _openSatelliteStateRelay(claim.token);
+        } catch (e) {
+          _satSend({ type: 'satellite-claim', ok: false, reason: 'PumpDirect not reachable on localhost:3001 — install/start it on this machine' });
+        } finally {
+          window.__satelliteInFlight = false;
+        }
+      }
+      // beforeunload beacon: if we hold a pairing, tell the local satellite
+      // to release. Pure cleanup — the WS-close grace path handles host-side
+      // canTarget release independently.
+      window.addEventListener('beforeunload', () => {
+        const p = window.__satellitePairing;
+        if (!p || !p.token) return;
+        try {
+          const data = new Blob([JSON.stringify({ token: p.token })], { type: 'application/json' });
+          navigator.sendBeacon('http://localhost:3001/api/satellite/release', data);
+        } catch {}
+      });
+      // EventSource subscription to the local PD's state events; forwards
+      // each tick to the host as 'target-state-update'. Closes on tab unload.
+      function _openSatelliteStateRelay(token) {
+        try {
+          if (window.__satelliteES) try { window.__satelliteES.close(); } catch {}
+          const es = new EventSource('http://localhost:3001/api/satellite/state?token=' + encodeURIComponent(token));
+          es.onmessage = (ev) => {
+            let snapshot;
+            try { snapshot = JSON.parse(ev.data); } catch { return; }
+            _satSend({ type: 'target-state-update', snapshot });
+          };
+          es.onerror = () => { /* EventSource auto-retries */ };
+          window.__satelliteES = es;
+        } catch (e) {
+          console.warn('satellite state relay failed:', e.message);
+        }
+      }
+      // While we hold the T slot, re-check the satellite every 8s. If the
+      // device drops (uncalibrated, gone, PumpDirect crashed) we self-demote
+      // by sending satellite-claim ok:false so the host frees the slot.
+      setInterval(async () => {
+        const s = window.__lastVisitorState || {};
+        const myP = (s.participants || []).find(p => p.email === MY_EMAIL);
+        if (!myP || myP.canTarget !== true) return;
+        try {
+          const r = await fetch('http://localhost:3001/api/satellite/status', { cache: 'no-store' });
+          if (!r.ok) throw new Error('status ' + r.status);
+          const status = await r.json();
+          if (!status.ready) {
+            _satSend({ type: 'satellite-claim', ok: false, reason: 'local device dropped — ' + (status.deviceLabel ? 'no longer calibrated' : 'no primary device') });
+          }
+        } catch {
+          _satSend({ type: 'satellite-claim', ok: false, reason: 'local PumpDirect unreachable' });
+        }
+      }, 8000);
+
       function applyState(s) {
         window.__lastVisitorState = s;
         applyStandby(s);
@@ -882,6 +1107,15 @@ function renderVisitorPage(req) {
         // If my own participant flags changed since page load, reload so server-rendered
         // sections (action buttons / "not in session" banner / etc.) match the new permissions.
         const myP = (s.participants || []).find(p => p.email === MY_EMAIL);
+        // canTarget transition observer: fire satellite handshake when it
+        // flips into 'pending'. Survives reconnects (resets __satelliteWanted
+        // on each state event so a re-pending re-triggers).
+        const wantHandshake = !!(myP && myP.canTarget === 'pending');
+        if (wantHandshake && !window.__satelliteInFlight && window.__satelliteWanted !== 'pending') {
+          window.__satelliteInFlight = true;
+          _runSatelliteHandshake(s.startedAt || s.sessionProfileId || '');
+        }
+        window.__satelliteWanted = myP ? myP.canTarget : false;
         const sig = myP ? (Number(!!myP.canConnect) + ':' + Number(!!myP.canControl) + ':' + Number(!!myP.canBroadcast) + ':' + Number(!!myP.muted)) : 'gone';
         if (window.__mySig !== undefined && window.__mySig !== sig && s.active) {
           location.reload();
@@ -974,20 +1208,37 @@ function renderVisitorPage(req) {
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
       }
+      // A/B toggle helpers — same shape as the Launchpad's, per-tab.
+      function _abTarget() {
+        try { return sessionStorage.getItem('pd-ab-target') === 'target' ? 'target' : 'host'; } catch { return 'host'; }
+      }
+      function _setAbTarget(v) {
+        const next = v === 'target' ? 'target' : 'host';
+        try { sessionStorage.setItem('pd-ab-target', next); } catch {}
+        document.querySelectorAll('.ab-toggle .ab-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.ab === next);
+        });
+      }
+      window.addEventListener('DOMContentLoaded', () => _setAbTarget(_abTarget()));
+
       async function vFire(id) {
-        const r = await fetch('/api/visitor/fire-action', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ actionTemplateId: id }) });
+        const r = await fetch('/api/visitor/fire-action', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ actionTemplateId: id, target: _abTarget() }) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
       }
       async function vPumpOff() {
-        const r = await fetch('/api/visitor/pump-off', { method: 'POST' });
+        const r = await fetch('/api/visitor/pump-off', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ target: _abTarget() }) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
       }
       async function vPumpOn() {
-        const r = await fetch('/api/visitor/pump-on', { method: 'POST' });
+        const r = await fetch('/api/visitor/pump-on', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ target: _abTarget() }) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
       }
       function vPumpToggle() {
-        const running = !!(window.__lastVisitorState && window.__lastVisitorState.currentActionTemplateId);
+        const s = window.__lastVisitorState || {};
+        const ab = _abTarget();
+        const running = ab === 'target'
+          ? !!(s.targetState && s.targetState.currentActionTemplateId)
+          : !!s.currentActionTemplateId;
         if (running) vPumpOff(); else vPumpOn();
       }
       async function vTimed() {
@@ -995,8 +1246,27 @@ function renderVisitorPage(req) {
         if (s == null) return;
         const seconds = parseFloat(s);
         if (!Number.isFinite(seconds) || seconds <= 0) return alert('positive seconds required');
-        const r = await fetch('/api/visitor/timed', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ seconds }) });
+        const r = await fetch('/api/visitor/timed', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ seconds, target: _abTarget() }) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
+      }
+      async function vConfirmStart() {
+        const r = await fetch('/api/visitor/accept-start', { method: 'POST' });
+        if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
+      }
+      // Target-side safety: bypass the host and hit our own local satellite
+      // /pump-off. Uses the pairing token cached during the handshake.
+      async function vStopMyPump() {
+        const p = window.__satellitePairing;
+        if (!p || !p.token) return alert('Local PumpDirect pairing not active');
+        if (!confirm('Force-stop YOUR pump now?')) return;
+        try {
+          const r = await fetch('http://localhost:3001/api/satellite/pump-off', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ token: p.token }),
+          });
+          if (!r.ok) alert('Local pump-off failed: HTTP ' + r.status);
+        } catch (e) { alert('Could not reach localhost PumpDirect: ' + e.message); }
       }
       async function vCycle() {
         const onSec = parseFloat(prompt('On (seconds):', '2'));
@@ -1005,7 +1275,7 @@ function renderVisitorPage(req) {
         if (!Number.isFinite(offSec) || offSec <= 0) return;
         const times = parseInt(prompt('Repeat times:', '5'), 10);
         if (!Number.isInteger(times) || times <= 0) return;
-        const r = await fetch('/api/visitor/cycle', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ onSec, offSec, times }) });
+        const r = await fetch('/api/visitor/cycle', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ onSec, offSec, times, target: _abTarget() }) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
       }
       async function vSend() {
@@ -1072,6 +1342,36 @@ function renderVisitorPage(req) {
           } else if (m.type === 'presence-msg') {
             const el = document.getElementById('chat-presence-line');
             if (el) el.textContent = m.text || '';
+          } else if (m.type === 'template-snapshot') {
+            // Dual-Target: host pushed the action template library after our
+            // satellite handshake landed. Cache in memory; step 6 wires it
+            // into the A/B-toggle action grid renderer.
+            window.__dualTemplates = {
+              templates: Array.isArray(m.templates) ? m.templates : [],
+              templateProfile: m.templateProfile || null,
+              profileMode: m.profileMode || 'single-target',
+              receivedAt: Date.now(),
+            };
+          } else if (m.type === 'remote-action') {
+            // Dual-Target: someone fired a button targeting our pump. Proxy
+            // the inline steps to our local PumpDirect's satellite endpoint,
+            // which will run them on our primary device. Token authenticates
+            // the request — must match the one our local satellite issued.
+            fetch('http://localhost:3001/api/satellite/run-action', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ token: m.token, steps: m.steps, label: m.label }),
+            }).then(r => {
+              if (!r.ok) console.warn('satellite run-action rejected:', r.status);
+            }).catch(err => console.warn('satellite run-action proxy failed:', err.message));
+          } else if (m.type === 'remote-pump-off') {
+            // Dual-Target: host (or another controller) hit Pump Off targeted
+            // at our pump. Proxy directly to /api/satellite/pump-off.
+            fetch('http://localhost:3001/api/satellite/pump-off', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ token: m.token }),
+            }).catch(err => console.warn('satellite pump-off proxy failed:', err.message));
           } else {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
             if (m.type === 'peer-joined' && myBroadcastStream) setTimeout(broadcastTrackState, 800);
@@ -1107,18 +1407,60 @@ router.post('/api/visitor/chat', (req, res) => {
   res.json({ ok: true });
 });
 
+// Dual-target visitor target field: normalize and clamp.
+function _resolveVisitorTarget(req, state) {
+  const t = req.body?.target;
+  if (state.mode !== 'dual-target') return 'host';
+  return t === 'target' ? 'target' : 'host';
+}
+
+// Deliver a remote-action WS message to the paired target's visitor (which
+// will proxy it to their local PumpDirect's satellite). Returns true on
+// successful delivery, false otherwise (no pair, no WS connection).
+function _emitVisitorRemoteAction(label, steps) {
+  const pair = session.getActiveTargetPair();
+  if (!pair || !pair.token) {
+    console.log(`remote-action "${label}" dropped — no paired target with token`);
+    return false;
+  }
+  const signaling = require('../services/signaling-service');
+  const delivered = signaling.deliver(pair.email, { type: 'remote-action', token: pair.token, label, steps });
+  if (delivered) {
+    try {
+      const { emitOverlay } = require('../services/event-bus');
+      emitOverlay({ kind: 'action-flash', text: `→ ${pair.deviceLabel || 'target'}: ${label}` });
+    } catch {}
+  }
+  return delivered;
+}
+
 router.post('/api/visitor/fire-action', async (req, res) => {
   const email = req.user?.email;
   if (!email) return res.status(401).json({ error: 'unauthenticated' });
   const state = session.getState();
   if (!state.active) return res.status(400).json({ error: 'no active session' });
   if (state.introPending) return res.status(400).json({ error: 'intro in progress — action panel locked' });
+  if (state.mode === 'dual-target' && !session.isSessionFullyStarted()) return res.status(400).json({ error: 'session not started — both parties must confirm' });
   const participant = findParticipant(email);
-  if (!participant || !participant.canControl) {
+  const isTargetUser = !!(participant && participant.canTarget === true);
+  // In dual mode, controllers only fire if the host has ticked
+  // "Allow visitor controllers in dual mode". Targets always can.
+  const dualMode = state.mode === 'dual-target';
+  const allowVisCtrl = dualMode ? !!state.allowVisitorControllersInDual : true;
+  const canFire = (participant && participant.canControl && allowVisCtrl) || (dualMode && isTargetUser);
+  if (!participant || !canFire) {
     return res.status(403).json({ error: 'you do not have device control permission for this session' });
   }
   const account = findAccount(email);
   const nickname = account?.nickname || email.split('@')[0];
+  const target = _resolveVisitorTarget(req, state);
+  if (target === 'target') {
+    const tplData = require('../services/templates-service').load();
+    const action = tplData.actionTemplates.find(a => a.id === req.body?.actionTemplateId);
+    if (!action) return res.status(404).json({ error: 'action template not found' });
+    _emitVisitorRemoteAction(action.name, action.steps);
+    return res.json({ ok: true, target: 'target', stubbed: true });
+  }
   try {
     await actionEngine.fireAction({
       actionTemplateId: req.body?.actionTemplateId,
@@ -1137,8 +1479,13 @@ function _visitorCtx(req, res) {
   const state = session.getState();
   if (!state.active) { res.status(400).json({ error: 'no active session' }); return null; }
   if (state.introPending) { res.status(400).json({ error: 'intro in progress — action panel locked' }); return null; }
+  if (state.mode === 'dual-target' && !session.isSessionFullyStarted()) { res.status(400).json({ error: 'session not started — both parties must confirm' }); return null; }
   const participant = findParticipant(email);
-  if (!participant || !participant.canControl) {
+  const isTargetUser = !!(participant && participant.canTarget === true);
+  const dualMode = state.mode === 'dual-target';
+  const allowVisCtrl = dualMode ? !!state.allowVisitorControllersInDual : true;
+  const canFire = (participant && participant.canControl && allowVisCtrl) || (dualMode && isTargetUser);
+  if (!participant || !canFire) {
     res.status(403).json({ error: 'you do not have device control permission for this session' });
     return null;
   }
@@ -1149,10 +1496,36 @@ function _visitorCtx(req, res) {
 router.post('/api/visitor/pump-off', (req, res) => {
   const ctx = _visitorCtx(req, res); if (!ctx) return;
   try {
+    const target = _resolveVisitorTarget(req, session.getState());
+    if (target === 'target') {
+      const pair = session.getActiveTargetPair();
+      if (!pair || !pair.token) throw new Error('no paired target with token');
+      const signaling = require('../services/signaling-service');
+      const delivered = signaling.deliver(pair.email, { type: 'remote-pump-off', token: pair.token });
+      if (!delivered) throw new Error('target not connected');
+      require('../services/event-bus').emitOverlay({ kind: 'action-flash', text: `${ctx.nickname} stopped ${pair.deviceLabel || 'target'}` });
+      return res.json({ ok: true, target: 'target' });
+    }
     actionEngine.abort(null);
     require('../services/event-bus').emitOverlay({ kind: 'action-flash', text: `${ctx.nickname} stopped the pump` });
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Target accepts the dual-mode session start. Caller must be the active T.
+// Voyeurs and non-target controllers can't accept.
+router.post('/api/visitor/accept-start', (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'unauthenticated' });
+  const state = session.getState();
+  if (!state.active) return res.status(400).json({ error: 'no active session' });
+  if (state.mode !== 'dual-target') return res.status(400).json({ error: 'mutual consent only applies in dual-target mode' });
+  const me = (state.participants || []).find(p => p.email === email);
+  if (!me || me.canTarget !== true) {
+    return res.status(403).json({ error: 'only the active target can accept' });
+  }
+  session.acceptStart('target');
+  res.json({ ok: true });
 });
 
 router.post('/api/visitor/pass-control', (req, res) => {
@@ -1190,6 +1563,11 @@ router.post('/api/visitor/pass-control', (req, res) => {
 router.post('/api/visitor/pump-on', async (req, res) => {
   const ctx = _visitorCtx(req, res); if (!ctx) return;
   try {
+    const target = _resolveVisitorTarget(req, session.getState());
+    if (target === 'target') {
+      _emitVisitorRemoteAction('Pump On', [{ type: 'on', durationMs: 24 * 3600 * 1000, indefinite: true }]);
+      return res.json({ ok: true, target: 'target', stubbed: true });
+    }
     await actionEngine.fireAction({
       inline: { name: 'Pump On', steps: [{ type: 'on', durationMs: 24 * 3600 * 1000, indefinite: true }] },
       byEmail: ctx.email, byNickname: ctx.nickname,
@@ -1203,8 +1581,14 @@ router.post('/api/visitor/timed', async (req, res) => {
   try {
     const sec = parseFloat(req.body?.seconds);
     if (!Number.isFinite(sec) || sec <= 0) throw new Error('positive seconds required');
+    const target = _resolveVisitorTarget(req, session.getState());
+    const steps = [{ type: 'on', durationMs: Math.round(sec * 1000) }];
+    if (target === 'target') {
+      _emitVisitorRemoteAction(`Timed ${sec}s`, steps);
+      return res.json({ ok: true, target: 'target', stubbed: true });
+    }
     await actionEngine.fireAction({
-      inline: { name: `Timed ${sec}s`, steps: [{ type: 'on', durationMs: Math.round(sec * 1000) }] },
+      inline: { name: `Timed ${sec}s`, steps },
       byEmail: ctx.email, byNickname: ctx.nickname,
     });
     res.json({ ok: true });
@@ -1270,6 +1654,15 @@ router.post('/api/visitor/cycle', async (req, res) => {
     if (!Number.isFinite(onSec) || onSec <= 0) throw new Error('on seconds required');
     if (!Number.isFinite(offSec) || offSec <= 0) throw new Error('off seconds required');
     if (!Number.isInteger(times) || times <= 0) throw new Error('repeat times required');
+    const target = _resolveVisitorTarget(req, session.getState());
+    const steps = [{ type: 'repeat', times, steps: [
+      { type: 'on', durationMs: Math.round(onSec * 1000) },
+      { type: 'off', durationMs: Math.round(offSec * 1000) },
+    ]}];
+    if (target === 'target') {
+      _emitVisitorRemoteAction(`Cycle ${onSec}/${offSec} ×${times}`, steps);
+      return res.json({ ok: true, target: 'target', stubbed: true });
+    }
     await actionEngine.fireAction({
       inline: { name: `Cycle ${onSec}/${offSec} ×${times}`, steps: [{
         type: 'repeat', times, steps: [
