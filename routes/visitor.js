@@ -196,16 +196,17 @@ function renderVisitorPage(req) {
       </body></html>`;
   }
 
+  const pumpOffBtn = (state.active && canControl) ? `<button class="action-btn" onclick="vPumpOff()" style="background:#a13030;color:#fff">⏻ Pump Off</button>` : '';
   const actionGrid = !state.active
     ? '<p class="muted" style="color:#7a8597">No active session.</p>'
     : !canControl
       ? '<p class="muted" style="color:#7a8597">You can watch + chat, but the owner has not enabled device control for you.</p>'
-      : visibleActionIds.length
-        ? `<div class="action-grid">${visibleActionIds.map(id => {
-            const a = actionsById[id];
-            return `<button class="action-btn" data-action-id="${escapeHtml(id)}" onclick="vFire('${escapeHtml(id)}')">${escapeHtml(a?.name || '?')}</button>`;
-          }).join('')}</div>`
-        : '<p class="muted" style="color:#7a8597">No actions available at this capacity.</p>';
+      : `<div class="action-grid">${pumpOffBtn}${visibleActionIds.length
+          ? visibleActionIds.map(id => {
+              const a = actionsById[id];
+              return `<button class="action-btn" data-action-id="${escapeHtml(id)}" onclick="vFire('${escapeHtml(id)}')">${escapeHtml(a?.name || '?')}</button>`;
+            }).join('')
+          : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No action templates active at this capacity — Pump Off still works.</p>'}</div>`;
 
   // Participant list — live during session, allowlist preview when idle.
   // Grouped into Host (owner) / Controllers (canControl) / Voyeurs (everyone else).
@@ -589,6 +590,10 @@ function renderVisitorPage(req) {
         const r = await fetch('/api/visitor/fire-action', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ actionTemplateId: id }) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
       }
+      async function vPumpOff() {
+        const r = await fetch('/api/visitor/pump-off', { method: 'POST' });
+        if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
+      }
       async function vSend() {
         const input = document.getElementById('chat-input');
         const text = input.value.trim();
@@ -681,6 +686,22 @@ router.post('/api/visitor/fire-action', async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
+});
+
+router.post('/api/visitor/pump-off', (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'unauthenticated' });
+  if (!session.getState().active) return res.status(400).json({ error: 'no active session' });
+  const participant = findParticipant(email);
+  if (!participant || !participant.canControl) {
+    return res.status(403).json({ error: 'you do not have device control permission for this session' });
+  }
+  const account = findAccount(email);
+  const nickname = account?.nickname || email.split('@')[0];
+  try {
+    actionEngine.abort(`${nickname} hit Pump Off`);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 module.exports = { router, renderVisitorPage };

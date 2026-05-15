@@ -271,12 +271,12 @@ router.get('/templates', (req, res) => {
       let __actionEditorId = 0;
       function _nextId() { return ++__actionEditorId; }
       function _newStep(type) {
-        if (type === 'repeat') return { _id: _nextId(), type: 'repeat', times: 3, steps: [] };
+        if (type === 'repeat') return { _id: _nextId(), type: 'repeat', times: 3, infinite: false, steps: [] };
         return { _id: _nextId(), type, durationMs: 2000, deviceId: 'primary' };
       }
       function _cloneWithIds(steps) {
         return (steps || []).map(s => {
-          if (s.type === 'repeat') return { _id: _nextId(), type: 'repeat', times: s.times || 1, steps: _cloneWithIds(s.steps) };
+          if (s.type === 'repeat') return { _id: _nextId(), type: 'repeat', times: s.times || 1, infinite: !!s.infinite, steps: _cloneWithIds(s.steps) };
           return { _id: _nextId(), type: s.type, durationMs: s.durationMs, deviceId: s.deviceId || 'primary' };
         });
       }
@@ -313,6 +313,13 @@ router.get('/templates', (req, res) => {
         else if (key === 'type') r.node.type = value;
         else r.node[key] = value;
       }
+      function _setRepeatInfinite(id, value) {
+        const r = _findStep(id);
+        if (!r || r.node.type !== 'repeat') return;
+        r.node.infinite = !!value;
+        if (!r.node.infinite && (!r.node.times || r.node.times < 1)) r.node.times = 3;
+        _renderActionTree();
+      }
       function _renderDeviceSelect(step) {
         return '<select onchange="_updateStepField(' + step._id + ', \\'deviceId\\', this.value)" style="min-width:160px">' +
           ALL_DEVICES.map(d => '<option value="' + d.value + '"' + (step.deviceId === d.value ? ' selected' : '') + '>' + d.label + '</option>').join('') +
@@ -320,10 +327,14 @@ router.get('/templates', (req, res) => {
       }
       function _renderActionStep(step) {
         if (step.type === 'repeat') {
+          const timesInput = step.infinite
+            ? '<span class="muted">— runs forever until standby/E-STOP/Pump Off</span>'
+            : '<input type="number" min="1" value="' + step.times + '" onchange="_updateStepField(' + step._id + ', \\'times\\', this.value)" style="width:70px"> times';
           return '<div class="ae-row ae-repeat">' +
             '<div class="ae-head">' +
               '<strong>Repeat</strong> ' +
-              '<input type="number" min="1" value="' + step.times + '" onchange="_updateStepField(' + step._id + ', \\'times\\', this.value)" style="width:70px"> times' +
+              timesInput +
+              ' <label style="margin-left:10px"><input type="checkbox"' + (step.infinite ? ' checked' : '') + ' onchange="_setRepeatInfinite(' + step._id + ', this.checked)"> ∞ infinite</label>' +
               '<button class="ae-x" onclick="_removeActionStep(' + step._id + ')" title="remove">×</button>' +
             '</div>' +
             '<div class="ae-nested">' +

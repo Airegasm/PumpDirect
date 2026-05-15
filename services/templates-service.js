@@ -71,7 +71,9 @@ function validateSteps(steps, depth = 0) {
         throw new Error('deviceId must be a string or omitted (defaults to primary)');
       }
     } else if (s.type === 'repeat') {
-      if (!Number.isInteger(s.times) || s.times <= 0) throw new Error('repeat needs positive integer "times"');
+      if (s.infinite !== true) {
+        if (!Number.isInteger(s.times) || s.times <= 0) throw new Error('repeat needs positive integer "times" or infinite=true');
+      }
       validateSteps(s.steps, depth + 1);
     } else {
       throw new Error(`unknown step type: ${s.type}`);
@@ -81,7 +83,12 @@ function validateSteps(steps, depth = 0) {
 
 function normalizeSteps(steps) {
   return steps.map(s => {
-    if (s.type === 'repeat') return { type: 'repeat', times: s.times, steps: normalizeSteps(s.steps) };
+    if (s.type === 'repeat') {
+      const out = { type: 'repeat', steps: normalizeSteps(s.steps) };
+      if (s.infinite) out.infinite = true;
+      else out.times = s.times;
+      return out;
+    }
     const out = { type: s.type, durationMs: s.durationMs };
     if (s.deviceId && s.deviceId !== 'primary') out.deviceId = s.deviceId;
     return out;

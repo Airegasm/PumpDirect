@@ -89,6 +89,11 @@ function ownerLayout({ title, active, body }) {
   .participants-pane .p-flags input { transform: scale(0.85); margin: 0 1px; }
   .presence-dot { width: 8px; height: 8px; border-radius: 50%; background: #7a8597; flex-shrink: 0; }
   .presence-dot.online { background: #6ddc9b; }
+  .session-pill { padding: 5px 14px; border-radius: 999px; font-size: 0.95rem; font-weight: 600; text-decoration: none; }
+  .session-pill.idle { background: #2a2f3a; color: #9aa4b2; }
+  .session-pill.ok { background: #133d2b; color: #6ddc9b; }
+  .session-pill.warn { background: #4a3413; color: #f0c674; }
+  .session-pill.bad { background: #4a1b1b; color: #f08484; }
   @media (max-width: 900px) {
     .top-row { grid-template-columns: 1fr; }
     .chat-row { grid-template-columns: 1fr; }
@@ -131,10 +136,34 @@ function ownerLayout({ title, active, body }) {
 <body>
 <div class="topbar">
   <h1>PumpDirect <span class="muted">— owner console</span></h1>
-  <span class="muted" style="font-size:0.9rem">loopback only</span>
+  <a id="session-indicator" href="/" class="session-pill idle" title="jump to Launchpad">○ idle</a>
 </div>
 <div class="tabs">${tabs}</div>
 <main>${body}</main>
+<script>
+(function() {
+  const el = document.getElementById('session-indicator');
+  if (!el) return;
+  async function poll() {
+    try {
+      const r = await fetch('/api/launchpad/state');
+      if (!r.ok) return;
+      const { state } = await r.json();
+      const cls = state.active ? (state.emergencyStopped ? 'bad' : state.paused ? 'warn' : 'ok') : 'idle';
+      const cap = Math.round(state.capacity || 0);
+      const txt = state.active
+        ? (state.emergencyStopped ? '⛔ E-STOP'
+          : state.paused ? '⏸ Standby · ' + cap + '%'
+          : '● Live · ' + cap + '%')
+        : '○ idle';
+      el.className = 'session-pill ' + cls;
+      el.textContent = txt;
+    } catch {}
+  }
+  poll();
+  setInterval(poll, 4000);
+})();
+</script>
 </body>
 </html>`;
 }

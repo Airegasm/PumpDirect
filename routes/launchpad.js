@@ -84,12 +84,16 @@ router.get('/', (req, res) => {
   const visibleActionIds = state.active
     ? Array.from(new Set([...milestoneActionIds, ...alwaysActionIds]))
     : [];
-  const actionButtons = visibleActionIds.length
+  const pumpOffBtn = state.active
+    ? `<button class="action-btn" onclick="lpPumpOff()" style="background:#a13030;color:#fff">⏻ Pump Off</button>`
+    : '';
+  const actionButtonsCore = visibleActionIds.length
     ? visibleActionIds.map(id => {
         const a = actionsById[id];
-        return `<button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')" style="margin:4px">${escape(a?.name || '?')}</button>`;
+        return `<button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')">${escape(a?.name || '?')}</button>`;
       }).join('')
-    : `<p class="muted">${state.active ? 'No actions available at this capacity.' : 'Start a session to enable action templates.'}</p>`;
+    : (state.active ? '<p class="muted">No actions available at this capacity.</p>' : '<p class="muted">Start a session to enable action templates.</p>');
+  const actionButtons = pumpOffBtn + actionButtonsCore;
 
   const calibratedReady = primaryDevice && primaryDevice.calibration?.secondsTo100 > 0;
   const sessionReady = calibratedReady && allAllowedEmails.length > 0;
@@ -119,6 +123,9 @@ router.get('/', (req, res) => {
     <div class="top-row">
       <div class="card gauge-card">
         ${gauge(state.capacity)}
+        <p style="margin:6px 0 0">
+          <button onclick="lpEditCapacity()" ${state.active ? '' : 'disabled'} style="background:#2a2f3a;padding:4px 10px;font-size:0.85rem">✎ Set capacity</button>
+        </p>
         <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status">
           Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
         </p>
@@ -333,6 +340,12 @@ router.get('/', (req, res) => {
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
       }
+      async function lpPumpOff() {
+        const r = await fetch('/api/launchpad/session/pump-off', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('pump off', 'ok');
+      }
       async function lpSendChat() {
         const input = document.getElementById('chat-input');
         const text = input.value.trim();
@@ -440,6 +453,7 @@ router.get('/', (req, res) => {
         applyOutgoingTrackState();
       }
       function applyState(s) {
+        window.__lastState = s;
         applyStandby(s);
         maybeAutoToggleCam(s);
         __pumpOnState = !!s.pumpOn;
@@ -645,6 +659,19 @@ router.get('/', (req, res) => {
         const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/participants/' + encodeURIComponent(email), { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ [flag]: value }) });
         if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
       }
+      function lpEditCapacity() {
+        const curState = window.__lastState || { capacity: 0 };
+        modalOpen('Set capacity', '<p>Override the current session capacity. Needle pins at 100% visually; numbers above 100 are allowed when "Disable device control at 100%" is off.</p>' +
+          '<p><label>Capacity (%) <input id="m-cap" type="number" min="0" step="0.1" value="' + (curState.capacity || 0).toFixed(1) + '" style="width:100px"></label></p>',
+          async () => {
+            const v = parseFloat(document.getElementById('m-cap').value);
+            const r = await fetch('/api/launchpad/session/capacity', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ value: v }) });
+            const d = await r.json();
+            if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+            modalClose();
+            flash('capacity set to ' + v.toFixed(0) + '%', 'ok');
+          });
+      }
       async function lpMakeSoleController(email) {
         const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/sole-controller', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }) });
         const d = await r.json();
@@ -795,6 +822,29 @@ router.post('/api/launchpad/session/pause', (_req, res) => {
     const state = session.setPaused(!wasPaused);
     chat.system(state.paused ? 'Entered standby' : 'Standby exited — session is live');
     res.json({ state });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/launchpad/session/pump-off', (_req, res) => {
+  try {
+    if (!session.getState().active) throw new Error('no active session');
+    const cfg = config.load();
+    const ownerEmail = cfg.cloudflare?.ownerEmail || 'owner@local';
+    const ownerName = cfg.owner?.displayName?.trim() || ownerEmail.split('@')[0] || 'owner';
+    actionEngine.abort(`${ownerName} hit Pump Off`);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/launchpad/session/capacity', (req, res) => {
+  try {
+    if (!session.getState().active) throw new Error('no active session');
+    const v = parseFloat(req.body?.value);
+    if (!Number.isFinite(v) || v < 0) throw new Error('value must be a non-negative number');
+    session._setLive({ capacity: v });
+    require('../services/event-bus').emitState(session.getState());
+    chat.system(`Capacity manually set to ${Math.round(v)}%`);
+    res.json({ ok: true, capacity: v });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 

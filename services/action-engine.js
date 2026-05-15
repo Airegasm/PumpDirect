@@ -176,9 +176,17 @@ async function _runSteps(steps, primary, signal, repeatContext = null) {
       await _pumpOff(target);
       await _sleep(step.durationMs, signal);
     } else if (step.type === 'repeat') {
-      for (let i = 0; i < step.times; i++) {
-        if (signal.aborted) return;
-        await _runSteps(step.steps, primary, signal, { iteration: i + 1, times: step.times });
+      if (step.infinite) {
+        let i = 0;
+        while (!signal.aborted) {
+          i++;
+          await _runSteps(step.steps, primary, signal, { iteration: i, times: '∞' });
+        }
+      } else {
+        for (let i = 0; i < step.times; i++) {
+          if (signal.aborted) return;
+          await _runSteps(step.steps, primary, signal, { iteration: i + 1, times: step.times });
+        }
       }
       _setRepeat(null);
     }
