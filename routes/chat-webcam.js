@@ -12,7 +12,8 @@ const router = express.Router();
 router.get('/chat-webcam', (_req, res) => {
   const cfg = config.load();
   const owner = cfg.owner || {};
-  const cam = owner.camera || { mode: 'off', crop: { xPct: 25, yPct: 12.5, sizePct: 50 }, snapshotEveryPct: 5 };
+  const cam = owner.camera || { mode: 'off', resolution: { width: 1280, height: 720 }, snapshotEveryPct: 5 };
+  const camRes = cam.resolution || { width: 1280, height: 720 };
 
   const body = `
     <h2>Chat / Webcam</h2>
@@ -50,24 +51,28 @@ router.get('/chat-webcam', (_req, res) => {
     </div>
 
     <div class="card">
-      <h3>Cam preview &amp; crop (1:1)</h3>
-      <p class="muted">Drag the square to position it. Drag the bottom-right corner to resize. Visitors see only the cropped region.</p>
-      <div id="cw-stage" style="position:relative;display:inline-block;background:#0a0c10;border:1px solid #2a2f3a;border-radius:8px;overflow:hidden;max-width:100%">
-        <video id="cw-video" autoplay muted playsinline style="display:block;max-width:640px;width:100%;height:auto"></video>
-        <div id="cw-crop" style="position:absolute;border:2px solid #2a6df4;box-shadow:0 0 0 9999px rgba(0,0,0,0.45);box-sizing:border-box;cursor:move;touch-action:none">
-          <div id="cw-handle" style="position:absolute;right:-10px;bottom:-10px;width:20px;height:20px;background:#2a6df4;border-radius:50%;cursor:nwse-resize;touch-action:none"></div>
-        </div>
+      <h3>Cam preview &amp; resolution</h3>
+      <p>
+        <label>Resolution
+          <select id="cw-res" onchange="cwSaveResolution()" style="min-width:260px">
+            <option value="640x480"   ${camRes.width === 640  && camRes.height === 480  ? 'selected' : ''}>640×480 (4:3 · low)</option>
+            <option value="960x540"   ${camRes.width === 960  && camRes.height === 540  ? 'selected' : ''}>960×540 (16:9 · qHD)</option>
+            <option value="1280x720"  ${camRes.width === 1280 && camRes.height === 720  ? 'selected' : ''}>1280×720 (16:9 · 720p)</option>
+            <option value="1920x1080" ${camRes.width === 1920 && camRes.height === 1080 ? 'selected' : ''}>1920×1080 (16:9 · 1080p)</option>
+            <option value="640x640"   ${camRes.width === 640  && camRes.height === 640  ? 'selected' : ''}>640×640 (1:1 · square)</option>
+            <option value="native"    ${camRes.width === 'native' ? 'selected' : ''}>Camera default</option>
+          </select>
+        </label>
+      </p>
+      <p class="muted" style="font-size:0.95rem;margin:6px 0 12px">Visitors see whatever aspect ratio you broadcast — the UI scales tiles automatically. Controllers stay locked at 1:1 regardless. The browser may snap to the closest supported resolution.</p>
+      <div style="position:relative;display:inline-block;background:#0a0c10;border:1px solid #2a2f3a;border-radius:8px;overflow:hidden;max-width:100%">
+        <video id="cw-video" autoplay muted playsinline style="display:block;max-width:720px;width:100%;height:auto"></video>
       </div>
-      <p style="margin-top:14px">
+      <p style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button onclick="cwStartCam()">Start camera</button>
         <button onclick="cwStopCam()">Stop camera</button>
-        <button onclick="cwSaveCrop()">Save crop</button>
-        <button onclick="cwSendTestSnap()">Send test snapshot to chat</button>
-      </p>
-      <p class="muted" style="font-size:0.95rem">Current saved crop:
-        x=<span id="cw-x">${cam.crop.xPct.toFixed(1)}</span>%,
-        y=<span id="cw-y">${cam.crop.yPct.toFixed(1)}</span>%,
-        size=<span id="cw-size">${cam.crop.sizePct.toFixed(1)}</span>%
+        <button onclick="cwSendTestSnap()">Send test snapshot</button>
+        <span id="cw-actual" class="muted" style="font-size:0.9rem"></span>
       </p>
     </div>
 
@@ -76,11 +81,10 @@ router.get('/chat-webcam', (_req, res) => {
     <div id="cw-msg" style="position:fixed;bottom:20px;right:20px;max-width:380px;z-index:1100"></div>
 
     <script>
-      const SAVED_CROP = ${JSON.stringify(cam.crop)};
+      const SAVED_RES = ${JSON.stringify(camRes)};
       const SAVED_MODE = ${JSON.stringify(cam.mode)};
       const SAVED_THRESH = ${JSON.stringify(cam.snapshotEveryPct)};
       let videoEl = null, stream = null;
-      let crop = { ...SAVED_CROP };
       let lastSnapCapacity = -Infinity;
 
       function flash(msg, cls) {
@@ -88,27 +92,9 @@ router.get('/chat-webcam', (_req, res) => {
         el.innerHTML = '<div class="card" style="margin:0;border-color:' + (cls === 'bad' ? '#f08484' : cls === 'ok' ? '#6ddc9b' : '#f0c674') + '">' + msg + '</div>';
         setTimeout(() => { el.innerHTML = ''; }, 4000);
       }
-      function applyCropOverlay() {
-        const v = document.getElementById('cw-video');
-        const box = document.getElementById('cw-crop');
-        if (!v || !v.videoWidth) return;
-        const dispW = v.clientWidth, dispH = v.clientHeight;
-        const size = (crop.sizePct / 100) * dispH;
-        const x = (crop.xPct / 100) * dispW;
-        const y = (crop.yPct / 100) * dispH;
-        box.style.left = x + 'px';
-        box.style.top = y + 'px';
-        box.style.width = size + 'px';
-        box.style.height = size + 'px';
-      }
-      function clampCrop() {
-        crop.sizePct = Math.max(10, Math.min(100, crop.sizePct));
-        const v = document.getElementById('cw-video');
-        const aspect = (v.videoWidth && v.videoHeight) ? (v.videoWidth / v.videoHeight) : 16/9;
-        // Convert crop size (% of height) to width %.
-        const widthPct = crop.sizePct / aspect;
-        crop.xPct = Math.max(0, Math.min(100 - widthPct, crop.xPct));
-        crop.yPct = Math.max(0, Math.min(100 - crop.sizePct, crop.yPct));
+      function _videoConstraintsFromSaved() {
+        if (SAVED_RES && SAVED_RES.width === 'native') return { video: true, audio: false };
+        return { video: { width: { ideal: SAVED_RES.width }, height: { ideal: SAVED_RES.height } }, audio: false };
       }
       async function cwStartCam() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -116,15 +102,18 @@ router.get('/chat-webcam', (_req, res) => {
           return;
         }
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          stream = await navigator.mediaDevices.getUserMedia(_videoConstraintsFromSaved());
           const v = document.getElementById('cw-video');
           v.srcObject = stream;
           videoEl = v;
-          v.onloadedmetadata = () => { applyCropOverlay(); };
+          v.onloadedmetadata = () => {
+            const actual = document.getElementById('cw-actual');
+            if (actual && v.videoWidth) actual.textContent = 'actual: ' + v.videoWidth + '×' + v.videoHeight;
+          };
         } catch (e) {
           console.error('camera failed', e);
           let hint = '';
-          if (e.name === 'NotFoundError' || e.name === 'OverconstrainedError') hint = ' — no camera device detected (check OS privacy/cam access)';
+          if (e.name === 'NotFoundError' || e.name === 'OverconstrainedError') hint = ' — no camera device detected (check OS privacy/cam access) or the chosen resolution isn\\'t supported (try Camera default)';
           else if (e.name === 'NotAllowedError') hint = ' — browser permission denied (click the camera icon in the address bar)';
           else if (e.name === 'NotReadableError') hint = ' — camera busy (Zoom/Meet/etc. holding it?)';
           else if (e.name === 'SecurityError') hint = ' — page must be served over https:// or http://localhost';
@@ -135,6 +124,22 @@ router.get('/chat-webcam', (_req, res) => {
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
         const v = document.getElementById('cw-video');
         v.srcObject = null;
+        const actual = document.getElementById('cw-actual');
+        if (actual) actual.textContent = '';
+      }
+      async function cwSaveResolution() {
+        const val = document.getElementById('cw-res').value;
+        let resolution;
+        if (val === 'native') resolution = { width: 'native', height: 'native' };
+        else {
+          const [w, h] = val.split('x').map(Number);
+          resolution = { width: w, height: h };
+        }
+        const r = await fetch('/api/owner/camera', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ resolution }) });
+        if (!r.ok) { const d = await r.json(); return flash(d.error || 'failed', 'bad'); }
+        // re-acquire with new resolution if cam is on
+        if (stream) { cwStopCam(); await cwStartCam(); }
+        flash('resolution saved · ' + val, 'ok');
       }
       let __lastSavedName = ${JSON.stringify(owner.displayName || '')};
       async function cwSaveName(silentIfUnchanged) {
@@ -146,16 +151,6 @@ router.get('/chat-webcam', (_req, res) => {
         __lastSavedName = displayName;
         document.title = 'PumpDirect — ' + (displayName || 'owner');
         flash('saved', 'ok');
-      }
-      async function cwSaveCrop() {
-        clampCrop();
-        const r = await fetch('/api/owner/camera', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ crop }) });
-        const d = await r.json();
-        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
-        document.getElementById('cw-x').textContent = crop.xPct.toFixed(1);
-        document.getElementById('cw-y').textContent = crop.yPct.toFixed(1);
-        document.getElementById('cw-size').textContent = crop.sizePct.toFixed(1);
-        flash('crop saved', 'ok');
       }
       async function cwSaveMode(mode) {
         const r = await fetch('/api/owner/camera', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ mode }) });
@@ -171,12 +166,15 @@ router.get('/chat-webcam', (_req, res) => {
         const v = document.getElementById('cw-video');
         if (!v || !v.videoWidth) return null;
         const canvas = document.getElementById('cw-canvas');
-        const sw = v.videoWidth, sh = v.videoHeight;
-        const cropPxSize = (crop.sizePct / 100) * sh;
-        const cropPxX = (crop.xPct / 100) * sw;
-        const cropPxY = (crop.yPct / 100) * sh;
+        // Target ~640px on long edge, preserve aspect.
+        const maxLong = 640;
+        const ar = v.videoWidth / v.videoHeight;
+        let cw, ch;
+        if (v.videoWidth >= v.videoHeight) { cw = Math.min(maxLong, v.videoWidth); ch = Math.round(cw / ar); }
+        else { ch = Math.min(maxLong, v.videoHeight); cw = Math.round(ch * ar); }
+        canvas.width = cw; canvas.height = ch;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(v, cropPxX, cropPxY, cropPxSize, cropPxSize, 0, 0, 512, 512);
+        ctx.drawImage(v, 0, 0, v.videoWidth, v.videoHeight, 0, 0, cw, ch);
         return canvas.toDataURL('image/jpeg', 0.82);
       }
       async function postSnapshot(dataUrl) {
@@ -198,39 +196,6 @@ router.get('/chat-webcam', (_req, res) => {
         if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
         else flash(e.target.checked ? 'controller broadcast allowed' : 'controller broadcast disabled', 'ok');
       });
-
-      // Drag/resize the crop overlay
-      const stage = document.getElementById('cw-stage');
-      const box = document.getElementById('cw-crop');
-      const handle = document.getElementById('cw-handle');
-      let dragMode = null, startPt = null, startCrop = null;
-      function pt(e) { return { x: e.clientX, y: e.clientY }; }
-      function onPointerDown(e, mode) {
-        const v = document.getElementById('cw-video');
-        if (!v || !v.videoWidth) return;
-        dragMode = mode;
-        startPt = pt(e);
-        startCrop = { ...crop };
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      box.addEventListener('pointerdown', e => { if (e.target !== handle) onPointerDown(e, 'move'); });
-      handle.addEventListener('pointerdown', e => onPointerDown(e, 'resize'));
-      document.addEventListener('pointermove', e => {
-        if (!dragMode) return;
-        const v = document.getElementById('cw-video');
-        const dxPct = ((e.clientX - startPt.x) / v.clientWidth) * 100;
-        const dyPct = ((e.clientY - startPt.y) / v.clientHeight) * 100;
-        if (dragMode === 'move') {
-          crop.xPct = startCrop.xPct + dxPct;
-          crop.yPct = startCrop.yPct + dyPct;
-        } else if (dragMode === 'resize') {
-          crop.sizePct = startCrop.sizePct + dyPct;  // resize along Y for 1:1
-        }
-        clampCrop();
-        applyCropOverlay();
-      });
-      document.addEventListener('pointerup', () => { dragMode = null; });
 
       // Snapshot trigger — runs whenever a state update arrives via the launchpad WS
       function maybeSnap(state) {
@@ -262,16 +227,15 @@ router.get('/chat-webcam', (_req, res) => {
 router.patch('/api/owner/camera', (req, res) => {
   try {
     const cfg = config.load();
-    const cur = cfg.owner?.camera || { mode: 'off', crop: { xPct: 25, yPct: 12.5, sizePct: 50 }, snapshotEveryPct: 5 };
+    const cur = cfg.owner?.camera || { mode: 'off', resolution: { width: 1280, height: 720 }, snapshotEveryPct: 5 };
     const patch = req.body || {};
     const next = { ...cur };
     if (patch.mode && ['off', 'live', 'snapshot'].includes(patch.mode)) next.mode = patch.mode;
-    if (patch.crop && typeof patch.crop === 'object') {
-      next.crop = {
-        xPct: clamp01(patch.crop.xPct, cur.crop.xPct),
-        yPct: clamp01(patch.crop.yPct, cur.crop.yPct),
-        sizePct: Math.max(10, Math.min(100, Number(patch.crop.sizePct) || cur.crop.sizePct)),
-      };
+    if (patch.resolution && typeof patch.resolution === 'object') {
+      const w = patch.resolution.width;
+      const h = patch.resolution.height;
+      if (w === 'native' && h === 'native') next.resolution = { width: 'native', height: 'native' };
+      else if (Number.isFinite(Number(w)) && Number.isFinite(Number(h))) next.resolution = { width: Number(w), height: Number(h) };
     }
     if (patch.snapshotEveryPct != null) {
       next.snapshotEveryPct = Math.max(1, Math.min(100, Number(patch.snapshotEveryPct) || cur.snapshotEveryPct));
@@ -280,7 +244,6 @@ router.patch('/api/owner/camera', (req, res) => {
       next.allowControllerBroadcast = patch.allowControllerBroadcast;
     }
     config.save({ owner: { camera: next } });
-    // Push fresh state so subscribers see the new owner-cam config without a refresh.
     emitState(session.getState());
     res.json({ camera: next });
   } catch (e) { res.status(400).json({ error: e.message }); }
@@ -299,11 +262,5 @@ router.post('/api/owner/snapshot', (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
-
-function clamp01(val, fallback) {
-  const n = Number(val);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(0, Math.min(100, n));
-}
 
 module.exports = router;

@@ -29,7 +29,7 @@ const DEFAULTS = {
     tosAcceptedVersion: 0,                             // bumps on TOS revision force re-accept
     camera: {
       mode: 'off',                                     // 'off' | 'live' | 'snapshot'
-      crop: { xPct: 25, yPct: 12.5, sizePct: 50 },     // 1:1 square crop of source video, % of width/height
+      resolution: { width: 1280, height: 720 },        // owner's chosen capture resolution; constraints hint
       snapshotEveryPct: 5,                             // capacity %-points between snapshots
       allowControllerBroadcast: false,                 // controllers (canControl visitors) may publish their cam too
     },

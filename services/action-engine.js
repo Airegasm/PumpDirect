@@ -166,13 +166,13 @@ async function _runSteps(steps, primary, signal, repeatContext = null) {
     if (signal.aborted) return;
     if (step.type === 'on') {
       const target = _resolveStepDevice(step, primary);
-      _setStep({ type: 'on', durationMs: step.durationMs, startedAt: Date.now() });
+      _setStep({ type: 'on', durationMs: step.durationMs, startedAt: Date.now(), indefinite: !!step.indefinite });
       await _pumpOn(target);
       await _sleep(step.durationMs, signal);
       await _pumpOff(target);
     } else if (step.type === 'off') {
       const target = _resolveStepDevice(step, primary);
-      _setStep({ type: 'off', durationMs: step.durationMs, startedAt: Date.now() });
+      _setStep({ type: 'off', durationMs: step.durationMs, startedAt: Date.now(), indefinite: !!step.indefinite });
       await _pumpOff(target);
       await _sleep(step.durationMs, signal);
     } else if (step.type === 'repeat') {
@@ -193,21 +193,28 @@ async function _runSteps(steps, primary, signal, repeatContext = null) {
   }
 }
 
-async function fireAction({ actionTemplateId, byEmail, byNickname }) {
+async function fireAction({ actionTemplateId, inline, byEmail, byNickname }) {
   const s = session.getState();
   if (!s.active) throw new Error('no active session');
   if (s.emergencyStopped) throw new Error('E-STOP active — clear by stopping the session');
   if (s.paused) throw new Error('device control is paused');
   if (live.currentActionTemplateId) throw new Error('another action is already running');
 
-  const tplData = templates.load();
-  const action = tplData.actionTemplates.find(a => a.id === actionTemplateId);
-  if (!action) throw new Error('action template not found');
+  let action;
+  if (inline) {
+    templates.validateSteps(inline.steps);
+    action = { id: '_inline_' + Date.now(), name: inline.name || 'Manual', steps: inline.steps };
+  } else if (actionTemplateId) {
+    const tplData = templates.load();
+    action = tplData.actionTemplates.find(a => a.id === actionTemplateId);
+    if (!action) throw new Error('action template not found');
+  } else {
+    throw new Error('actionTemplateId or inline required');
+  }
 
   const primary = devices.primary();
   if (!primary || !primary.calibration?.secondsTo100) throw new Error('primary pump not calibrated');
 
-  // Profile-level guard: disable at 100%
   const sessData = session.load();
   const profile = sessData.sessionProfiles.find(p => p.id === s.sessionProfileId);
   if (profile?.settings?.disableControlAt100 && live.capacity >= 100) {
@@ -219,23 +226,27 @@ async function fireAction({ actionTemplateId, byEmail, byNickname }) {
   chat.system(`${byNickname || 'someone'} fired ${action.name}`);
   _publish();
 
-  let wasAborted = false;
-  try {
-    await _runSteps(action.steps, primary, abortController.signal);
-  } catch (e) {
-    if (e.name !== 'AbortError') logger.error('action run failed', e.message);
-    else wasAborted = true;
-  } finally {
-    wasAborted = wasAborted || !!(abortController && abortController.signal.aborted);
-    abortController = null;
-    _setRunning(null);
-    _setStep(null);
-    _setRepeat(null);
-    try { await control.turnOff(primary); } catch {}
-    _setPump(false);
-    chat.system(wasAborted ? `${action.name} aborted` : `${action.name} finished`);
-    _publish();
-  }
+  // Run the sequence asynchronously — caller does NOT await. Long-running
+  // actions (Pump On, infinite repeats, etc.) shouldn't hold the HTTP request.
+  (async () => {
+    let wasAborted = false;
+    try {
+      await _runSteps(action.steps, primary, abortController.signal);
+    } catch (e) {
+      if (e.name !== 'AbortError') logger.error('action run failed', e.message);
+      else wasAborted = true;
+    } finally {
+      wasAborted = wasAborted || !!(abortController && abortController.signal.aborted);
+      abortController = null;
+      _setRunning(null);
+      _setStep(null);
+      _setRepeat(null);
+      try { await control.turnOff(primary); } catch {}
+      _setPump(false);
+      chat.system(wasAborted ? `${action.name} aborted` : `${action.name} finished`);
+      _publish();
+    }
+  })();
 
   return { ok: true };
 }

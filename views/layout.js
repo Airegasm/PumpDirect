@@ -71,7 +71,7 @@ function ownerLayout({ title, active, body }) {
   .cam-grid { display: flex; justify-content: center; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; width: 100%; }
   .cam-grid .cam-slot { flex: 1 1 0; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
   .cam-grid .cam-slot:empty { display: none; }
-  .cam-tile { width: 100%; aspect-ratio: 1; background:#0a0c10; border:1px solid #2a2f3a; border-radius:14px; overflow:hidden; position:relative; }
+  .cam-tile { width: 100%; aspect-ratio: var(--cam-aspect, 1); background:#0a0c10; border:1px solid #2a2f3a; border-radius:14px; overflow:hidden; position:relative; }
   .cam-tile video { width:100%; height:100%; object-fit:cover; }
   .cam-tile .rt-label { position:absolute; bottom:10px; left:12px; background:rgba(0,0,0,0.65); padding:5px 12px; border-radius:6px; font-size:1rem; }
   .cam-tile .rt-ctrls { position:absolute; top:10px; right:10px; display:flex; gap:6px; }

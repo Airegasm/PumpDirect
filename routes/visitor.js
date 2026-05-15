@@ -113,7 +113,7 @@ function renderVisitorPage(req) {
     .cam-grid { display: flex; justify-content: center; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; width: 100%; }
     .cam-slot { flex: 1 1 0; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
     .cam-slot:empty { display: none; }
-    .cam-tile { width: 100%; aspect-ratio: 1; background:#0a0c10; border:1px solid #2a2f3a; border-radius:14px; overflow:hidden; position:relative; }
+    .cam-tile { width: 100%; aspect-ratio: var(--cam-aspect, 1); background:#0a0c10; border:1px solid #2a2f3a; border-radius:14px; overflow:hidden; position:relative; }
     .cam-tile video { width:100%; height:100%; object-fit:cover; }
     .cam-tile .rt-label { position:absolute; bottom:8px; left:10px; background:rgba(0,0,0,0.65); padding:4px 10px; border-radius:6px; font-size:0.9rem; }
     .cam-tile .rt-ctrls { position:absolute; top:8px; right:8px; display:flex; gap:6px; }
@@ -196,17 +196,22 @@ function renderVisitorPage(req) {
       </body></html>`;
   }
 
-  const pumpOffBtn = (state.active && canControl) ? `<button class="action-btn" onclick="vPumpOff()" style="background:#a13030;color:#fff">⏻ Pump Off</button>` : '';
+  const isRunningV = !!state.currentActionTemplateId;
+  const alwaysBtns = (state.active && canControl) ? `
+    <button class="action-btn pump-toggle" onclick="vPumpToggle()" style="background:${isRunningV ? '#a13030' : '#1a8a4d'};color:#fff">${isRunningV ? '⏻ Pump Off' : '⏵ Pump On'}</button>
+    <button class="action-btn misc-action-btn" onclick="vTimed()" ${isRunningV ? 'disabled' : ''}>⏱ Timed</button>
+    <button class="action-btn misc-action-btn" onclick="vCycle()" ${isRunningV ? 'disabled' : ''}>↻ Cycle</button>
+  ` : '';
   const actionGrid = !state.active
     ? '<p class="muted" style="color:#7a8597">No active session.</p>'
     : !canControl
       ? '<p class="muted" style="color:#7a8597">You can watch + chat, but the owner has not enabled device control for you.</p>'
-      : `<div class="action-grid">${pumpOffBtn}${visibleActionIds.length
+      : `<div class="action-grid">${alwaysBtns}${visibleActionIds.length
           ? visibleActionIds.map(id => {
               const a = actionsById[id];
               return `<button class="action-btn" data-action-id="${escapeHtml(id)}" onclick="vFire('${escapeHtml(id)}')">${escapeHtml(a?.name || '?')}</button>`;
             }).join('')
-          : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No action templates active at this capacity — Pump Off still works.</p>'}</div>`;
+          : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No template actions at this capacity — Pump On / Timed / Cycle still work.</p>'}</div>`;
 
   // Participant list — live during session, allowlist preview when idle.
   // Grouped into Host (owner) / Controllers (canControl) / Voyeurs (everyone else).
@@ -356,7 +361,14 @@ function renderVisitorPage(req) {
           muteBtn.onclick = () => { v.muted = !v.muted; muteBtn.textContent = v.muted ? '🔇' : '🔊'; };
         }
         tile.querySelector('.rt-label').textContent = label;
-        tile.querySelector('video').srcObject = stream;
+        const v = tile.querySelector('video');
+        v.srcObject = stream;
+        v.onloadedmetadata = () => {
+          // Remote streams: owner can be any aspect, controllers are forced 1:1 at the source.
+          if (v.videoWidth > 0 && v.videoHeight > 0) {
+            tile.style.setProperty('--cam-aspect', (v.videoWidth / v.videoHeight).toFixed(4));
+          }
+        };
         const ps = __peerTrackState.get(email);
         if (ps) {
           tile.classList.toggle('peer-video-muted', !!ps.videoMuted);
@@ -376,6 +388,7 @@ function renderVisitorPage(req) {
           tile = document.createElement('div');
           tile.id = 'local-broadcast-tile';
           tile.className = 'cam-tile';
+          tile.style.setProperty('--cam-aspect', '1');  // controllers are locked 1:1
           tile.innerHTML = '<video autoplay muted playsinline></video><div class="rt-label">' + escapeHtml(NICKNAME) + ' (you)</div>';
           slot.insertBefore(tile, slot.firstChild);
         }
@@ -399,10 +412,13 @@ function renderVisitorPage(req) {
           return;
         }
         try {
+          // Controllers are locked at 1:1 — request a square frame so all viewers see the
+          // controller's tile at the same square aspect regardless of their physical camera.
+          const SQUARE = { width: { ideal: 640 }, height: { ideal: 640 }, aspectRatio: { ideal: 1 } };
           try {
-            myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: SQUARE, audio: true });
           } catch (e1) {
-            myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: SQUARE });
           }
           addLocalBroadcastTile(myBroadcastStream);
           controls.style.display = '';
@@ -455,7 +471,9 @@ function renderVisitorPage(req) {
         const stateLabel = __pumpOnState ? 'Running' : 'Idle';
         el.classList.toggle('idle', !__pumpOnState);
         el.querySelector('.pump-state').textContent = stateLabel;
-        if (__stepState && __stepState.durationMs > 0) {
+        if (__stepState && __stepState.indefinite) {
+          count.textContent = '(manual)';
+        } else if (__stepState && __stepState.durationMs > 0) {
           const elapsed = Date.now() - __stepState.startedAt;
           const remaining = Math.max(0, Math.ceil((__stepState.durationMs - elapsed) / 1000));
           count.textContent = '(' + remaining + 's)';
@@ -509,6 +527,7 @@ function renderVisitorPage(req) {
         applyMyBroadcastTrackState();
       }
       function applyState(s) {
+        window.__lastVisitorState = s;
         applyStandby(s);
         __pumpOnState = !!s.pumpOn;
         __stepState = s.currentStep || null;
@@ -536,9 +555,9 @@ function renderVisitorPage(req) {
         }
         const text = document.getElementById('gauge-pct');
         if (text) { text.textContent = Math.round(cap) + '%'; text.setAttribute('fill', over ? '#f0c674' : '#e8e8e8'); }
-        // action button lock
+        // template-action button lock (data-action-id only); pump-toggle and misc handled separately
         const running = s.currentActionTemplateId;
-        document.querySelectorAll('.action-btn').forEach(btn => {
+        document.querySelectorAll('.action-btn[data-action-id]').forEach(btn => {
           const id = btn.dataset.actionId;
           if (running) {
             btn.disabled = running !== id;
@@ -549,6 +568,13 @@ function renderVisitorPage(req) {
             btn.classList.remove('running');
           }
         });
+        const toggle = document.querySelector('.pump-toggle');
+        if (toggle) {
+          toggle.textContent = running ? '⏻ Pump Off' : '⏵ Pump On';
+          toggle.style.background = running ? '#a13030' : '#1a8a4d';
+          toggle.style.color = '#fff';
+        }
+        document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running; });
         // if session went idle (active→false) or vice versa, reload to re-render layout
         if (s.active !== window.__visitorActive) {
           if (window.__visitorActive !== undefined) location.reload();
@@ -592,6 +618,32 @@ function renderVisitorPage(req) {
       }
       async function vPumpOff() {
         const r = await fetch('/api/visitor/pump-off', { method: 'POST' });
+        if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
+      }
+      async function vPumpOn() {
+        const r = await fetch('/api/visitor/pump-on', { method: 'POST' });
+        if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
+      }
+      function vPumpToggle() {
+        const running = !!(window.__lastVisitorState && window.__lastVisitorState.currentActionTemplateId);
+        if (running) vPumpOff(); else vPumpOn();
+      }
+      async function vTimed() {
+        const s = prompt('Duration in seconds:', '10');
+        if (s == null) return;
+        const seconds = parseFloat(s);
+        if (!Number.isFinite(seconds) || seconds <= 0) return alert('positive seconds required');
+        const r = await fetch('/api/visitor/timed', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ seconds }) });
+        if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
+      }
+      async function vCycle() {
+        const onSec = parseFloat(prompt('On (seconds):', '2'));
+        if (!Number.isFinite(onSec) || onSec <= 0) return;
+        const offSec = parseFloat(prompt('Off (seconds):', '1'));
+        if (!Number.isFinite(offSec) || offSec <= 0) return;
+        const times = parseInt(prompt('Repeat times:', '5'), 10);
+        if (!Number.isInteger(times) || times <= 0) return;
+        const r = await fetch('/api/visitor/cycle', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ onSec, offSec, times }) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
       }
       async function vSend() {
@@ -688,18 +740,67 @@ router.post('/api/visitor/fire-action', async (req, res) => {
   }
 });
 
-router.post('/api/visitor/pump-off', (req, res) => {
+function _visitorCtx(req, res) {
   const email = req.user?.email;
-  if (!email) return res.status(401).json({ error: 'unauthenticated' });
-  if (!session.getState().active) return res.status(400).json({ error: 'no active session' });
+  if (!email) { res.status(401).json({ error: 'unauthenticated' }); return null; }
+  if (!session.getState().active) { res.status(400).json({ error: 'no active session' }); return null; }
   const participant = findParticipant(email);
   if (!participant || !participant.canControl) {
-    return res.status(403).json({ error: 'you do not have device control permission for this session' });
+    res.status(403).json({ error: 'you do not have device control permission for this session' });
+    return null;
   }
   const account = findAccount(email);
-  const nickname = account?.nickname || email.split('@')[0];
+  return { email, nickname: account?.nickname || email.split('@')[0] };
+}
+
+router.post('/api/visitor/pump-off', (req, res) => {
+  const ctx = _visitorCtx(req, res); if (!ctx) return;
+  try { actionEngine.abort(`${ctx.nickname} hit Pump Off`); res.json({ ok: true }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/visitor/pump-on', async (req, res) => {
+  const ctx = _visitorCtx(req, res); if (!ctx) return;
   try {
-    actionEngine.abort(`${nickname} hit Pump Off`);
+    await actionEngine.fireAction({
+      inline: { name: 'Pump On', steps: [{ type: 'on', durationMs: 24 * 3600 * 1000, indefinite: true }] },
+      byEmail: ctx.email, byNickname: ctx.nickname,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/visitor/timed', async (req, res) => {
+  const ctx = _visitorCtx(req, res); if (!ctx) return;
+  try {
+    const sec = parseFloat(req.body?.seconds);
+    if (!Number.isFinite(sec) || sec <= 0) throw new Error('positive seconds required');
+    await actionEngine.fireAction({
+      inline: { name: `Timed ${sec}s`, steps: [{ type: 'on', durationMs: Math.round(sec * 1000) }] },
+      byEmail: ctx.email, byNickname: ctx.nickname,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/visitor/cycle', async (req, res) => {
+  const ctx = _visitorCtx(req, res); if (!ctx) return;
+  try {
+    const onSec = parseFloat(req.body?.onSec);
+    const offSec = parseFloat(req.body?.offSec);
+    const times = parseInt(req.body?.times, 10);
+    if (!Number.isFinite(onSec) || onSec <= 0) throw new Error('on seconds required');
+    if (!Number.isFinite(offSec) || offSec <= 0) throw new Error('off seconds required');
+    if (!Number.isInteger(times) || times <= 0) throw new Error('repeat times required');
+    await actionEngine.fireAction({
+      inline: { name: `Cycle ${onSec}/${offSec} ×${times}`, steps: [{
+        type: 'repeat', times, steps: [
+          { type: 'on', durationMs: Math.round(onSec * 1000) },
+          { type: 'off', durationMs: Math.round(offSec * 1000) },
+        ]
+      }] },
+      byEmail: ctx.email, byNickname: ctx.nickname,
+    });
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });

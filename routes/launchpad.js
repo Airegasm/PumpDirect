@@ -84,16 +84,19 @@ router.get('/', (req, res) => {
   const visibleActionIds = state.active
     ? Array.from(new Set([...milestoneActionIds, ...alwaysActionIds]))
     : [];
-  const pumpOffBtn = state.active
-    ? `<button class="action-btn" onclick="lpPumpOff()" style="background:#a13030;color:#fff">⏻ Pump Off</button>`
-    : '';
+  const isRunning = !!state.currentActionTemplateId;
+  const alwaysBtns = state.active ? `
+    <button class="action-btn pump-toggle" onclick="lpPumpToggle()" style="background:${isRunning ? '#a13030' : '#1a8a4d'};color:#fff">${isRunning ? '⏻ Pump Off' : '⏵ Pump On'}</button>
+    <button class="action-btn misc-action-btn" onclick="lpTimed()" ${isRunning ? 'disabled' : ''}>⏱ Timed</button>
+    <button class="action-btn misc-action-btn" onclick="lpCycle()" ${isRunning ? 'disabled' : ''}>↻ Cycle</button>
+  ` : '';
   const actionButtonsCore = visibleActionIds.length
     ? visibleActionIds.map(id => {
         const a = actionsById[id];
         return `<button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')">${escape(a?.name || '?')}</button>`;
       }).join('')
-    : (state.active ? '<p class="muted">No actions available at this capacity.</p>' : '<p class="muted">Start a session to enable action templates.</p>');
-  const actionButtons = pumpOffBtn + actionButtonsCore;
+    : (state.active ? '<p class="muted" style="grid-column:1/-1">No template actions for this milestone — use Pump On / Timed / Cycle above.</p>' : '<p class="muted">Start a session to enable actions.</p>');
+  const actionButtons = alwaysBtns + actionButtonsCore;
 
   const calibratedReady = primaryDevice && primaryDevice.calibration?.secondsTo100 > 0;
   const sessionReady = calibratedReady && allAllowedEmails.length > 0;
@@ -344,7 +347,41 @@ router.get('/', (req, res) => {
         const r = await fetch('/api/launchpad/session/pump-off', { method: 'POST' });
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
-        flash('pump off', 'ok');
+      }
+      async function lpPumpOn() {
+        const r = await fetch('/api/launchpad/session/pump-on', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+      }
+      function lpPumpToggle() {
+        const running = !!(window.__lastState && window.__lastState.currentActionTemplateId);
+        if (running) lpPumpOff(); else lpPumpOn();
+      }
+      function lpTimed() {
+        modalOpen('Timed pump on', '<p><label>Duration (seconds) <input id="m-sec" type="number" min="0.1" step="0.1" value="10" autofocus></label></p>',
+          async () => {
+            const seconds = parseFloat(document.getElementById('m-sec').value);
+            const r = await fetch('/api/launchpad/session/timed', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ seconds }) });
+            const d = await r.json();
+            if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+            modalClose();
+          });
+      }
+      function lpCycle() {
+        modalOpen('Cycle', '<p>'
+          + '<label>On (s) <input id="m-on" type="number" min="0.1" step="0.1" value="2" style="width:90px"></label> '
+          + '<label>Off (s) <input id="m-off" type="number" min="0.1" step="0.1" value="1" style="width:90px"></label> '
+          + '<label>Repeat <input id="m-rep" type="number" min="1" value="5" style="width:90px"></label>'
+          + '</p>',
+          async () => {
+            const onSec = parseFloat(document.getElementById('m-on').value);
+            const offSec = parseFloat(document.getElementById('m-off').value);
+            const times = parseInt(document.getElementById('m-rep').value, 10);
+            const r = await fetch('/api/launchpad/session/cycle', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ onSec, offSec, times }) });
+            const d = await r.json();
+            if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+            modalClose();
+          });
       }
       async function lpSendChat() {
         const input = document.getElementById('chat-input');
@@ -405,7 +442,9 @@ router.get('/', (req, res) => {
         const stateLabel = __pumpOnState ? 'Running' : 'Idle';
         el.classList.toggle('idle', !__pumpOnState);
         el.querySelector('.pump-state').textContent = stateLabel;
-        if (__stepState && __stepState.durationMs > 0) {
+        if (__stepState && __stepState.indefinite) {
+          count.textContent = '(manual)';
+        } else if (__stepState && __stepState.durationMs > 0) {
           const elapsed = Date.now() - __stepState.startedAt;
           const remaining = Math.max(0, Math.ceil((__stepState.durationMs - elapsed) / 1000));
           count.textContent = '(' + remaining + 's)';
@@ -473,9 +512,10 @@ router.get('/', (req, res) => {
         const texts = document.querySelectorAll('.gauge-card svg text');
         if (texts[0]) { texts[0].textContent = Math.round(cap) + '%'; texts[0].setAttribute('fill', over ? '#f0c674' : '#e8e8e8'); }
         if (texts[1]) texts[1].textContent = over ? 'over capacity' : 'capacity';
-        // action buttons lock during run
+        // Template action buttons lock during run; the always-on (pump toggle / timed / cycle)
+        // buttons get their own treatment below.
         const running = s.currentActionTemplateId;
-        document.querySelectorAll('.action-btn').forEach(btn => {
+        document.querySelectorAll('.action-btn[data-action-id]').forEach(btn => {
           const id = btn.dataset.actionId;
           if (running) {
             btn.disabled = running !== id;
@@ -487,16 +527,29 @@ router.get('/', (req, res) => {
             btn.innerHTML = btn.innerHTML.replace(/ ●$/, '');
           }
         });
+        const toggle = document.querySelector('.pump-toggle');
+        if (toggle) {
+          toggle.textContent = running ? '⏻ Pump Off' : '⏵ Pump On';
+          toggle.style.background = running ? '#a13030' : '#1a8a4d';
+          toggle.style.color = '#fff';
+        }
+        document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running; });
       }
       // ---- Webcam (local publish) ----
       let localStream = null;
+      const OWNER_CAM_RES = ${JSON.stringify(cfg.owner?.camera?.resolution || { width: 1280, height: 720 })};
+      function _setTileAspect(tile, w, h) {
+        if (w > 0 && h > 0) tile.style.setProperty('--cam-aspect', (w / h).toFixed(4));
+      }
       function setLocalTileFromStream(stream) {
         const tile = document.getElementById('local-tile');
         tile.style.display = 'block';
         tile.innerHTML =
           '<video autoplay muted playsinline></video>' +
           '<div class="rt-label">you</div>';
-        tile.querySelector('video').srcObject = stream;
+        const v = tile.querySelector('video');
+        v.srcObject = stream;
+        v.onloadedmetadata = () => _setTileAspect(tile, v.videoWidth, v.videoHeight);
       }
       function resetLocalTile() {
         const tile = document.getElementById('local-tile');
@@ -509,12 +562,15 @@ router.get('/', (req, res) => {
           return;
         }
         try {
-          // Try video + audio first; fall back to video-only if audio is the problem.
+          // Honour owner's resolution choice from the Chat/Webcam tab.
+          const vc = (OWNER_CAM_RES && OWNER_CAM_RES.width !== 'native')
+            ? { width: { ideal: OWNER_CAM_RES.width }, height: { ideal: OWNER_CAM_RES.height } }
+            : true;
           try {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localStream = await navigator.mediaDevices.getUserMedia({ video: vc, audio: true });
           } catch (e1) {
             console.warn('AV failed, retrying video-only:', e1);
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            localStream = await navigator.mediaDevices.getUserMedia({ video: vc });
             flash('Mic unavailable — broadcasting video only', 'warn');
           }
           setLocalTileFromStream(localStream);
@@ -589,7 +645,9 @@ router.get('/', (req, res) => {
           muteBtn.onclick = () => { v.muted = !v.muted; muteBtn.textContent = v.muted ? '🔇' : '🔊'; };
         }
         tile.querySelector('.rt-label').textContent = label;
-        tile.querySelector('video').srcObject = stream;
+        const v = tile.querySelector('video');
+        v.srcObject = stream;
+        v.onloadedmetadata = () => _setTileAspect(tile, v.videoWidth, v.videoHeight);
         // re-apply any known peer mute state to the freshly-created tile
         const ps = __peerTrackState.get(email);
         if (ps) {
@@ -848,20 +906,68 @@ router.post('/api/launchpad/session/capacity', (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+function _ownerInfo() {
+  const cfg = config.load();
+  const ownerEmail = cfg.cloudflare?.ownerEmail || 'owner@local';
+  const ownerName = cfg.owner?.displayName?.trim() || ownerEmail.split('@')[0] || 'owner';
+  return { ownerEmail, ownerName };
+}
+
 router.post('/api/launchpad/session/fire-action', async (req, res) => {
   try {
-    const cfg = config.load();
-    const ownerEmail = cfg.cloudflare?.ownerEmail || 'owner@local';
-    const ownerName = cfg.owner?.displayName?.trim() || ownerEmail.split('@')[0] || 'owner';
+    const { ownerEmail, ownerName } = _ownerInfo();
     await actionEngine.fireAction({
       actionTemplateId: req.body?.actionTemplateId,
-      byEmail: ownerEmail,
-      byNickname: ownerName,
+      byEmail: ownerEmail, byNickname: ownerName,
     });
     res.json({ ok: true });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/launchpad/session/pump-on', async (_req, res) => {
+  try {
+    const { ownerEmail, ownerName } = _ownerInfo();
+    await actionEngine.fireAction({
+      inline: { name: 'Pump On', steps: [{ type: 'on', durationMs: 24 * 3600 * 1000, indefinite: true }] },
+      byEmail: ownerEmail, byNickname: ownerName,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/launchpad/session/timed', async (req, res) => {
+  try {
+    const sec = parseFloat(req.body?.seconds);
+    if (!Number.isFinite(sec) || sec <= 0) throw new Error('positive seconds required');
+    const { ownerEmail, ownerName } = _ownerInfo();
+    await actionEngine.fireAction({
+      inline: { name: `Timed ${sec}s`, steps: [{ type: 'on', durationMs: Math.round(sec * 1000) }] },
+      byEmail: ownerEmail, byNickname: ownerName,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/launchpad/session/cycle', async (req, res) => {
+  try {
+    const onSec = parseFloat(req.body?.onSec);
+    const offSec = parseFloat(req.body?.offSec);
+    const times = parseInt(req.body?.times, 10);
+    if (!Number.isFinite(onSec) || onSec <= 0) throw new Error('on seconds required');
+    if (!Number.isFinite(offSec) || offSec <= 0) throw new Error('off seconds required');
+    if (!Number.isInteger(times) || times <= 0) throw new Error('repeat times required');
+    const { ownerEmail, ownerName } = _ownerInfo();
+    await actionEngine.fireAction({
+      inline: { name: `Cycle ${onSec}/${offSec} ×${times}`, steps: [{
+        type: 'repeat', times, steps: [
+          { type: 'on', durationMs: Math.round(onSec * 1000) },
+          { type: 'off', durationMs: Math.round(offSec * 1000) },
+        ]
+      }] },
+      byEmail: ownerEmail, byNickname: ownerName,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 router.post('/api/launchpad/chat', (req, res) => {
