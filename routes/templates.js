@@ -1,6 +1,7 @@
 const express = require('express');
 const templates = require('../services/templates-service');
 const devicesSvc = require('../services/devices-service');
+const minigames = require('../services/minigames-service');
 const { ownerLayout, escape } = require('../views/layout');
 const { createLogger } = require('../utils/logger');
 
@@ -76,6 +77,8 @@ router.get('/templates', (req, res) => {
     : '<p class="muted">No action templates yet.</p>';
 
   const alwaysIds = activeProfile.defaultActionTemplateIds || [];
+  const alwaysMinigameIds = activeProfile.defaultMinigameIds || [];
+  const minigamesByIdT = Object.fromEntries(minigames.list().map(m => [m.id, m]));
   const alwaysAvailableBody = `
     <p class="muted">${activeProfile.isFactory
       ? 'Default-profile actions fire any time during a session, regardless of capacity. Drag to reorder.'
@@ -86,6 +89,18 @@ router.get('/templates', (req, res) => {
         : '<li class="muted">none assigned</li>'}
     </ul>
     <p style="margin-top:16px"><button onclick="tplEditAlwaysAvailable('${escape(activeProfile.id)}')">Edit always-available list</button></p>
+
+    <h4 style="margin-top:20px">Always-available minigames</h4>
+    <ul id="always-minigames-list" data-profile="${escape(activeProfile.id)}" style="list-style:none;padding:0;margin:8px 0 0;display:flex;flex-wrap:wrap;gap:8px">
+      ${alwaysMinigameIds.length
+        ? alwaysMinigameIds.map(id => {
+            const mg = minigamesByIdT[id];
+            const color = mg?.color || '#7b3fd6';
+            return `<li data-id="${escape(id)}" style="background:${escape(color)};color:#fff;padding:8px 14px;border-radius:999px;font-size:0.95rem">🎲 ${escape(mg?.name || id)}</li>`;
+          }).join('')
+        : '<li class="muted">none assigned</li>'}
+    </ul>
+    <p style="margin-top:12px"><button onclick="tplEditAlwaysMinigames('${escape(activeProfile.id)}')">Edit always-available minigames</button></p>
   `;
 
   const body = `
@@ -140,6 +155,8 @@ router.get('/templates', (req, res) => {
 
     <script>
       const ALL_ACTIONS = ${JSON.stringify(data.actionTemplates.map(a => ({ id: a.id, name: a.name })))};
+      const ALL_MINIGAMES = ${JSON.stringify(minigames.list().map(m => ({ id: m.id, name: m.name, color: m.color, configurable: !!m.configurable })))};
+      const ALL_WHEELS = ${JSON.stringify((data.wheelTemplates || []).map(w => ({ id: w.id, name: w.name, sectionCount: (w.sections || []).length })))};
       const ALL_DEVICES = ${JSON.stringify((() => {
         const list = devicesSvc.loadAll();
         const primary = list.find(d => d.isPrimary);
@@ -211,11 +228,64 @@ router.get('/templates', (req, res) => {
           });
         });
       }
+      function _minigameSlotsHtml(checkedSet, configRoot) {
+        // Builds the minigame checkbox list AND, nested under prize-wheel, the
+        // wheel-tickbox sub-list. Reused between always-available and milestone
+        // editors. configRoot is the parent's minigameConfig-shaped object.
+        const cfg = configRoot || {};
+        const wheelIds = new Set((cfg['prize-wheel']?.wheelIds) || []);
+        return ALL_MINIGAMES.map(mg => {
+          const isPw = mg.id === 'prize-wheel';
+          const ticked = checkedSet.has(mg.id);
+          const wheelBlock = isPw
+            ? '<div class="mg-wheel-list" data-mg="prize-wheel" style="margin:4px 0 12px 26px;display:' + (ticked ? 'block' : 'none') + '">'
+              + (ALL_WHEELS.length
+                  ? '<p class="muted" style="font-size:0.85rem;margin:2px 0 4px">Wheels available at this button:</p>'
+                    + ALL_WHEELS.map(w => '<label style="display:block;padding:3px 0;font-size:0.95rem"><input type="checkbox" data-role="wheel" value="' + w.id + '"' + (wheelIds.has(w.id) ? ' checked' : '') + '> ' + w.name + ' <span class="muted" style="font-size:0.85rem">(' + w.sectionCount + ' sections)</span></label>').join('')
+                  : '<p class="muted" style="font-size:0.85rem">No wheel templates yet — create one on the <a href="/minigames" style="color:var(--accent)">Mini Games</a> page.</p>')
+              + '</div>'
+            : '';
+          return '<label style="display:block;padding:4px 0"><input type="checkbox" data-role="minigame" value="' + mg.id + '"' + (ticked ? ' checked' : '') + ' onchange="_toggleMgSlot(this)"> 🎲 ' + mg.name + '</label>' + wheelBlock;
+        }).join('');
+      }
+      function _toggleMgSlot(el) {
+        // Show/hide the nested wheel list when prize-wheel is toggled.
+        if (el.value !== 'prize-wheel') return;
+        const block = el.parentElement.parentElement.querySelector('.mg-wheel-list[data-mg="prize-wheel"]');
+        if (block) block.style.display = el.checked ? 'block' : 'none';
+      }
+      function _readMgSelections() {
+        const ids = Array.from(document.querySelectorAll('#modal-body input[data-role="minigame"]:checked')).map(c => c.value);
+        const config = {};
+        if (ids.includes('prize-wheel')) {
+          const wheelIds = Array.from(document.querySelectorAll('#modal-body input[data-role="wheel"]:checked')).map(c => c.value);
+          config['prize-wheel'] = { wheelIds };
+        }
+        return { ids, config };
+      }
+      function tplEditAlwaysMinigames(profileId) {
+        fetch('/api/templates/profiles/' + profileId).then(r => r.json()).then(p => {
+          const current = new Set(p.profile.defaultMinigameIds || []);
+          const html = _minigameSlotsHtml(current, p.profile.defaultMinigameConfig || {});
+          modalOpen('Always-available minigames', html || '<p class="muted">No minigames registered.</p>', async () => {
+            const sel = _readMgSelections();
+            const r = await fetch('/api/templates/profiles/' + profileId, {
+              method: 'PATCH', headers: {'content-type':'application/json'},
+              body: JSON.stringify({ defaultMinigameIds: sel.ids, defaultMinigameConfig: sel.config }),
+            });
+            const d = await r.json();
+            if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+            location.reload();
+          });
+        });
+      }
 
       // ---- milestones ----
       function _milestoneFormHtml(m) {
         const checked = new Set(m?.actionTemplateIds || []);
+        const checkedMg = new Set(m?.minigameIds || []);
         const actionList = ALL_ACTIONS.map(a => '<label style="display:block;padding:4px 0"><input type="checkbox" data-role="action" value="' + a.id + '"' + (checked.has(a.id) ? ' checked' : '') + '> ' + a.name + '</label>').join('') || '<p class="muted">No action templates exist yet.</p>';
+        const minigameList = _minigameSlotsHtml(checkedMg, m?.minigameConfig || {}) || '<p class="muted">No minigames registered.</p>';
         const is100 = !!m?.is100Plus;
         return ''
           + '<p><label>Name <input id="m-name" type="text" value="' + (m?.name?.replace(/"/g, '&quot;') || '') + '" style="width:100%"></label></p>'
@@ -228,10 +298,13 @@ router.get('/templates', (req, res) => {
           + '</div>'
           + '<p><label>Announcement <textarea id="m-announcement" rows="3" style="width:100%;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:6px;padding:10px">' + (m?.announcement || '') + '</textarea></label></p>'
           + '<p>Assigned action templates:</p>'
-          + '<div style="max-height:200px;overflow:auto;border:1px solid #2a2f3a;border-radius:6px;padding:8px">' + actionList + '</div>';
+          + '<div style="max-height:200px;overflow:auto;border:1px solid #2a2f3a;border-radius:6px;padding:8px">' + actionList + '</div>'
+          + '<p style="margin-top:14px">Assigned minigames:</p>'
+          + '<div style="max-height:160px;overflow:auto;border:1px solid #2a2f3a;border-radius:6px;padding:8px">' + minigameList + '</div>';
       }
       function _readMilestoneForm() {
         const is100Plus = document.getElementById('m-is100').checked;
+        const sel = _readMgSelections();
         return {
           name: document.getElementById('m-name').value.trim(),
           is100Plus,
@@ -239,6 +312,8 @@ router.get('/templates', (req, res) => {
           capacityMax: is100Plus ? 999 : Number(document.getElementById('m-max').value),
           announcement: document.getElementById('m-announcement').value,
           actionTemplateIds: Array.from(document.querySelectorAll('#modal-body input[data-role="action"]:checked')).map(c => c.value),
+          minigameIds: sel.ids,
+          minigameConfig: sel.config,
         };
       }
       function tplNewMilestone(profileId) {

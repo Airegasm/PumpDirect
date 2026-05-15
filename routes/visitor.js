@@ -2,10 +2,12 @@ const express = require('express');
 const session = require('../services/session-service');
 const templatesSvc = require('../services/templates-service');
 const actionEngine = require('../services/action-engine');
+const minigames = require('../services/minigames-service');
 const chat = require('../services/chat-service');
 const config = require('../config');
 const { rtcClientJs } = require('../views/rtc-client');
 const { chatCryptoJs } = require('../views/chat-crypto');
+const { overlayJs, overlayCss } = require('../views/overlay');
 const { createLogger } = require('../utils/logger');
 
 const logger = createLogger('Visitor');
@@ -65,6 +67,9 @@ function renderVisitorPage(req) {
   const canControl = !!(state.active && participant && participant.canControl);
   const chatEnabled = !!(profile && profile.settings?.chatroomEnabled);
 
+  const minigamesList = minigames.list();
+  const minigamesById = Object.fromEntries(minigamesList.map(mg => [mg.id, mg]));
+
   // Resolve active milestone — at ≥100% capacity, is100Plus milestone wins.
   let activeMilestone = null;
   if (state.active && tpl && tpl.milestones?.length) {
@@ -81,6 +86,11 @@ function renderVisitorPage(req) {
   const alwaysActionIds = tpl?.defaultActionTemplateIds || [];
   const visibleActionIds = state.active
     ? Array.from(new Set([...milestoneActionIds, ...alwaysActionIds]))
+    : [];
+  const milestoneMinigameIds = activeMilestone ? (activeMilestone.minigameIds || []) : [];
+  const alwaysMinigameIds = tpl?.defaultMinigameIds || [];
+  const visibleMinigameIds = state.active
+    ? Array.from(new Set([...milestoneMinigameIds, ...alwaysMinigameIds]))
     : [];
 
   const css = `
@@ -189,6 +199,7 @@ function renderVisitorPage(req) {
     .cam-tile.standby-blackout::after { content: "STANDBY"; position:absolute; inset:0; background:#000; display:flex; align-items:center; justify-content:center; color:#4a3413; font-weight:900; font-size:1.4rem; letter-spacing:0.2em; z-index:3; }
     .cam-tile .audio-muted-badge { display: none; position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); border-radius: 50%; width: 30px; height: 30px; align-items: center; justify-content: center; font-size: 0.95rem; z-index: 5; }
     .cam-tile.peer-audio-muted .audio-muted-badge { display: flex; }
+    ${overlayCss()}
   `;
 
   const themeBootstrap = `<script>(function(){try{var t=localStorage.getItem('pd-theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>`;
@@ -279,19 +290,28 @@ function renderVisitorPage(req) {
     <button class="action-btn misc-action-btn" onclick="vTimed()" style="background:#1a8a4d;color:#fff" ${isRunningV ? 'disabled' : ''}>⏱ Timed</button>
     <button class="action-btn misc-action-btn" onclick="vCycle()" style="background:#1a8a4d;color:#fff" ${isRunningV ? 'disabled' : ''}>↻ Cycle</button>
   ` : '';
+  const actionCellsV = visibleActionIds.map(id => {
+    const a = actionsById[id];
+    return `<div class="action-cell">
+      <button class="action-btn" data-action-id="${escapeHtml(id)}" onclick="vFire('${escapeHtml(id)}')">${escapeHtml(a?.name || '?')}</button>
+      <button class="action-help-btn" type="button" title="What does this do?" onclick="vActionHelp('${escapeHtml(id)}')">?</button>
+    </div>`;
+  }).join('');
+  const minigameCellsV = visibleMinigameIds.map(id => {
+    const mg = minigamesById[id]; if (!mg) return '';
+    return `<div class="action-cell">
+      <button class="action-btn minigame-btn" data-minigame-id="${escapeHtml(id)}" onclick="vOpenMinigame('${escapeHtml(id)}')" style="background:${escapeHtml(mg.color)};color:#fff">🎲 ${escapeHtml(mg.name)}</button>
+      <button class="action-help-btn" type="button" title="What does this do?" onclick="vMinigameHelp('${escapeHtml(id)}')">?</button>
+    </div>`;
+  }).join('');
+  const hasAnyV = visibleActionIds.length || visibleMinigameIds.length;
   const actionGrid = !state.active
     ? '<p class="muted" style="color:#7a8597">No active session.</p>'
     : !canControl
       ? '<p class="muted" style="color:#7a8597">You can watch + chat, but the owner has not enabled device control for you.</p>'
-      : `<div class="action-grid">${alwaysBtns}${visibleActionIds.length
-          ? visibleActionIds.map(id => {
-              const a = actionsById[id];
-              return `<div class="action-cell">
-                <button class="action-btn" data-action-id="${escapeHtml(id)}" onclick="vFire('${escapeHtml(id)}')">${escapeHtml(a?.name || '?')}</button>
-                <button class="action-help-btn" type="button" title="What does this do?" onclick="vActionHelp('${escapeHtml(id)}')">?</button>
-              </div>`;
-            }).join('')
-          : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No template actions at this capacity — Pump On / Timed / Cycle still work.</p>'}</div>`;
+      : `<div class="action-grid">${alwaysBtns}${hasAnyV
+          ? actionCellsV + minigameCellsV
+          : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No template actions or minigames at this capacity — Pump On / Timed / Cycle still work.</p>'}</div>`;
 
   // Participant list — client-rendered from live state so presence (connected / AFK)
   // can update without a reload. Owner-as-Host is always shown; everyone else only
@@ -334,8 +354,8 @@ function renderVisitorPage(req) {
           <p class="cycle-status" id="cycle-status"></p>
         </div>
         <div class="card milestone-pane">
-          <p class="milestone-title">${activeMilestone ? escapeHtml(activeMilestone.name) : (state.active ? escapeHtml(tpl?.name || 'Default') : 'Idle')}</p>
           <p class="milestone-welcome">${escapeHtml(profile?.welcomeMessage || '')}</p>
+          <p class="milestone-title">${activeMilestone ? escapeHtml(activeMilestone.name) : (state.active ? escapeHtml(tpl?.name || 'Default') : 'Idle')}</p>
           <p class="milestone-announcement">${activeMilestone ? escapeHtml(activeMilestone.announcement || '') : ''}</p>
           ${actionGrid}
         </div>
@@ -345,6 +365,7 @@ function renderVisitorPage(req) {
         <div class="cam-slot" id="cam-controller-slot"></div>
         <div class="cam-slot" id="cam-owner-slot"></div>
       </div>
+      <div id="overlay-stage"></div>
       </div><!-- /session-stage -->
 
       <div class="chat-row">
@@ -363,6 +384,23 @@ function renderVisitorPage(req) {
         </div>
       </div>
     </main>
+
+    <!-- Dice Roll config modal — number of dice + result mode. -->
+    <div id="dice-config-bg" class="help-modal-bg" onclick="vCloseDiceRoll(event)">
+      <div class="help-modal" onclick="event.stopPropagation()">
+        <h3>🎲 Dice Roll</h3>
+        <p style="margin:0 0 14px">Roll d6 dice. The total pips drive the pump.</p>
+        <p style="margin:0 0 12px"><label>Number of dice (1–6): <input id="dc-count" type="number" min="1" max="6" value="2" style="width:80px;font-size:1rem;padding:6px 8px"></label></p>
+        <p style="margin:0 0 14px"><label style="display:block;margin-bottom:6px;font-weight:600">Result mode</label>
+          <label style="display:block;padding:6px 0"><input type="radio" name="dc-mode" value="continuous" checked> Continuous — pump on for <em>total pips</em> seconds</label>
+          <label style="display:block;padding:6px 0"><input type="radio" name="dc-mode" value="cycle"> Cycle — <em>total pips</em> × (1 sec on / 1 sec off)</label>
+        </p>
+        <p style="text-align:right;margin:0;display:flex;gap:8px;justify-content:flex-end">
+          <button class="dice-close help-close" onclick="vCloseDiceRoll()" style="background:var(--bg-3);color:var(--text)">Cancel</button>
+          <button class="help-close" onclick="vSubmitDiceRoll()" style="background:#7b3fd6">Roll</button>
+        </p>
+      </div>
+    </div>
 
     <!-- Action help modal (shown when ? next to an action button is tapped). -->
     <div id="help-modal-bg" class="help-modal-bg" onclick="vHelpClose(event)">
@@ -392,9 +430,11 @@ function renderVisitorPage(req) {
       </div>
     </div>
 
+    <script src="/assets/vendor/lottie.min.js"></script>
     <script>
       ${rtcClientJs({ myEmail: email })}
       ${chatCryptoJs()}
+      ${overlayJs()}
     </script>
     <script>
       ${themeToggleJs}
@@ -402,12 +442,34 @@ function renderVisitorPage(req) {
       const CHAT_ENABLED = ${JSON.stringify(chatEnabled)};
       const NICKNAME = ${JSON.stringify(nickname)};
       const MY_EMAIL = ${JSON.stringify(email)};
+      // Globals consumed by views/overlay.js for Spin-button visibility + the
+      // POST endpoint when the trigger visitor confirms the spin.
+      window.__MY_EMAIL = MY_EMAIL;
+      window.__SPIN_ENDPOINT = '/api/visitor/minigame/prize-wheel/spin';
+      // Host (owner) tile lives at id="rt-<sanitized owner email>" once their
+      // stream connects via WebRTC. Use the same css-id sanitizer the rtc code
+      // uses so the lookup matches.
+      window.__textOverlayTarget = () => {
+        if (!OWNER_EMAIL) return null;
+        const safe = String(OWNER_EMAIL).replace(/[^a-z0-9_-]/gi, '_');
+        return document.getElementById('rt-' + safe);
+      };
       const OWNER_EMAIL = ${JSON.stringify(ownerEmailCfg)};
       const OWNER_NICK = ${JSON.stringify(ownerNick)};
       const NICKS = ${JSON.stringify(nicknamesByEmail)};
       const ACTIONS_INFO = ${JSON.stringify(Object.fromEntries(tplData.actionTemplates.map(a => [a.id, { name: a.name, description: a.description || '' }])))};
-      const MILESTONES_BY_ID = ${JSON.stringify(Object.fromEntries((tpl?.milestones || []).map(m => [m.id, { name: m.name, announcement: m.announcement || '', actionTemplateIds: m.actionTemplateIds || [], capacityMin: m.capacityMin, capacityMax: m.capacityMax, is100Plus: !!m.is100Plus }])))};
+      const MINIGAMES_INFO = ${JSON.stringify(Object.fromEntries(minigamesList.map(m => [m.id, { name: m.name, kind: m.kind, color: m.color, description: m.description || '' }])))};
+      const MILESTONES_BY_ID = ${JSON.stringify(Object.fromEntries((tpl?.milestones || []).map(m => [m.id, { name: m.name, announcement: m.announcement || '', actionTemplateIds: m.actionTemplateIds || [], minigameIds: m.minigameIds || [], minigameConfig: m.minigameConfig || {}, capacityMin: m.capacityMin, capacityMax: m.capacityMax, is100Plus: !!m.is100Plus }])))};
       const ALWAYS_ACTION_IDS = ${JSON.stringify(tpl?.defaultActionTemplateIds || [])};
+      const ALWAYS_MINIGAME_IDS = ${JSON.stringify(tpl?.defaultMinigameIds || [])};
+      const ALWAYS_MINIGAME_CONFIG = ${JSON.stringify(tpl?.defaultMinigameConfig || {})};
+      const WHEELS_BY_ID = ${JSON.stringify(Object.fromEntries((tplData.wheelTemplates || []).map(w => [w.id, { name: w.name, sectionCount: (w.sections || []).length }])))};
+      function _mergedWheelIdsForActive() {
+        const m = _activeMilestone((window.__lastVisitorState && window.__lastVisitorState.capacity) || 0, !!(window.__lastVisitorState && window.__lastVisitorState.active));
+        const ms = m ? (m.minigameConfig?.['prize-wheel']?.wheelIds || []) : [];
+        const al = ALWAYS_MINIGAME_CONFIG['prize-wheel']?.wheelIds || [];
+        return Array.from(new Set([...ms, ...al]));
+      }
       const TPL_NAME = ${JSON.stringify(tpl?.name || 'Default')};
       const WELCOME_MSG = ${JSON.stringify(profile?.welcomeMessage || '')};
       let __lastRenderedMilestoneId = '__init__';
@@ -444,16 +506,58 @@ function renderVisitorPage(req) {
           '<button class="action-btn pump-toggle" onclick="vPumpToggle()" style="background:' + (running ? '#a13030' : '#1a8a4d') + ';color:#fff">' + (running ? '⏻ Pump Off' : '⏵ Pump On') + '</button>'
         + '<button class="action-btn misc-action-btn" onclick="vTimed()" style="background:#1a8a4d;color:#fff"' + (running ? ' disabled' : '') + '>⏱ Timed</button>'
         + '<button class="action-btn misc-action-btn" onclick="vCycle()" style="background:#1a8a4d;color:#fff"' + (running ? ' disabled' : '') + '>↻ Cycle</button>';
-        const cells = ids.length
-          ? ids.map(id => {
-              const a = ACTIONS_INFO[id];
-              return '<div class="action-cell">'
-                + '<button class="action-btn" data-action-id="' + _safeAttr(id) + '" onclick="vFire(\\'' + _safeAttr(id) + '\\')">' + _safeAttr(a && a.name || '?') + '</button>'
-                + '<button class="action-help-btn" type="button" title="What does this do?" onclick="vActionHelp(\\'' + _safeAttr(id) + '\\')">?</button>'
-              + '</div>';
-            }).join('')
-          : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No template actions at this capacity — Pump On / Timed / Cycle still work.</p>';
-        grid.innerHTML = alwaysBtns + cells;
+        const actionCells = ids.map(id => {
+          const a = ACTIONS_INFO[id];
+          return '<div class="action-cell">'
+            + '<button class="action-btn" data-action-id="' + _safeAttr(id) + '" onclick="vFire(\\'' + _safeAttr(id) + '\\')">' + _safeAttr(a && a.name || '?') + '</button>'
+            + '<button class="action-help-btn" type="button" title="What does this do?" onclick="vActionHelp(\\'' + _safeAttr(id) + '\\')">?</button>'
+          + '</div>';
+        }).join('');
+        const mgIds = Array.from(new Set([...((m && m.minigameIds) || []), ...ALWAYS_MINIGAME_IDS]));
+        const mgCells = mgIds.map(id => {
+          const mg = MINIGAMES_INFO[id]; if (!mg) return '';
+          return '<div class="action-cell">'
+            + '<button class="action-btn minigame-btn" data-minigame-id="' + _safeAttr(id) + '" onclick="vOpenMinigame(\\'' + _safeAttr(id) + '\\')" style="background:' + _safeAttr(mg.color) + ';color:#fff">🎲 ' + _safeAttr(mg.name) + '</button>'
+            + '<button class="action-help-btn" type="button" title="What does this do?" onclick="vMinigameHelp(\\'' + _safeAttr(id) + '\\')">?</button>'
+          + '</div>';
+        }).join('');
+        grid.innerHTML = alwaysBtns + (actionCells || mgCells
+          ? actionCells + mgCells
+          : '<p class="muted" style="color:#7a8597;grid-column:1/-1">No template actions or minigames at this capacity — Pump On / Timed / Cycle still work.</p>');
+      }
+      function vMinigameHelp(id) {
+        const mg = MINIGAMES_INFO[id]; if (!mg) return;
+        document.getElementById('help-title').textContent = mg.name;
+        document.getElementById('help-body').textContent = mg.description || 'No description set for this minigame.';
+        document.getElementById('help-modal-bg').classList.add('open');
+      }
+      function vOpenMinigame(id) {
+        const mg = MINIGAMES_INFO[id]; if (!mg) return;
+        if (mg.kind === 'dice-roll') return vOpenDiceRoll();
+        if (mg.kind === 'prize-wheel') return vOpenPrizeWheel();
+        alert('Unsupported minigame: ' + mg.name);
+      }
+      async function vOpenPrizeWheel() {
+        // Server-side random pick from the merged candidate list — the spinner
+        // never sees a picker, the wheel just appears.
+        const ids = _mergedWheelIdsForActive().filter(id => WHEELS_BY_ID[id]);
+        if (!ids.length) return alert('No wheels assigned to this button yet.');
+        const r = await fetch('/api/visitor/minigame/prize-wheel', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ wheelIds: ids }) });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'failed'); }
+      }
+      function vOpenDiceRoll() {
+        document.getElementById('dice-config-bg').classList.add('open');
+      }
+      function vCloseDiceRoll(e) {
+        if (e && e.target && e.target.id !== 'dice-config-bg' && !e.target.classList.contains('dice-close')) return;
+        document.getElementById('dice-config-bg').classList.remove('open');
+      }
+      async function vSubmitDiceRoll() {
+        const count = parseInt(document.getElementById('dc-count').value, 10);
+        const mode = (document.querySelector('input[name="dc-mode"]:checked') || {}).value || 'continuous';
+        const r = await fetch('/api/visitor/minigame/dice-roll', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ count, mode }) });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'failed'); return; }
+        document.getElementById('dice-config-bg').classList.remove('open');
       }
       function _nickFor(e) { return NICKS[e] || (e || '').split('@')[0] || e; }
       function _partRow(p, isMe) {
@@ -549,6 +653,8 @@ function renderVisitorPage(req) {
           tile.classList.toggle('peer-video-muted', !!ps.videoMuted);
           tile.classList.toggle('peer-audio-muted', !!ps.audioMuted);
         }
+        // Host's tile may have just been created — re-hang any active text overlays.
+        if (isOwner) renderTextOverlays(window.__lastVisitorState);
       }
       function removeRemoteTile(email) {
         const tile = document.getElementById('rt-' + cssId(email));
@@ -731,6 +837,7 @@ function renderVisitorPage(req) {
         applyStandby(s);
         renderParticipants(s);
         renderMilestonePane(s);
+        renderTextOverlays(s);
         __pumpOnState = !!s.pumpOn;
         __stepState = s.currentStep || null;
         __repeatState = s.currentRepeat || null;
@@ -777,6 +884,7 @@ function renderVisitorPage(req) {
           toggle.style.color = '#fff';
         }
         document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running; });
+        document.querySelectorAll('.minigame-btn').forEach(b => { b.disabled = !!running; });
         // if session went idle (active→false) or vice versa, reload to re-render layout
         if (s.active !== window.__visitorActive) {
           if (window.__visitorActive !== undefined) location.reload();
@@ -899,6 +1007,8 @@ function renderVisitorPage(req) {
             // for any other direction (e.g. owner's still-active stream).
             removeRemoteTile(m.email);
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
+          } else if (m.type === 'overlay') {
+            renderOverlay(m);
           } else {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
             if (m.type === 'peer-joined' && myBroadcastStream) setTimeout(broadcastTrackState, 800);
@@ -996,6 +1106,63 @@ router.post('/api/visitor/timed', async (req, res) => {
       inline: { name: `Timed ${sec}s`, steps: [{ type: 'on', durationMs: Math.round(sec * 1000) }] },
       byEmail: ctx.email, byNickname: ctx.nickname,
     });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/visitor/minigame/dice-roll', async (req, res) => {
+  const ctx = _visitorCtx(req, res); if (!ctx) return;
+  try {
+    await minigames.runDiceRoll({
+      count: req.body?.count,
+      mode: req.body?.mode,
+      byEmail: ctx.email,
+      byNickname: ctx.nickname,
+    });
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/visitor/minigame/prize-wheel', async (req, res) => {
+  const ctx = _visitorCtx(req, res); if (!ctx) return;
+  try {
+    // Server-side allow-list: visitor can only spin wheels exposed by the
+    // active milestone's button OR the always-available pool.
+    const state = session.getState();
+    const profile = activeProfile();
+    const tplData = templatesSvc.load();
+    const tpl = profile ? tplData.templateProfiles.find(p => p.id === profile.templateProfileId) : null;
+    const wheelId = req.body?.wheelId;
+    let active = null;
+    if (state.active && tpl?.milestones?.length) {
+      if (state.capacity >= 100) active = tpl.milestones.find(m => m.is100Plus) || null;
+      if (!active) active = tpl.milestones
+        .filter(m => !m.is100Plus && state.capacity >= m.capacityMin && state.capacity <= m.capacityMax)
+        .sort((a, b) => b.capacityMin - a.capacityMin)[0] || null;
+    }
+    const allowed = Array.from(new Set([
+      ...((active?.minigameConfig?.['prize-wheel']?.wheelIds) || []),
+      ...((tpl?.defaultMinigameConfig?.['prize-wheel']?.wheelIds) || []),
+    ]));
+    // If a specific wheelId is pinned, it must be in the allow-list. Otherwise
+    // the server picks one at random from the wheelIds the client offered
+    // (intersected with the allow-list).
+    if (wheelId && !allowed.includes(wheelId)) return res.status(403).json({ error: 'this wheel is not available at this button' });
+    const result = minigames.requestPrizeWheel({
+      wheelId,
+      wheelIds: req.body?.wheelIds,
+      allowedWheelIds: allowed,
+      byEmail: ctx.email,
+      byNickname: ctx.nickname,
+    });
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/visitor/minigame/prize-wheel/spin', (req, res) => {
+  const ctx = _visitorCtx(req, res); if (!ctx) return;
+  try {
+    minigames.confirmPrizeSpin({ spinToken: req.body?.spinToken, byEmail: ctx.email });
     res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });

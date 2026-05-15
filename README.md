@@ -53,6 +53,7 @@ PumpDirect lets you:
 - Let your invited guests connect, watch a live capacity gauge, fire pre-defined action templates (if you grant them control), and chat over end-to-end-encrypted WebSocket.
 - Stream your webcam (Live mode, WebRTC mesh, ≤5 viewers, peer-to-peer DTLS-SRTP) or post auto-snapshots at capacity thresholds.
 - Grant select controllers permission to publish their own cam into the mesh.
+- Run **Mini Games** (Dice Roll, Prize Wheel) and **Triggers** (capacity-threshold-fired action chains) for synchronized in-session theatre — animated overlays, persistent text captions over the host webcam, sound effects, and delayed end-session countdowns, all broadcast in lockstep to every viewer.
 
 There's a clear separation between:
 
@@ -123,7 +124,9 @@ Then on first launch, in your local browser:
 3. Open the **Devices** tab, scan for Kasa devices (UDP broadcast), add your pump plug, calibrate it (live timer or manual seconds-to-100%).
 4. Open the **Users** tab, add invited guests by email + nickname. Each entry pushes to the CF Access allow-policy.
 5. Open the **Pump Templates** tab, build milestones with announcements + action templates (`on` / `off` / `repeat` step DSL).
-6. Open the **Launchpad** tab — pick a session profile (or create one), check participants' Connect/Action/Video permissions, hit **Start Session**.
+6. *(Optional)* Open the **Mini Games** tab to design prize-wheel profiles (1–10 sections each, with `action` / `spin-again` / `no-prize` types and per-section pump steps). Attach them to milestones from the Pump Templates editor.
+7. *(Optional)* Open the **Triggers** tab to build trigger actions (ordered sub-action sequences), trigger action groups (sequences of actions), and trigger templates (a list of `CAPACITY_REACHED @ N%` → action/group rows). Attach a trigger template to a session profile via Launchpad → Settings.
+8. Open the **Launchpad** tab — pick a session profile (or create one), check participants' Connect/Action/Video permissions, hit **Start Session**.
    - Sessions begin in **standby**. Click **Exit Standby** to officially go live.
    - All session controls: Stop · E-STOP · Enter/Exit Standby (standby + E-STOP both abort the entire running action cycle, not just the current segment).
 
@@ -152,6 +155,33 @@ SystemCallArchitectures=native
 
 **Windows:** generates `install-service.ps1` / `uninstall-service.ps1`. Installer downloads NSSM (~340 KB) into `bin/`, registers PumpDirect as a Windows Service, and adds a Windows Defender Firewall rule pinning the listener to `127.0.0.1`.
 
+## Mini Games
+
+Controller-pressable buttons that pre-compute a result server-side, broadcast it to every viewer, and run a synchronized animation before the resulting pump fires:
+
+- **🎲 Dice Roll** — owner-configurable popup picks 1–6 d6 dice and Continuous (`total pips × 1s` pump-on) or Cycle (`total pips × 1s on / 1s off`). Animated Lottie dice land on the same faces on every screen.
+- **🎡 Prize Wheel** — owner-built wheels (1–10 sections, optional per-spin section shuffle). Section types: `action` (fires its pump steps), `spin-again` (re-rolls, max 8 chained spins), `no-prize` (silent lands). Programmatic SVG wheel with radial labels; the trigger user gets a SPIN button (only visible to them) and the server emits the spin event so all clients animate in lockstep.
+
+Per-milestone (or always-available) tickboxes attach minigames to a button; multi-wheel buttons have the server randomly pick one of the assigned wheels on each press — the spinner never gets to choose.
+
+## Triggers
+
+Three reusable layers, all on the **Triggers** tab:
+
+| Layer | Shape | Notes |
+|---|---|---|
+| **Trigger Action** | named profile · ordered sub-actions | Sub-action kinds: `text-overlay` (5 anchors over host cam, add/clear/all), `lottie-overlay` (positioned + sized over host cam, optional freeze-last-frame), `play-sound` (`/assets/triggers/sound/*.{mp3,wav,ogg}`), `device-control` (on / on-cycle / off, with `all` target on off), `wait`, `turn-off-host-cam`, `end-session` (instant or delayed with full-screen "Session ending in N" countdown). |
+| **Trigger Action Group** | named profile · ordered list of Trigger Actions | Macro of macros — runs its actions sequentially. |
+| **Trigger Template** | named profile · rows of `{type, value, target}` | Only one row per capacity number; target is either a Trigger Action or a Group. |
+
+A trigger template attaches to a session profile (Launchpad → Settings). At runtime the action engine's capacity tick fires unfired triggers when their `value` is crossed upward — fire-once per session. The runtime locks the gauge (same UI lock actions/minigames use), queues additional triggers behind in-flight ones, and preempts manual Pump On when a trigger fires.
+
+Asset directories (drop files in; the editor enumerates):
+- `public/assets/triggers/lottie/*.json` — Lottie JSON for `lottie-overlay`.
+- `public/assets/triggers/sound/*.{mp3,wav,ogg,m4a}` — audio for `play-sound`.
+
+The sub-action editor supports drag-to-reorder rows, a copy button (📋) per row that deep-clones, and live previews for both `text-overlay` (cam-shaped preview with the styled text) and `lottie-overlay` (cam-shaped preview with draggable center + width slider).
+
 ## Customization
 
 - **Branding**: every `PumpDirect` string is plain HTML — search/replace if you fork.
@@ -178,10 +208,21 @@ config.js                  Single config-file loader/saver
 server.js                  Entrypoint — starts public + owner servers
 public-server.js           Visitor side, /ws/visitor (max 5 distinct emails)
 owner-server.js            Loopback owner GUI, /ws/owner
-routes/                    Express routers per tab
-services/                  Action engine, device control, signaling, chat (E2EE), vendors
+routes/                    Express routers per tab (launchpad, templates,
+                           devices, network, users, chat-webcam, minigames,
+                           triggers, visitor)
+services/                  Action engine, device control, signaling, chat (E2EE),
+                           minigames (dice + prize-wheel), triggers + runtime,
+                           vendors
 views/                     Shared layout + page templates (no framework)
 views/chat-crypto.js       Browser-side AES-256-GCM helper bundled into both pages
+views/overlay.js           Shared overlay renderer (dice, prize-wheel, lottie,
+                           text overlay, play-sound, session-ending countdown)
+public/assets/             Statically-served assets
+  dice/                    Lottie dice (dice-number-1.json … dice-number-6.json)
+  vendor/lottie.min.js     Self-hosted lottie-web player (≈305 KB)
+  triggers/lottie/         User-supplied Lottie JSON for trigger actions
+  triggers/sound/          User-supplied audio for play-sound
 python/, scripts/          Python helpers for Tapo / Kasa / Wyze
 utils/                     Logger, errors
 start.sh, start.bat        Cross-platform launchers

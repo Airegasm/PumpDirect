@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const WebSocket = require('ws');
@@ -44,6 +45,10 @@ function start() {
     if (!req.user) return res.status(401).json({ error: 'unauthenticated' });
     next();
   });
+
+  // Static assets (dice Lottie JSON, lottie-web player). Mounted before
+  // anything that could 404 / redirect.
+  app.use('/assets', express.static(path.join(__dirname, 'public', 'assets'), { maxAge: '1h' }));
 
   app.use(visitorRoutes.router);
 
@@ -133,9 +138,11 @@ function start() {
       send('chat', { message });
     };
     const onChatKey = (key) => send('chat-key', { key });
+    const onOverlay = (payload) => send('overlay', payload);
     bus.on('state', onState);
     bus.on('chat', onChat);
     bus.on('chat-key', onChatKey);
+    bus.on('overlay', onOverlay);
 
     ws.on('message', (raw) => {
       let msg;
@@ -165,7 +172,7 @@ function start() {
     });
 
     ws.on('close', () => {
-      bus.off('state', onState); bus.off('chat', onChat); bus.off('chat-key', onChatKey);
+      bus.off('state', onState); bus.off('chat', onChat); bus.off('chat-key', onChatKey); bus.off('overlay', onOverlay);
       signaling.unregister(email, ws);
       const next = (visitorConns.get(email) || 1) - 1;
       if (next <= 0) {

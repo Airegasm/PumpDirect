@@ -11,6 +11,8 @@ const TABS = [
   { id: 'chatwebcam', label: 'Chat/Webcam', href: '/chat-webcam' },
   { id: 'templates', label: 'Pump Templates', href: '/templates' },
   { id: 'devices', label: 'Device Discovery', href: '/devices' },
+  { id: 'triggers', label: 'Triggers', href: '/triggers' },
+  { id: 'minigames', label: 'Mini Games', href: '/minigames' },
   { id: 'network', label: 'Network', href: '/network' },
   { id: 'users', label: 'Users', href: '/users' },
 ];

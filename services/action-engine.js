@@ -6,6 +6,9 @@ const chat = require('./chat-service');
 const config = require('../config');
 const { emitState } = require('./event-bus');
 const { createLogger } = require('../utils/logger');
+// Lazy require to break a potential cycle (trigger-runtime requires this file too).
+let _triggerRuntime = null;
+function _triggers() { if (!_triggerRuntime) _triggerRuntime = require('./trigger-runtime'); return _triggerRuntime; }
 
 const logger = createLogger('ActionEngine');
 
@@ -133,6 +136,7 @@ function startCapacityLoop() {
     pumpOnSince = now;
     _setCapacity(live.capacity + elapsed * rate);
     _maybeAdvanceMilestone();
+    try { _triggers().onCapacityTick(live.capacity); } catch (e) { logger.warn('trigger runtime tick failed: ' + e.message); }
     _publish();
 
     // Enforce disableControlAt100 mid-action: if capacity crossed 100 while a
@@ -273,6 +277,7 @@ function resetForNewSession(welcomeMessage) {
   chat.reset();
   chat.rotateKey();  // fresh AES key per session — old ciphertext stays undecryptable
   pumpOnSince = null;
+  try { _triggers().resetForSession(); } catch (e) { logger.warn('trigger reset failed: ' + e.message); }
   startCapacityLoop();
   _publish();
 }
@@ -285,6 +290,7 @@ function stopForSessionEnd() {
   live.currentActionTemplateId = null;
   live.currentMilestoneId = null;
   session._setLive && session._setLive(live);
+  try { _triggers().stopForSession(); } catch (e) { logger.warn('trigger stop failed: ' + e.message); }
   _publish();
 }
 

@@ -18,6 +18,7 @@ const SEED = {
       steps: [{ type: 'repeat', times: 10, steps: [{ type: 'on', durationMs: 2000 }, { type: 'off', durationMs: 1000 }] }]
     },
   ],
+  wheelTemplates: [],
   templateProfiles: [
     {
       id: FACTORY_PROFILE_ID,
@@ -25,9 +26,15 @@ const SEED = {
       isFactory: true,
       milestones: [],
       defaultActionTemplateIds: ['seed-slow-stream', 'seed-pulse'],
+      defaultMinigameIds: [],
+      defaultMinigameConfig: {},
     },
   ],
 };
+
+// Palette used to auto-assign colors to wheel sections when the owner doesn't
+// pick one — rotates through 10 distinct hues so up to 10 sections look distinct.
+const WHEEL_PALETTE = ['#e74c3c', '#f39c12', '#f1c40f', '#27ae60', '#16a085', '#3498db', '#2980b9', '#7b3fd6', '#9b59b6', '#e84393'];
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -47,6 +54,7 @@ function load() {
     data.templateProfiles = [JSON.parse(JSON.stringify(SEED.templateProfiles[0])), ...(data.templateProfiles || [])];
     save(data);
   }
+  if (!Array.isArray(data.wheelTemplates)) data.wheelTemplates = [];
   return data;
 }
 
@@ -165,6 +173,102 @@ function deleteAction(id) {
   return { ok: true };
 }
 
+// --- wheel templates (prize-wheel minigame data) ---
+
+const VALID_SECTION_TYPES = ['action', 'spin-again', 'no-prize'];
+
+function _validateWheelSections(sections) {
+  if (!Array.isArray(sections) || sections.length < 1 || sections.length > 10) {
+    throw new Error('wheel must have 1–10 sections');
+  }
+  for (const [i, s] of sections.entries()) {
+    if (!s || typeof s !== 'object') throw new Error(`section ${i + 1} invalid`);
+    if (typeof s.label !== 'string' || !s.label.trim()) throw new Error(`section ${i + 1} label required`);
+    const type = s.type || 'action';
+    if (!VALID_SECTION_TYPES.includes(type)) throw new Error(`section ${i + 1} type must be one of: ${VALID_SECTION_TYPES.join(', ')}`);
+    if (type === 'action') validateSteps(s.steps);
+  }
+}
+
+function _normalizeWheelSections(sections) {
+  return sections.map((s, i) => {
+    const type = s.type || 'action';
+    const color = (typeof s.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(s.color))
+      ? s.color
+      : WHEEL_PALETTE[i % WHEEL_PALETTE.length];
+    const base = { label: s.label.trim(), color, type };
+    base.steps = type === 'action' ? normalizeSteps(s.steps) : [];
+    return base;
+  });
+}
+
+function listWheels() { return load().wheelTemplates || []; }
+
+function getWheel(id) {
+  const w = (load().wheelTemplates || []).find(x => x.id === id);
+  if (!w) throw new Error('wheel template not found');
+  return w;
+}
+
+function createWheel({ name, randomize, sections }) {
+  name = (name || '').trim();
+  if (!name) throw new Error('name required');
+  _validateWheelSections(sections);
+  const data = load();
+  if ((data.wheelTemplates || []).some(w => w.name === name)) throw new Error('wheel name already exists');
+  const wheel = {
+    id: randomUUID(),
+    name,
+    randomize: !!randomize,
+    sections: _normalizeWheelSections(sections),
+  };
+  data.wheelTemplates = [...(data.wheelTemplates || []), wheel];
+  save(data);
+  return wheel;
+}
+
+function updateWheel(id, patch) {
+  const data = load();
+  const idx = (data.wheelTemplates || []).findIndex(w => w.id === id);
+  if (idx < 0) throw new Error('wheel template not found');
+  const wheel = data.wheelTemplates[idx];
+  if (patch.name != null) {
+    const n = patch.name.trim();
+    if (!n) throw new Error('name cannot be empty');
+    if (data.wheelTemplates.some((w, i) => i !== idx && w.name === n)) throw new Error('name already taken');
+    wheel.name = n;
+  }
+  if (patch.randomize != null) wheel.randomize = !!patch.randomize;
+  if (patch.sections != null) {
+    _validateWheelSections(patch.sections);
+    wheel.sections = _normalizeWheelSections(patch.sections);
+  }
+  save(data);
+  return wheel;
+}
+
+function deleteWheel(id) {
+  const data = load();
+  const before = (data.wheelTemplates || []).length;
+  data.wheelTemplates = (data.wheelTemplates || []).filter(w => w.id !== id);
+  if (data.wheelTemplates.length === before) throw new Error('wheel template not found');
+  // Strip references from minigameConfig on every milestone + profile.
+  for (const p of data.templateProfiles) {
+    const dmc = p.defaultMinigameConfig || {};
+    if (dmc['prize-wheel']?.wheelIds) {
+      dmc['prize-wheel'].wheelIds = dmc['prize-wheel'].wheelIds.filter(x => x !== id);
+    }
+    for (const m of (p.milestones || [])) {
+      const mc = m.minigameConfig || {};
+      if (mc['prize-wheel']?.wheelIds) {
+        mc['prize-wheel'].wheelIds = mc['prize-wheel'].wheelIds.filter(x => x !== id);
+      }
+    }
+  }
+  save(data);
+  return { ok: true };
+}
+
 // --- template profiles ---
 
 function listProfiles() {
@@ -211,6 +315,12 @@ function updateProfile(id, patch) {
   if (patch.defaultActionTemplateIds != null) {
     profile.defaultActionTemplateIds = patch.defaultActionTemplateIds;
   }
+  if (patch.defaultMinigameIds != null) {
+    profile.defaultMinigameIds = Array.isArray(patch.defaultMinigameIds) ? patch.defaultMinigameIds : [];
+  }
+  if (patch.defaultMinigameConfig != null && typeof patch.defaultMinigameConfig === 'object') {
+    profile.defaultMinigameConfig = patch.defaultMinigameConfig;
+  }
   save(data);
   return profile;
 }
@@ -235,7 +345,7 @@ function _ensureMilestoneOK(profile, m) {
   return { min, max, is100Plus: false };
 }
 
-function addMilestone(profileId, { name, capacityMin, capacityMax, announcement, actionTemplateIds, is100Plus }) {
+function addMilestone(profileId, { name, capacityMin, capacityMax, announcement, actionTemplateIds, minigameIds, minigameConfig, is100Plus }) {
   const data = load();
   const profile = data.templateProfiles.find(p => p.id === profileId);
   if (!profile) throw new Error('profile not found');
@@ -251,6 +361,8 @@ function addMilestone(profileId, { name, capacityMin, capacityMax, announcement,
     is100Plus: top,
     announcement: (announcement || '').toString(),
     actionTemplateIds: Array.isArray(actionTemplateIds) ? actionTemplateIds : [],
+    minigameIds: Array.isArray(minigameIds) ? minigameIds : [],
+    minigameConfig: (minigameConfig && typeof minigameConfig === 'object') ? minigameConfig : {},
   };
   profile.milestones.push(milestone);
   profile.milestones.sort((a, b) => a.capacityMin - b.capacityMin);
@@ -277,6 +389,8 @@ function updateMilestone(profileId, milestoneId, patch) {
   }
   if (patch.announcement != null) m.announcement = patch.announcement.toString();
   if (patch.actionTemplateIds != null) m.actionTemplateIds = patch.actionTemplateIds;
+  if (patch.minigameIds != null) m.minigameIds = Array.isArray(patch.minigameIds) ? patch.minigameIds : [];
+  if (patch.minigameConfig != null && typeof patch.minigameConfig === 'object') m.minigameConfig = patch.minigameConfig;
   profile.milestones.sort((a, b) => a.capacityMin - b.capacityMin);
   save(data);
   return m;
@@ -296,6 +410,7 @@ module.exports = {
   FACTORY_PROFILE_ID,
   load,
   listActions, createAction, updateAction, deleteAction, reorderActions,
+  listWheels, getWheel, createWheel, updateWheel, deleteWheel,
   listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
   addMilestone, updateMilestone, deleteMilestone,
   validateSteps, normalizeSteps,

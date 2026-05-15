@@ -94,6 +94,10 @@ function updateProfile(id, patch) {
   }
   if (patch.welcomeMessage != null) profile.welcomeMessage = String(patch.welcomeMessage);
   if (patch.templateProfileId != null) profile.templateProfileId = patch.templateProfileId;
+  if (patch.triggerTemplateId !== undefined) {
+    // Allow null/'' to detach; otherwise persist the id.
+    profile.triggerTemplateId = patch.triggerTemplateId || null;
+  }
   if (patch.settings) {
     if (typeof patch.settings.chatroomEnabled === 'boolean') profile.settings.chatroomEnabled = patch.settings.chatroomEnabled;
     if (typeof patch.settings.disableControlAt100 === 'boolean') profile.settings.disableControlAt100 = patch.settings.disableControlAt100;
@@ -121,6 +125,7 @@ const sessionState = {
   startedAt: null,
   sessionProfileId: null,
   templateProfileId: null,
+  triggerTemplateId: null,
   capacity: 0,
   pumpRuntimeMs: 0,
   pumpOn: false,
@@ -131,6 +136,9 @@ const sessionState = {
   // Live action-step telemetry — clients render countdown from these.
   currentStep: null,    // { type: 'on'|'off', durationMs, startedAt }
   currentRepeat: null,  // { iteration, times }
+  // Active text overlays keyed by anchor — populated by trigger sub-actions.
+  // Each value: { text, fontColor, bgColor|null, fontSize }.
+  textOverlays: {},
 };
 
 function getState() { return { ...sessionState }; }
@@ -151,12 +159,14 @@ function startSession(profileId) {
   sessionState.startedAt = new Date().toISOString();
   sessionState.sessionProfileId = profile.id;
   sessionState.templateProfileId = profile.templateProfileId;
+  sessionState.triggerTemplateId = profile.triggerTemplateId || null;
   sessionState.capacity = 0;
   sessionState.pumpRuntimeMs = 0;
   sessionState.pumpOn = false;
   sessionState.currentActionTemplateId = null;
   sessionState.currentMilestoneId = null;
   sessionState.currentDisplayMessage = profile.welcomeMessage || '';
+  sessionState.textOverlays = {};
   sessionState.participants = (profile.allowedParticipants || []).map(p => ({
     canConnect: true, canControl: false, canBroadcast: false, ...p,
     muted: false, connected: false,
@@ -173,6 +183,7 @@ function stopSession() {
   sessionState.emergencyStopped = false;
   sessionState.pumpOn = false;
   sessionState.currentActionTemplateId = null;
+  sessionState.textOverlays = {};
   logger.info('session stopped');
   emitState(getState());
   return getState();

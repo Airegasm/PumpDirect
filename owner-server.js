@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const WebSocket = require('ws');
 const { createLogger } = require('./utils/logger');
 const { ownerLayout, escape } = require('./views/layout');
@@ -41,12 +42,20 @@ function start() {
     res.status(403).json({ error: 'TOS not accepted — open /tos in a browser to accept' });
   });
 
+  // Static assets (dice Lottie JSON, lottie-web player, etc.) — must be mounted
+  // BEFORE the TOS gate would otherwise treat them as missing pages. The TOS
+  // middleware above doesn't intercept /assets/* explicitly; static files don't
+  // negotiate HTML so the redirect rule doesn't trigger, but be defensive.
+  app.use('/assets', express.static(path.join(__dirname, 'public', 'assets'), { maxAge: '1h' }));
+
   app.use(require('./routes/launchpad'));
   app.use(require('./routes/chat-webcam'));
   app.use(require('./routes/templates'));
   app.use(require('./routes/network'));
   app.use(require('./routes/users'));
   app.use(require('./routes/devices'));
+  app.use(require('./routes/triggers'));
+  app.use(require('./routes/minigames'));
 
   const server = http.createServer(app);
   const wss = new WebSocket.Server({ server, path: '/ws/owner' });
@@ -101,9 +110,11 @@ function start() {
     const onState = () => send('state', { state: enrichState() });
     const onChat = (message) => send('chat', { message });
     const onChatKey = (key) => send('chat-key', { key });
+    const onOverlay = (payload) => send('overlay', payload);
     bus.on('state', onState);
     bus.on('chat', onChat);
     bus.on('chat-key', onChatKey);
+    bus.on('overlay', onOverlay);
 
     ws.on('message', (raw) => {
       let msg;
@@ -124,6 +135,7 @@ function start() {
       bus.off('state', onState);
       bus.off('chat', onChat);
       bus.off('chat-key', onChatKey);
+      bus.off('overlay', onOverlay);
       signaling.unregister(ownerEmail, ws);
       // Only clear presence once the last owner-tab WS closes, and even then
       // defer so a refresh doesn't flip the Host row offline-then-online.

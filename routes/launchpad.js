@@ -3,11 +3,13 @@ const session = require('../services/session-service');
 const templatesSvc = require('../services/templates-service');
 const devicesSvc = require('../services/devices-service');
 const actionEngine = require('../services/action-engine');
+const minigames = require('../services/minigames-service');
 const chat = require('../services/chat-service');
 const config = require('../config');
 const { ownerLayout, escape } = require('../views/layout');
 const { rtcClientJs } = require('../views/rtc-client');
 const { chatCryptoJs } = require('../views/chat-crypto');
+const { overlayJs, overlayCss } = require('../views/overlay');
 const { createLogger } = require('../utils/logger');
 
 const logger = createLogger('Launchpad');
@@ -84,21 +86,38 @@ router.get('/', (req, res) => {
   const visibleActionIds = state.active
     ? Array.from(new Set([...milestoneActionIds, ...alwaysActionIds]))
     : [];
+  // Minigames — same union of milestone-attached + always-available pools.
+  const milestoneMinigameIds = activeMilestone ? (activeMilestone.minigameIds || []) : [];
+  const alwaysMinigameIds = templateProfile?.defaultMinigameIds || [];
+  const visibleMinigameIds = state.active
+    ? Array.from(new Set([...milestoneMinigameIds, ...alwaysMinigameIds]))
+    : [];
+  const minigamesById = Object.fromEntries(minigames.list().map(m => [m.id, m]));
   const isRunning = !!state.currentActionTemplateId;
   const alwaysBtns = state.active ? `
     <button class="action-btn pump-toggle" onclick="lpPumpToggle()" style="background:${isRunning ? '#a13030' : '#1a8a4d'};color:#fff">${isRunning ? '⏻ Pump Off' : '⏵ Pump On'}</button>
     <button class="action-btn misc-action-btn" onclick="lpTimed()" style="background:#1a8a4d;color:#fff" ${isRunning ? 'disabled' : ''}>⏱ Timed</button>
     <button class="action-btn misc-action-btn" onclick="lpCycle()" style="background:#1a8a4d;color:#fff" ${isRunning ? 'disabled' : ''}>↻ Cycle</button>
   ` : '';
-  const actionButtonsCore = visibleActionIds.length
-    ? visibleActionIds.map(id => {
-        const a = actionsById[id];
-        return `<div class="action-cell">
-          <button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')">${escape(a?.name || '?')}</button>
-          <button class="action-help-btn" type="button" title="What does this do?" onclick="lpActionHelp('${escape(id)}')">?</button>
-        </div>`;
-      }).join('')
-    : (state.active ? '<p class="muted" style="grid-column:1/-1">No template actions for this milestone — use Pump On / Timed / Cycle above.</p>' : '<p class="muted">Start a session to enable actions.</p>');
+  const actionCells = visibleActionIds.map(id => {
+    const a = actionsById[id];
+    return `<div class="action-cell">
+      <button class="action-btn" data-action-id="${escape(id)}" onclick="lpFireAction('${escape(id)}')">${escape(a?.name || '?')}</button>
+      <button class="action-help-btn" type="button" title="What does this do?" onclick="lpActionHelp('${escape(id)}')">?</button>
+    </div>`;
+  }).join('');
+  const minigameCells = visibleMinigameIds.map(id => {
+    const mg = minigamesById[id];
+    if (!mg) return '';
+    return `<div class="action-cell">
+      <button class="action-btn minigame-btn" data-minigame-id="${escape(id)}" onclick="lpOpenMinigame('${escape(id)}')" style="background:${escape(mg.color)};color:#fff">🎲 ${escape(mg.name)}</button>
+      <button class="action-help-btn" type="button" title="What does this do?" onclick="lpMinigameHelp('${escape(id)}')">?</button>
+    </div>`;
+  }).join('');
+  const hasAnyButtons = visibleActionIds.length || visibleMinigameIds.length;
+  const actionButtonsCore = hasAnyButtons
+    ? actionCells + minigameCells
+    : (state.active ? '<p class="muted" style="grid-column:1/-1">No template actions or minigames for this milestone — use Pump On / Timed / Cycle above.</p>' : '<p class="muted">Start a session to enable actions.</p>');
   const actionButtons = alwaysBtns + actionButtonsCore;
 
   const calibratedReady = primaryDevice && primaryDevice.calibration?.secondsTo100 > 0;
@@ -148,8 +167,8 @@ router.get('/', (req, res) => {
         ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin-top:6px">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
       </div>
       <div class="card milestone-pane">
-        <p class="milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
         <p class="milestone-welcome">${escape(profile.welcomeMessage || '(no welcome message)')}</p>
+        <p class="milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
         <p class="milestone-announcement">${activeMilestone ? escape(activeMilestone.announcement || '') : ''}</p>
         <p class="muted" id="milestone-meta" style="font-size:0.9rem;margin:0 0 14px">
           ${state.active
@@ -172,6 +191,7 @@ router.get('/', (req, res) => {
         </div>
       </div>
     </div>
+    <div id="overlay-stage"></div>
     </div><!-- /session-stage -->
 
     <div class="chat-row">
@@ -226,18 +246,40 @@ router.get('/', (req, res) => {
 
     <div id="lp-msg" style="position:fixed;bottom:20px;right:20px;max-width:380px;z-index:1100"></div>
 
+    <style>${overlayCss()}</style>
+    <script src="/assets/vendor/lottie.min.js"></script>
     <script>
       ${rtcClientJs({ myEmail: cfg.cloudflare?.ownerEmail || 'owner@local' })}
       ${chatCryptoJs()}
+      ${overlayJs()}
     </script>
     <script>
       const OWNER_CAM_MODE = ${JSON.stringify(cfg.owner?.camera?.mode || 'off')};
+      // Globals consumed by views/overlay.js for Spin-button visibility + the
+      // POST endpoint when the trigger user confirms the spin.
+      window.__MY_EMAIL = ${JSON.stringify(cfg.cloudflare?.ownerEmail || 'owner@local')};
+      window.__SPIN_ENDPOINT = '/api/minigame/prize-wheel/spin';
+      // Where the text-overlay stage gets hung. On Launchpad it's the owner's
+      // own local cam tile — the same element that visitors see streamed.
+      window.__textOverlayTarget = () => document.getElementById('local-tile');
       const PROFILE_ID = ${JSON.stringify(profile.id)};
       const PROFILE_IS_FACTORY = ${JSON.stringify(!!profile.isFactory)};
       const TEMPLATE_OPTIONS = ${JSON.stringify(templates.templateProfiles.map(p => ({ id: p.id, name: p.name })))};
       const ACTIONS_INFO = ${JSON.stringify(Object.fromEntries(templates.actionTemplates.map(a => [a.id, { name: a.name, description: a.description || '' }])))};
-      const MILESTONES_BY_ID = ${JSON.stringify(Object.fromEntries((templateProfile?.milestones || []).map(m => [m.id, { name: m.name, announcement: m.announcement || '', actionTemplateIds: m.actionTemplateIds || [], capacityMin: m.capacityMin, capacityMax: m.capacityMax, is100Plus: !!m.is100Plus }])))};
+      const MINIGAMES_INFO = ${JSON.stringify(Object.fromEntries(minigames.list().map(m => [m.id, { name: m.name, kind: m.kind, color: m.color, description: m.description || '' }])))};
+      const MILESTONES_BY_ID = ${JSON.stringify(Object.fromEntries((templateProfile?.milestones || []).map(m => [m.id, { name: m.name, announcement: m.announcement || '', actionTemplateIds: m.actionTemplateIds || [], minigameIds: m.minigameIds || [], minigameConfig: m.minigameConfig || {}, capacityMin: m.capacityMin, capacityMax: m.capacityMax, is100Plus: !!m.is100Plus }])))};
       const ALWAYS_ACTION_IDS = ${JSON.stringify(templateProfile?.defaultActionTemplateIds || [])};
+      const ALWAYS_MINIGAME_IDS = ${JSON.stringify(templateProfile?.defaultMinigameIds || [])};
+      const ALWAYS_MINIGAME_CONFIG = ${JSON.stringify(templateProfile?.defaultMinigameConfig || {})};
+      const WHEELS_BY_ID = ${JSON.stringify(Object.fromEntries(templates.wheelTemplates?.map(w => [w.id, { name: w.name, sectionCount: (w.sections || []).length }]) || []))};
+      function _mergedWheelIdsForActive() {
+        // Wheel IDs available at the currently-active milestone's Prize Wheel
+        // button = union of always-available + active-milestone wheelIds.
+        const m = _activeMilestone((window.__lastState && window.__lastState.capacity) || 0, !!(window.__lastState && window.__lastState.active));
+        const ms = m ? (m.minigameConfig?.['prize-wheel']?.wheelIds || []) : [];
+        const al = ALWAYS_MINIGAME_CONFIG['prize-wheel']?.wheelIds || [];
+        return Array.from(new Set([...ms, ...al]));
+      }
       const TPL_NAME = ${JSON.stringify(templateProfile?.name || 'Default')};
       const WELCOME_MSG = ${JSON.stringify(profile.welcomeMessage || '')};
       let __lastRenderedMilestoneId = '__init__';
@@ -280,16 +322,61 @@ router.get('/', (req, res) => {
           '<button class="action-btn pump-toggle" onclick="lpPumpToggle()" style="background:' + (running ? '#a13030' : '#1a8a4d') + ';color:#fff">' + (running ? '⏻ Pump Off' : '⏵ Pump On') + '</button>'
         + '<button class="action-btn misc-action-btn" onclick="lpTimed()" style="background:#1a8a4d;color:#fff"' + (running ? ' disabled' : '') + '>⏱ Timed</button>'
         + '<button class="action-btn misc-action-btn" onclick="lpCycle()" style="background:#1a8a4d;color:#fff"' + (running ? ' disabled' : '') + '>↻ Cycle</button>';
-        const cells = ids.length
-          ? ids.map(id => {
-              const a = ACTIONS_INFO[id];
-              return '<div class="action-cell">'
-                + '<button class="action-btn" data-action-id="' + _safeAttr(id) + '" onclick="lpFireAction(\\'' + _safeAttr(id) + '\\')">' + _safeAttr(a && a.name || '?') + '</button>'
-                + '<button class="action-help-btn" type="button" title="What does this do?" onclick="lpActionHelp(\\'' + _safeAttr(id) + '\\')">?</button>'
-              + '</div>';
-            }).join('')
-          : '<p class="muted" style="grid-column:1/-1">No template actions for this milestone — use Pump On / Timed / Cycle above.</p>';
-        grid.innerHTML = alwaysBtns + cells;
+        const actionCells = ids.map(id => {
+          const a = ACTIONS_INFO[id];
+          return '<div class="action-cell">'
+            + '<button class="action-btn" data-action-id="' + _safeAttr(id) + '" onclick="lpFireAction(\\'' + _safeAttr(id) + '\\')">' + _safeAttr(a && a.name || '?') + '</button>'
+            + '<button class="action-help-btn" type="button" title="What does this do?" onclick="lpActionHelp(\\'' + _safeAttr(id) + '\\')">?</button>'
+          + '</div>';
+        }).join('');
+        const mgIds = Array.from(new Set([...((m && m.minigameIds) || []), ...ALWAYS_MINIGAME_IDS]));
+        const mgCells = mgIds.map(id => {
+          const mg = MINIGAMES_INFO[id];
+          if (!mg) return '';
+          return '<div class="action-cell">'
+            + '<button class="action-btn minigame-btn" data-minigame-id="' + _safeAttr(id) + '" onclick="lpOpenMinigame(\\'' + _safeAttr(id) + '\\')" style="background:' + _safeAttr(mg.color) + ';color:#fff">🎲 ' + _safeAttr(mg.name) + '</button>'
+            + '<button class="action-help-btn" type="button" title="What does this do?" onclick="lpMinigameHelp(\\'' + _safeAttr(id) + '\\')">?</button>'
+          + '</div>';
+        }).join('');
+        grid.innerHTML = alwaysBtns + (actionCells || mgCells
+          ? actionCells + mgCells
+          : '<p class="muted" style="grid-column:1/-1">No template actions or minigames for this milestone — use Pump On / Timed / Cycle above.</p>');
+      }
+      function lpMinigameHelp(id) {
+        const mg = MINIGAMES_INFO[id]; if (!mg) return;
+        modalOpen(mg.name, '<p style="font-size:1.05rem;line-height:1.5;margin:0">' + _safeAttr(mg.description || 'No description set for this minigame yet.') + '</p>', null);
+      }
+      function lpOpenMinigame(id) {
+        const mg = MINIGAMES_INFO[id]; if (!mg) return;
+        if (mg.kind === 'dice-roll') return lpOpenDiceRoll();
+        if (mg.kind === 'prize-wheel') return lpOpenPrizeWheel();
+        flash('Unsupported minigame: ' + mg.name, 'bad');
+      }
+      async function lpOpenPrizeWheel() {
+        // The server picks ONE wheel at random from the candidate list — the
+        // spinner never gets to choose which wheel comes up.
+        const ids = _mergedWheelIdsForActive().filter(id => WHEELS_BY_ID[id]);
+        if (!ids.length) return flash('No wheels assigned to this button — set them on the milestone.', 'bad');
+        const r = await fetch('/api/minigame/prize-wheel', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ wheelIds: ids }) });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+      }
+      function lpOpenDiceRoll() {
+        modalOpen('🎲 Dice Roll',
+          '<p style="margin:0 0 14px">Roll d6 dice. The total pips drive the pump.</p>'
+          + '<p><label>Number of dice (1–6): <input id="m-dice-count" type="number" min="1" max="6" value="2" style="width:80px"></label></p>'
+          + '<p style="margin-top:14px"><label style="display:block;margin-bottom:6px">Result mode</label>'
+          + '  <label style="display:block;padding:4px 0"><input type="radio" name="m-mode" value="continuous" checked> Continuous — pump on for <em>total pips</em> seconds</label>'
+          + '  <label style="display:block;padding:4px 0"><input type="radio" name="m-mode" value="cycle"> Cycle — <em>total pips</em> × (1 sec on / 1 sec off)</label>'
+          + '</p>',
+          async () => {
+            const count = parseInt(document.getElementById('m-dice-count').value, 10);
+            const mode = (document.querySelector('input[name="m-mode"]:checked') || {}).value || 'continuous';
+            const r = await fetch('/api/minigame/dice-roll', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ count, mode }) });
+            const d = await r.json();
+            if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+            modalClose();
+          });
       }
       function lpActionHelp(id) {
         const a = ACTIONS_INFO[id];
@@ -347,16 +434,23 @@ router.get('/', (req, res) => {
       }
 
       function lpOpenSettings() {
-        const profileResp = fetch('/api/launchpad/profiles/' + PROFILE_ID).then(r => r.json()).then(d => {
+        Promise.all([
+          fetch('/api/launchpad/profiles/' + PROFILE_ID).then(r => r.json()),
+          fetch('/api/triggers/templates').then(r => r.json()).catch(() => ({ templates: [] })),
+        ]).then(([d, trigData]) => {
           const p = d.profile;
           const tplOptions = TEMPLATE_OPTIONS.map(o => '<option value="' + o.id + '"' + (o.id === p.templateProfileId ? ' selected' : '') + '>' + o.name + '</option>').join('');
+          const triggerOptions = '<option value=""' + (!p.triggerTemplateId ? ' selected' : '') + '>(none)</option>'
+            + (trigData.templates || []).map(t => '<option value="' + t.id + '"' + (t.id === p.triggerTemplateId ? ' selected' : '') + '>' + t.name + '</option>').join('');
           modalOpen('Settings — ' + p.name, ''
-            + '<p><label>Template profile <select id="m-tpl">' + tplOptions + '</select></label></p>'
+            + '<p><label>Pump template <select id="m-tpl">' + tplOptions + '</select></label></p>'
+            + '<p><label>Trigger template <select id="m-trig">' + triggerOptions + '</select></label></p>'
             + '<p><label><input type="checkbox" id="m-chat"' + (p.settings.chatroomEnabled ? ' checked' : '') + '> Enable chatroom</label></p>'
             + '<p><label><input type="checkbox" id="m-d100"' + (p.settings.disableControlAt100 ? ' checked' : '') + '> Disable device control at 100% capacity</label></p>',
             async () => {
               const body = {
                 templateProfileId: document.getElementById('m-tpl').value,
+                triggerTemplateId: document.getElementById('m-trig').value || null,
                 settings: {
                   chatroomEnabled: document.getElementById('m-chat').checked,
                   disableControlAt100: document.getElementById('m-d100').checked,
@@ -570,6 +664,7 @@ router.get('/', (req, res) => {
         applyStandby(s);
         maybeAutoToggleCam(s);
         renderMilestonePane(s);
+        renderTextOverlays(s);
         __pumpOnState = !!s.pumpOn;
         __stepState = s.currentStep || null;
         __repeatState = s.currentRepeat || null;
@@ -609,6 +704,7 @@ router.get('/', (req, res) => {
           toggle.style.color = '#fff';
         }
         document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running; });
+        document.querySelectorAll('.minigame-btn').forEach(b => { b.disabled = !!running; });
         // Presence: paint the dot + italicize AFK names in the participant list.
         const presenceByEmail = Object.fromEntries((s.participants || []).map(p => [p.email, p.presence || null]));
         document.querySelectorAll('.participants-pane .p-item[data-email]').forEach(item => {
@@ -635,11 +731,13 @@ router.get('/', (req, res) => {
         const v = tile.querySelector('video');
         v.srcObject = stream;
         v.onloadedmetadata = () => _setTileAspect(tile, v.videoWidth, v.videoHeight);
+        renderTextOverlays(window.__lastState);  // re-mount stage after innerHTML wipe
       }
       function resetLocalTile() {
         const tile = document.getElementById('local-tile');
         tile.style.display = 'grid';
         tile.innerHTML = 'Local cam off';
+        renderTextOverlays(window.__lastState);
       }
       async function lpStartCam() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -784,6 +882,8 @@ router.get('/', (req, res) => {
             // for owner→visitor streaming.
             removeRemoteTile(m.email);
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
+          } else if (m.type === 'overlay') {
+            renderOverlay(m);
           } else {
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
             // When a new peer connects, re-send our mute state so their tile renders correctly.
