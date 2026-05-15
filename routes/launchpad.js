@@ -149,7 +149,8 @@ router.get('/', (req, res) => {
       </div>
       <div class="card milestone-pane">
         <p class="milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
-        <p class="milestone-announcement">${state.active ? escape(state.currentDisplayMessage || '(no message)') : escape(profile.welcomeMessage || '(no welcome message)')}</p>
+        <p class="milestone-welcome">${escape(profile.welcomeMessage || '(no welcome message)')}</p>
+        <p class="milestone-announcement">${activeMilestone ? escape(activeMilestone.announcement || '') : ''}</p>
         <p class="muted" id="milestone-meta" style="font-size:0.9rem;margin:0 0 14px">
           ${state.active
             ? (activeMilestone ? `${activeMilestone.capacityMin}–${activeMilestone.capacityMax}% · milestone announcement live` : 'Welcome message — replaced when first milestone is reached')
@@ -258,10 +259,12 @@ router.get('/', (req, res) => {
         if (__lastRenderedMilestoneId === mid) return;
         __lastRenderedMilestoneId = mid;
         const titleEl = document.querySelector('.milestone-pane .milestone-title');
+        const wmEl = document.querySelector('.milestone-pane .milestone-welcome');
         const annEl = document.querySelector('.milestone-pane .milestone-announcement');
         const metaEl = document.getElementById('milestone-meta');
         if (titleEl) titleEl.textContent = m ? m.name : (s.active ? TPL_NAME : 'Idle');
-        if (annEl) annEl.textContent = s.active ? (s.currentDisplayMessage || '(no message)') : (WELCOME_MSG || '(no welcome message)');
+        if (wmEl) wmEl.textContent = WELCOME_MSG || '(no welcome message)';
+        if (annEl) annEl.textContent = (m && m.announcement) ? m.announcement : '';
         if (metaEl) {
           const inner = s.active
             ? (m ? (m.is100Plus ? '100%+ · milestone announcement live' : (m.capacityMin + '–' + m.capacityMax + '% · milestone announcement live')) : 'Welcome message — replaced when first milestone is reached')

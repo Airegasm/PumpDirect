@@ -63,6 +63,12 @@ function start() {
   });
 
   const visitorConns = new Map(); // email -> count
+  // Reload-grace state: when a visitor's last WS closes we wait briefly before
+  // announcing "left" and clearing presence. If they reconnect within the grace
+  // window we treat it as a continuous session — no chat noise, no peer flicker
+  // on the participant list.
+  const pendingLeave = new Map(); // email -> { timer, nickname }
+  const REJOIN_GRACE_MS = 6000;
 
   function nicknameFor(email) {
     const cfg = config.load();
@@ -102,8 +108,17 @@ function start() {
 
     const prevCount = visitorConns.get(email) || 0;
     visitorConns.set(email, prevCount + 1);
-    if (prevCount === 0) {
+    const pending = pendingLeave.get(email);
+    if (pending) {
+      // Reconnected inside the grace window — cancel the pending "left" so we
+      // never announce join either. The other peers' PCs are torn down/rebuilt
+      // by WebRTC anyway, but chat + presence stay quiet.
+      clearTimeout(pending.timer);
+      pendingLeave.delete(email);
+    } else if (prevCount === 0) {
       chat.system(`${nicknameFor(email)} joined`);
+    }
+    if (prevCount === 0) {
       signaling.broadcast({ type: 'peer-joined', email, nickname: nicknameFor(email), isOwner: false }, email);
     }
     signaling.setPresence(email, 'connected');
@@ -155,9 +170,17 @@ function start() {
       const next = (visitorConns.get(email) || 1) - 1;
       if (next <= 0) {
         visitorConns.delete(email);
-        signaling.clearPresence(email);
-        chat.system(`${nicknameFor(email)} left`);
+        // peer-left fires now so other clients can rebuild WebRTC PCs on the
+        // reconnect; the chat-system + presence-clear get deferred so a quick
+        // reload doesn't spam "left/joined" or flicker the participant list.
         signaling.broadcast({ type: 'peer-left', email });
+        const nick = nicknameFor(email);
+        const timer = setTimeout(() => {
+          pendingLeave.delete(email);
+          signaling.clearPresence(email);
+          chat.system(`${nick} left`);
+        }, REJOIN_GRACE_MS);
+        pendingLeave.set(email, { timer, nickname: nick });
       } else {
         visitorConns.set(email, next);
       }

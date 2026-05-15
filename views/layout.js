@@ -1,3 +1,5 @@
+const session = require('../services/session-service');
+
 function escape(s) {
   return String(s).replace(/[&<>"']/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -14,9 +16,18 @@ const TABS = [
 ];
 
 function ownerLayout({ title, active, body }) {
-  const tabs = TABS.map(t =>
-    `<a href="${t.href}" class="tab ${active === t.id ? 'active' : ''}">${escape(t.label)}</a>`
-  ).join('');
+  // During a live session, every Launchpad tab owns a webcam + WebRTC mesh that
+  // dies if the tab navigates away. Send non-launchpad tabs to a fresh window
+  // so the Launchpad tab stays mounted and visitors keep their feed.
+  const live = !!session.getState().active;
+  const tabs = TABS.map(t => {
+    const isActive = active === t.id;
+    const openNewTab = live && t.id !== 'launchpad' && active === 'launchpad';
+    const targetAttr = openNewTab ? ' target="_blank" rel="noopener"' : '';
+    const liveSuffix = openNewTab ? ' <span aria-hidden="true" style="opacity:0.55;font-size:0.85em">↗</span>' : '';
+    const titleAttr = openNewTab ? ' title="Opens in a new window — leaving Launchpad would drop the live cam feed."' : '';
+    return `<a href="${t.href}" class="tab ${isActive ? 'active' : ''}"${targetAttr}${titleAttr}>${escape(t.label)}${liveSuffix}</a>`;
+  }).join('');
   return `<!doctype html>
 <html lang="en" data-theme="dark">
 <head>
@@ -81,7 +92,9 @@ function ownerLayout({ title, active, body }) {
   .pump-status .pump-count { color: #f0c674; margin-left: 4px; font-weight: 500; }
   .cycle-status { font-size: 0.9rem; color: #f0c674; margin: 2px 0 0; min-height: 1.1em; }
   .milestone-pane .milestone-title { font-size: 1.35rem; font-weight: 700; margin: 0 0 6px; }
-  .milestone-pane .milestone-announcement { font-size: 1.05rem; line-height: 1.45; margin: 0 0 14px; color: #e8e8e8; }
+  .milestone-pane .milestone-welcome { font-size: 1.05rem; line-height: 1.45; margin: 0 0 8px; color: var(--text); }
+  .milestone-pane .milestone-announcement { font-size: 1rem; line-height: 1.45; margin: 0 0 14px; color: var(--text-muted); border-left: 3px solid var(--accent); padding: 4px 12px; background: var(--bg-3); border-radius: 0 8px 8px 0; }
+  .milestone-pane .milestone-announcement:empty { display: none; }
   .milestone-pane .action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
   .milestone-pane .action-grid > button { min-height: 54px; padding: 10px 14px; }
   .milestone-pane .action-grid .action-cell { position: relative; display: flex; }

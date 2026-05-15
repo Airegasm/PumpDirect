@@ -51,6 +51,11 @@ function start() {
   const server = http.createServer(app);
   const wss = new WebSocket.Server({ server, path: '/ws/owner' });
 
+  // Reload-grace: defer presence clear when the last owner-tab WS closes so a
+  // refresh / nav between tabs doesn't flicker the Host row on visitor screens.
+  let ownerPresenceClearTimer = null;
+  const REJOIN_GRACE_MS = 6000;
+
   function enrichState() {
     const cfg = config.load();
     const s = session.getState();
@@ -90,6 +95,7 @@ function start() {
     send('state', { state: enrichState() });
     send('chat-history', { messages: chat.snapshot() });
     signaling.broadcast({ type: 'peer-joined', email: ownerEmail, nickname: nicknameFor(ownerEmail), isOwner: true }, ownerEmail);
+    if (ownerPresenceClearTimer) { clearTimeout(ownerPresenceClearTimer); ownerPresenceClearTimer = null; }
     signaling.setPresence(ownerEmail, 'connected');
 
     const onState = () => send('state', { state: enrichState() });
@@ -119,10 +125,19 @@ function start() {
       bus.off('chat', onChat);
       bus.off('chat-key', onChatKey);
       signaling.unregister(ownerEmail, ws);
-      // Only clear presence once the last owner-tab WS closes — multiple tabs OK.
-      const stillOpen = signaling.allPeers(ownerEmail).some(p => p.email === ownerEmail);
-      if (!stillOpen) signaling.clearPresence(ownerEmail);
+      // Only clear presence once the last owner-tab WS closes, and even then
+      // defer so a refresh doesn't flip the Host row offline-then-online.
       signaling.broadcast({ type: 'peer-left', email: ownerEmail });
+      const stillOpen = signaling.allPeers(ownerEmail).some(p => p.email === ownerEmail);
+      if (!stillOpen) {
+        if (ownerPresenceClearTimer) clearTimeout(ownerPresenceClearTimer);
+        ownerPresenceClearTimer = setTimeout(() => {
+          ownerPresenceClearTimer = null;
+          if (!signaling.allPeers(ownerEmail).some(p => p.email === ownerEmail)) {
+            signaling.clearPresence(ownerEmail);
+          }
+        }, REJOIN_GRACE_MS);
+      }
     });
     ws.on('error', () => {});
   });

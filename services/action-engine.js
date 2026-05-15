@@ -109,9 +109,9 @@ function _maybeAdvanceMilestone() {
   }
   if (top && live.currentMilestoneId !== top.id) {
     live.currentMilestoneId = top.id;
-    // Always overwrite so the welcome message is cleared the moment a milestone is
-    // entered. A blank announcement is allowed — it just clears the field.
-    live.currentDisplayMessage = top.announcement || '';
+    // The welcome message stays in currentDisplayMessage for the duration of a
+    // session; the milestone announcement is rendered as a separate line below
+    // it (client derives it from the milestone definition by currentMilestoneId).
     session._setLive && session._setLive(live);
     chat.system(`Milestone reached: ${top.name}`);
     _publish();

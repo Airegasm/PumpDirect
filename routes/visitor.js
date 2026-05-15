@@ -130,7 +130,9 @@ function renderVisitorPage(req) {
     .pump-status .pump-count { color: #f0c674; margin-left: 4px; font-weight: 500; }
     .cycle-status { font-size: 0.95rem; color: #f0c674; margin: 2px 0 0; min-height: 1.1em; }
     .milestone-pane .milestone-title { font-size: 1.5rem; font-weight: 700; margin: 0 0 10px; }
-    .milestone-pane .milestone-announcement { font-size: 1.1rem; line-height: 1.5; min-height: 80px; margin: 0 0 18px; }
+    .milestone-pane .milestone-welcome { font-size: 1.05rem; line-height: 1.5; margin: 0 0 10px; color: var(--text); }
+    .milestone-pane .milestone-announcement { font-size: 1.05rem; line-height: 1.5; margin: 0 0 18px; color: var(--text-muted); border-left: 3px solid var(--accent); padding: 4px 12px; background: var(--bg-3); border-radius: 0 8px 8px 0; }
+    .milestone-pane .milestone-announcement:empty { display: none; }
     .milestone-pane .action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
     .cam-grid { display: flex; justify-content: center; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; width: 100%; }
     .cam-slot { flex: 1 1 0; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
@@ -152,17 +154,17 @@ function renderVisitorPage(req) {
     .cam-tile .rt-ctrls button { background:rgba(0,0,0,0.6); border:0; color:#fff; border-radius:6px; padding:6px 10px; font-size:1rem; cursor:pointer; }
     .cam-tile.muted-video video { visibility: hidden; }
     .chat-row { display: grid; grid-template-columns: 1fr 220px; gap: 12px; }
-    .chat-row > .card { margin: 0; display: flex; flex-direction: column; max-height: 70vh; }
-    /* min-height:0 lets overflow-y:auto actually scroll inside a flex column —
-       without it the flex item's auto min-height matches content and the parent
-       grows instead of the child scrolling. */
-    .chat-pane .chat-log { flex: 1 1 0; min-height: 0; max-height: 56vh; overflow-y: auto; background:var(--bg-3); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:10px; }
+    .chat-row > .card { margin: 0; display: flex; flex-direction: column; }
+    /* Give the scrollable panes an explicit height (with scroll) so they DON'T
+       collapse inside a flex column whose height is content-driven, and DON'T
+       grow the page when content overflows. */
+    .chat-pane .chat-log { height: 340px; max-height: 50vh; overflow-y: auto; background:var(--bg-3); border:1px solid var(--border); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:10px; }
     .chat-msg { word-wrap: break-word; overflow-wrap: anywhere; }
     .chat-msg img { max-width: 100%; height: auto; }
     .chat-pane .chat-input-row { margin-top: 10px; display: flex; gap: 8px; }
     .chat-pane .chat-input-row input { flex:1; min-height:48px; padding:12px 14px; background:var(--bg-3); color:var(--text); border:1px solid var(--border); border-radius:10px; font-size:1rem; font-family:inherit; }
     .chat-pane .chat-input-row button { min-height:48px; padding:0 22px; background:var(--accent); color:#fff; border:0; border-radius:10px; font-size:1rem; cursor:pointer; }
-    .participants-pane .p-list { display: flex; flex-direction: column; gap: 4px; max-height: 56vh; overflow-y: auto; }
+    .participants-pane .p-list { display: flex; flex-direction: column; gap: 4px; height: 340px; max-height: 50vh; overflow-y: auto; }
     .participants-pane .p-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; font-size: 0.95rem; }
     .participants-pane .p-section-title { font-size: 0.78rem; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; margin: 10px 0 4px; font-weight: 700; }
     .participants-pane .p-section-title:first-child { margin-top: 0; }
@@ -333,7 +335,8 @@ function renderVisitorPage(req) {
         </div>
         <div class="card milestone-pane">
           <p class="milestone-title">${activeMilestone ? escapeHtml(activeMilestone.name) : (state.active ? escapeHtml(tpl?.name || 'Default') : 'Idle')}</p>
-          <p class="milestone-announcement">${state.active ? escapeHtml(state.currentDisplayMessage || profile?.welcomeMessage || '') : escapeHtml(profile?.welcomeMessage || '')}</p>
+          <p class="milestone-welcome">${escapeHtml(profile?.welcomeMessage || '')}</p>
+          <p class="milestone-announcement">${activeMilestone ? escapeHtml(activeMilestone.announcement || '') : ''}</p>
           ${actionGrid}
         </div>
       </div>
@@ -426,9 +429,13 @@ function renderVisitorPage(req) {
         if (__lastRenderedMilestoneId === mid) return;
         __lastRenderedMilestoneId = mid;
         const titleEl = document.querySelector('.milestone-pane .milestone-title');
+        const wmEl = document.querySelector('.milestone-pane .milestone-welcome');
         const annEl = document.querySelector('.milestone-pane .milestone-announcement');
         if (titleEl) titleEl.textContent = m ? m.name : (s.active ? TPL_NAME : 'Idle');
-        if (annEl) annEl.textContent = s.active ? (s.currentDisplayMessage || WELCOME_MSG || '') : (WELCOME_MSG || '');
+        if (wmEl) wmEl.textContent = WELCOME_MSG || '';
+        // Milestone announcement sits beneath the welcome line — appears once a
+        // milestone is entered and stays for the duration of that milestone.
+        if (annEl) annEl.textContent = (s.active && m && m.announcement) ? m.announcement : '';
         const grid = document.querySelector('.milestone-pane .action-grid');
         if (!grid || !CAN_CONTROL || !s.active) return;
         const ids = Array.from(new Set([...((m && m.actionTemplateIds) || []), ...ALWAYS_ACTION_IDS]));
