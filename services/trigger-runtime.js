@@ -168,8 +168,11 @@ async function _waitForEngineIdle() {
 }
 
 async function _runTriggerAction(action, sig) {
-  for (const step of (action.steps || [])) {
+  const steps = action.steps || [];
+  logger.info(`▶ trigger action "${action.name}" — ${steps.length} sub-action${steps.length === 1 ? '' : 's'}`);
+  for (const step of steps) {
     if (sig.aborted) throw _abortError();
+    logger.info(`  · ${step.kind}${step.mode ? ' [' + step.mode + ']' : ''}`);
     await _runSubAction(step, sig);
   }
 }
@@ -244,40 +247,50 @@ function _sleep(ms, sig) {
 // Translate device-control sub-action into action-engine step shape and run it
 // via a thin executor that runs the steps inline against the chosen device.
 async function _runDeviceControl(step, sig) {
-  const ae = _lazyActionEngine();
+  const allDevices = devices.loadAll ? devices.loadAll() : [];
+  // Resolve the target list. 'all' is now legal for every mode (off / on /
+  // on-cycle) — the user's intent in a BurstEnd is usually "kick every plug".
+  let targets;
+  if (step.deviceId === 'all') {
+    targets = allDevices.filter(Boolean);
+  } else if (step.deviceId === 'primary') {
+    const p = devices.primary();
+    targets = p ? [p] : [];
+  } else {
+    const d = devices.get(step.deviceId);
+    targets = d ? [d] : [];
+  }
+  if (!targets.length) {
+    logger.warn(`device-control: no target resolved for "${step.deviceId}"`);
+    return;
+  }
+
   if (step.mode === 'off') {
-    if (step.deviceId === 'all') {
-      const all = devices.loadAll ? devices.loadAll() : [];
-      await Promise.all(all.map(d => control.turnOff(d).catch(() => {})));
-    } else {
-      const dev = step.deviceId === 'primary' ? devices.primary() : devices.get(step.deviceId);
-      if (dev) await control.turnOff(dev).catch(() => {});
-    }
+    await Promise.all(targets.map(d => control.turnOff(d).catch(() => {})));
     return;
   }
-  const target = step.deviceId === 'primary' ? devices.primary() : devices.get(step.deviceId);
-  if (!target) throw new Error('device not found for trigger sub-action: ' + step.deviceId);
-  // Build the equivalent inline-step shape and feed it through the engine's
-  // public _runSubAction* helpers. Since action-engine doesn't expose its
-  // internals, we run our own minimal on/off loop against the resolved device.
+
   if (step.mode === 'on') {
-    await control.turnOn(target).catch(() => {});
     if (step.infinite) {
-      // Wait forever until abort.
-      await new Promise((_, reject) => sig.addEventListener('abort', () => reject(_abortError())));
-    } else {
-      await _sleep(step.durationMs, sig);
+      // Fire-and-leave-on: kick the devices on and continue the chain. The
+      // device stays on until another sub-action (or the session ending)
+      // turns it off — same semantics as the manual Pump On button.
+      targets.forEach(d => { control.turnOn(d).catch(() => {}); });
+      return;
     }
-    await control.turnOff(target).catch(() => {});
+    await Promise.all(targets.map(d => control.turnOn(d).catch(() => {})));
+    await _sleep(step.durationMs, sig);
+    await Promise.all(targets.map(d => control.turnOff(d).catch(() => {})));
     return;
   }
+
   if (step.mode === 'on-cycle') {
     const limit = step.cycleInfinite ? Infinity : Math.max(1, step.cycleTimes || 1);
     for (let i = 0; i < limit; i++) {
       if (sig.aborted) break;
-      await control.turnOn(target).catch(() => {});
+      await Promise.all(targets.map(d => control.turnOn(d).catch(() => {})));
       await _sleep(step.cycleOnMs, sig);
-      await control.turnOff(target).catch(() => {});
+      await Promise.all(targets.map(d => control.turnOff(d).catch(() => {})));
       if (sig.aborted) break;
       if (i + 1 < limit) await _sleep(step.cycleOffMs, sig);
     }
@@ -294,4 +307,35 @@ function abort() {
 
 function isBusy() { return runtime.running || runtime.queue.length > 0; }
 
-module.exports = { resetForSession, stopForSession, onCapacityTick, abort, isBusy };
+// Executes a {kind, id} target as if a trigger row pointed at it, but WITHOUT
+// the capacity-tick queueing layer. Called by action-engine when a pump-action
+// template is in trigger mode — the action engine owns the lock + chat
+// narration; we just walk the sub-actions against the provided abort signal.
+async function runActionTarget(target, signal) {
+  if (!target) { logger.warn('runActionTarget: no target'); return; }
+  let actionList = [];
+  let targetLabel = target.kind + ':' + String(target.id || '').slice(0, 8);
+  try {
+    if (target.kind === 'action') {
+      actionList = [triggers.getAction(target.id)];
+    } else if (target.kind === 'group') {
+      const g = triggers.getGroup(target.id);
+      targetLabel = 'group "' + g.name + '"';
+      actionList = (g.actionIds || []).map(id => { try { return triggers.getAction(id); } catch (e) { logger.warn('group references missing action ' + id.slice(0,8)); return null; } }).filter(Boolean);
+    }
+  } catch (e) {
+    logger.warn(`runActionTarget lookup failed (${targetLabel}): ${e.message}`);
+    return;
+  }
+  logger.info(`runActionTarget → ${targetLabel} (${actionList.length} action${actionList.length === 1 ? '' : 's'})`);
+  for (const action of actionList) {
+    if (signal?.aborted) { logger.info('runActionTarget aborted before "' + action.name + '"'); break; }
+    try { await _runTriggerAction(action, signal); }
+    catch (e) {
+      if (e?.name === 'AbortError') { logger.info('runActionTarget chain aborted (likely end-session)'); break; }
+      logger.warn(`trigger action "${action.name}" failed: ${e.message}`);
+    }
+  }
+}
+
+module.exports = { resetForSession, stopForSession, onCapacityTick, abort, isBusy, runActionTarget };

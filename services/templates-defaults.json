@@ -1,0 +1,827 @@
+{
+  "actionTemplates": [
+    {
+      "id": "seed-pulse",
+      "name": "Pulse",
+      "description": "Ten quick pulses of 2 seconds on / 1 second off. A rhythmic burst pattern.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "times": 10,
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 2000
+            },
+            {
+              "type": "off",
+              "durationMs": 1000
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "seed-slow-stream",
+      "name": "Slow Stream",
+      "description": "Ten seconds of continuous, steady pump pressure. The simplest possible push.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 10000
+        }
+      ]
+    },
+    {
+      "id": "seed-soft-ramp",
+      "name": "Soft Ramp",
+      "description": "A gentle 5-second push — the easiest way to ease things in.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 5000
+        }
+      ]
+    },
+    {
+      "id": "seed-tease",
+      "name": "Tease",
+      "description": "Three short 2-second pulses with matching 2-second pauses. Playful and unhurried.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 2000
+            },
+            {
+              "type": "off",
+              "durationMs": 2000
+            }
+          ],
+          "times": 3
+        }
+      ]
+    },
+    {
+      "id": "seed-slow-drip",
+      "name": "Slow Drip",
+      "description": "Five quick 1-second taps spaced 2 seconds apart. A patient trickle.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 1000
+            },
+            {
+              "type": "off",
+              "durationMs": 2000
+            }
+          ],
+          "times": 5
+        }
+      ]
+    },
+    {
+      "id": "seed-sip",
+      "name": "Sip",
+      "description": "A single 3-second push. Just a small taste, then done.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 3000
+        }
+      ]
+    },
+    {
+      "id": "seed-steady-push",
+      "name": "Steady Push",
+      "description": "Eight continuous seconds of pressure. Reliable, predictable, no surprises.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 8000
+        }
+      ]
+    },
+    {
+      "id": "seed-throb",
+      "name": "Throb",
+      "description": "Five 2-second pulses on a 1-second beat. A steady, insistent throb.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 2000
+            },
+            {
+              "type": "off",
+              "durationMs": 1000
+            }
+          ],
+          "times": 5
+        }
+      ]
+    },
+    {
+      "id": "seed-bounce",
+      "name": "Bounce",
+      "description": "Six bouncing 3-second pushes with 2-second recoveries. Builds volume in waves.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 3000
+            },
+            {
+              "type": "off",
+              "durationMs": 2000
+            }
+          ],
+          "times": 6
+        }
+      ]
+    },
+    {
+      "id": "seed-sustain",
+      "name": "Sustain",
+      "description": "Fifteen unbroken seconds of pumping. For when you want to commit.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 15000
+        }
+      ]
+    },
+    {
+      "id": "seed-long-push",
+      "name": "Long Push",
+      "description": "Twenty straight seconds of pressure. Pushes well past comfortable.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 20000
+        }
+      ]
+    },
+    {
+      "id": "seed-hammer",
+      "name": "Hammer",
+      "description": "Eight aggressive 2-second pulses, 1 second apart. A pounding rhythm at high pressure.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 2000
+            },
+            {
+              "type": "off",
+              "durationMs": 1000
+            }
+          ],
+          "times": 8
+        }
+      ]
+    },
+    {
+      "id": "seed-hold",
+      "name": "Hold",
+      "description": "Thirty unbroken seconds of pump pressure. Drives the gauge upward fast.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 30000
+        }
+      ]
+    },
+    {
+      "id": "seed-rapid-fire",
+      "name": "Rapid Fire",
+      "description": "Ten 1-on / 1-off bursts in quick succession. No time to recover.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 1000
+            },
+            {
+              "type": "off",
+              "durationMs": 1000
+            }
+          ],
+          "times": 10
+        }
+      ]
+    },
+    {
+      "id": "seed-burst",
+      "name": "Burst",
+      "description": "A 30-second flood meant for past-100% territory. Overflows on purpose.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 30000
+        }
+      ]
+    },
+    {
+      "id": "seed-inferno",
+      "name": "Inferno",
+      "description": "Ten relentless 3-second pushes barely separated by 1-second gaps. Punishing.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 3000
+            },
+            {
+              "type": "off",
+              "durationMs": 1000
+            }
+          ],
+          "times": 10
+        }
+      ]
+    },
+    {
+      "id": "seed-overdrive",
+      "name": "Overdrive",
+      "description": "A full sixty seconds of unbroken pump deep into overcapacity.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "on",
+          "durationMs": 60000
+        }
+      ]
+    },
+    {
+      "id": "seed-saturate",
+      "name": "Saturate",
+      "description": "Eight 5-second floods with brief 1-second breaks. Designed to saturate far past 100%.",
+      "mode": "standard",
+      "steps": [
+        {
+          "type": "repeat",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 5000
+            },
+            {
+              "type": "off",
+              "durationMs": 1000
+            }
+          ],
+          "times": 8
+        }
+      ]
+    }
+  ],
+  "wheelTemplates": [
+    {
+      "id": "seed-wheel-easy-mode",
+      "name": "Easy Mode",
+      "randomize": true,
+      "sections": [
+        {
+          "label": "Sip",
+          "color": "#27ae60",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 3000
+            }
+          ]
+        },
+        {
+          "label": "Spin again",
+          "color": "#f1c40f",
+          "type": "spin-again",
+          "steps": []
+        },
+        {
+          "label": "Soft Tease",
+          "color": "#3498db",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 1000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 1000
+                }
+              ],
+              "times": 2
+            }
+          ]
+        },
+        {
+          "label": "No prize",
+          "color": "#7a8597",
+          "type": "no-prize",
+          "steps": []
+        },
+        {
+          "label": "Quick 5s",
+          "color": "#16a085",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 5000
+            }
+          ]
+        },
+        {
+          "label": "Spin again",
+          "color": "#f1c40f",
+          "type": "spin-again",
+          "steps": []
+        },
+        {
+          "label": "Drip",
+          "color": "#2980b9",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 1000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 2000
+                }
+              ],
+              "times": 3
+            }
+          ]
+        },
+        {
+          "label": "No prize",
+          "color": "#7a8597",
+          "type": "no-prize",
+          "steps": []
+        }
+      ]
+    },
+    {
+      "id": "seed-wheel-warm-up",
+      "name": "Warm Up",
+      "randomize": true,
+      "sections": [
+        {
+          "label": "Steady 8s",
+          "color": "#e74c3c",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 8000
+            }
+          ]
+        },
+        {
+          "label": "Pulse",
+          "color": "#f39c12",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 1500
+                },
+                {
+                  "type": "off",
+                  "durationMs": 1000
+                }
+              ],
+              "times": 5
+            }
+          ]
+        },
+        {
+          "label": "Spin again",
+          "color": "#f1c40f",
+          "type": "spin-again",
+          "steps": []
+        },
+        {
+          "label": "Push 10s",
+          "color": "#27ae60",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 10000
+            }
+          ]
+        },
+        {
+          "label": "Throb",
+          "color": "#16a085",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 2000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 1000
+                }
+              ],
+              "times": 5
+            }
+          ]
+        },
+        {
+          "label": "Sip 5s",
+          "color": "#3498db",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 5000
+            }
+          ]
+        },
+        {
+          "label": "No prize",
+          "color": "#7a8597",
+          "type": "no-prize",
+          "steps": []
+        },
+        {
+          "label": "Rise 12s",
+          "color": "#2980b9",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 12000
+            }
+          ]
+        },
+        {
+          "label": "Bounce",
+          "color": "#7b3fd6",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 2000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 1500
+                }
+              ],
+              "times": 4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "seed-wheel-heat-up",
+      "name": "Heat Up",
+      "randomize": true,
+      "sections": [
+        {
+          "label": "Push 15s",
+          "color": "#e74c3c",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 15000
+            }
+          ]
+        },
+        {
+          "label": "Hammer",
+          "color": "#f39c12",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 1000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 500
+                }
+              ],
+              "times": 8
+            }
+          ]
+        },
+        {
+          "label": "Push 12s",
+          "color": "#f1c40f",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 12000
+            }
+          ]
+        },
+        {
+          "label": "Long 20s",
+          "color": "#27ae60",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 20000
+            }
+          ]
+        },
+        {
+          "label": "Pulse x6",
+          "color": "#16a085",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 2000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 500
+                }
+              ],
+              "times": 6
+            }
+          ]
+        },
+        {
+          "label": "Spin again",
+          "color": "#3498db",
+          "type": "spin-again",
+          "steps": []
+        },
+        {
+          "label": "Sustain",
+          "color": "#2980b9",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 18000
+            }
+          ]
+        },
+        {
+          "label": "Burst 8s",
+          "color": "#7b3fd6",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 8000
+            }
+          ]
+        },
+        {
+          "label": "Fire x8",
+          "color": "#9b59b6",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 2000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 250
+                }
+              ],
+              "times": 8
+            }
+          ]
+        },
+        {
+          "label": "No prize",
+          "color": "#7a8597",
+          "type": "no-prize",
+          "steps": []
+        }
+      ]
+    },
+    {
+      "id": "seed-wheel-mercy-is-dead",
+      "name": "Mercy is Dead",
+      "randomize": true,
+      "sections": [
+        {
+          "label": "Hold 30s",
+          "color": "#e74c3c",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 30000
+            }
+          ]
+        },
+        {
+          "label": "Burst 45s",
+          "color": "#f39c12",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 45000
+            }
+          ]
+        },
+        {
+          "label": "Rapid x12",
+          "color": "#f1c40f",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 2000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 500
+                }
+              ],
+              "times": 12
+            }
+          ]
+        },
+        {
+          "label": "Overdrive",
+          "color": "#27ae60",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 60000
+            }
+          ]
+        },
+        {
+          "label": "Pound x10",
+          "color": "#16a085",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 3000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 250
+                }
+              ],
+              "times": 10
+            }
+          ]
+        },
+        {
+          "label": "Push 25s",
+          "color": "#3498db",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 25000
+            }
+          ]
+        },
+        {
+          "label": "Inferno",
+          "color": "#2980b9",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 5000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 1000
+                }
+              ],
+              "times": 8
+            }
+          ]
+        },
+        {
+          "label": "Sustain 40s",
+          "color": "#7b3fd6",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 40000
+            }
+          ]
+        },
+        {
+          "label": "Saturate",
+          "color": "#9b59b6",
+          "type": "action",
+          "steps": [
+            {
+              "type": "repeat",
+              "steps": [
+                {
+                  "type": "on",
+                  "durationMs": 4000
+                },
+                {
+                  "type": "off",
+                  "durationMs": 500
+                }
+              ],
+              "times": 15
+            }
+          ]
+        },
+        {
+          "label": "Full 50s",
+          "color": "#e84393",
+          "type": "action",
+          "steps": [
+            {
+              "type": "on",
+              "durationMs": 50000
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

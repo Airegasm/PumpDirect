@@ -94,6 +94,45 @@ function start() {
     return { ...s, participants, ownerPresence: pmap.get(cfg.cloudflare?.ownerEmail || '') || null, ownerCamera: cfg.owner?.camera || {} };
   }
 
+  // STRICT broadcast permission check (server-side authoritative). A visitor
+  // can publish their cam ONLY if every condition is true:
+  //   * owner enabled "Allow controllers to broadcast webcam" globally
+  //   * a session is active
+  //   * the visitor is a participant with canConnect
+  //   * the visitor is the active controller (canControl)
+  //   * the per-participant canBroadcast flag is set
+  function _canVisitorBroadcast(email) {
+    const cfg = config.load();
+    if (!cfg.owner?.camera?.allowControllerBroadcast) return false;
+    const s = session.getState();
+    if (!s.active) return false;
+    const p = (s.participants || []).find(x => x.email === email);
+    if (!p) return false;
+    if (p.canConnect === false) return false;
+    if (!p.canControl) return false;
+    if (!p.canBroadcast) return false;
+    return true;
+  }
+
+  // Track who's actively publishing so we can force-stop them when their
+  // permission gets revoked. Updated by the broadcast-state WS messages.
+  const broadcasting = new Set();
+  function _forceUnbroadcast(email, reason) {
+    if (!broadcasting.has(email)) return;
+    broadcasting.delete(email);
+    // Tell the publisher's own tab(s) to drop the stream and let every peer
+    // remove their tile of this visitor.
+    signaling.deliver(email, { type: 'force-unbroadcast', reason });
+    signaling.broadcast({ type: 'broadcast-state', email, broadcasting: false }, email);
+    logger.warn(`force-unbroadcast ${email}: ${reason}`);
+  }
+  // Every state event re-checks permissions; revocations are caught here.
+  bus.on('state', () => {
+    for (const email of Array.from(broadcasting)) {
+      if (!_canVisitorBroadcast(email)) _forceUnbroadcast(email, 'permission revoked');
+    }
+  });
+
   wss.on('connection', (ws) => {
     const email = ws.userEmail;
     const cfg = config.load();
@@ -149,20 +188,22 @@ function start() {
       try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (msg && (msg.type === 'webrtc-offer' || msg.type === 'webrtc-answer' || msg.type === 'webrtc-ice')) {
         if (!msg.toEmail) return;
-        // Controller-broadcast not yet enabled? Drop offers FROM visitors unless owner has allowed it.
-        if (msg.type === 'webrtc-offer') {
-          const cfg2 = config.load();
-          if (!cfg2.owner?.camera?.allowControllerBroadcast) {
-            // Visitors can still answer offers (so they can receive); they just can't initiate.
-            // But to be lenient, allow them to initiate to the owner only if owner permits.
-            // We can't easily tell if this is an "answer-side ICE" vs "publish-side offer" — leniently allow ICE always.
-          }
+        // An OFFER from a visitor is always a publish-side message (their PC
+        // is the initiator). If they don't have broadcast permission RIGHT
+        // NOW, drop it. Answers + ICE are relayed regardless (they're
+        // responses to existing PCs, possibly for the inbound direction).
+        if (msg.type === 'webrtc-offer' && !_canVisitorBroadcast(email)) {
+          logger.warn(`dropped webrtc-offer from ${email}: not allowed to broadcast`);
+          return;
         }
         signaling.deliver(msg.toEmail, { ...msg, fromEmail: email });
       } else if (msg && msg.type === 'broadcast-state') {
-        const cfg2 = config.load();
-        const allowed = !!cfg2.owner?.camera?.allowControllerBroadcast;
-        if (!allowed && msg.broadcasting) return;
+        if (msg.broadcasting && !_canVisitorBroadcast(email)) {
+          logger.warn(`dropped broadcast-state:true from ${email}: not allowed`);
+          return;
+        }
+        if (msg.broadcasting) broadcasting.add(email);
+        else broadcasting.delete(email);
         signaling.broadcast({ type: 'broadcast-state', email, broadcasting: !!msg.broadcasting }, email);
       } else if (msg && msg.type === 'track-state') {
         signaling.broadcast({ type: 'track-state', email, videoMuted: !!msg.videoMuted, audioMuted: !!msg.audioMuted }, email);
@@ -174,6 +215,7 @@ function start() {
     ws.on('close', () => {
       bus.off('state', onState); bus.off('chat', onChat); bus.off('chat-key', onChatKey); bus.off('overlay', onOverlay);
       signaling.unregister(email, ws);
+      broadcasting.delete(email);
       const next = (visitorConns.get(email) || 1) - 1;
       if (next <= 0) {
         visitorConns.delete(email);

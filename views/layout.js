@@ -168,6 +168,19 @@ function ownerLayout({ title, active, body }) {
     padding: 10px 12px !important; background: var(--bg-3) !important; color: var(--text) !important;
     border: 1px solid var(--border) !important; border-radius: 6px !important;
   }
+  /* Modal cards (every owner page uses an inline #modal element with
+     hardcoded dark colors) — override with theme vars so light mode reads. */
+  #modal { background: var(--bg-2) !important; border: 1px solid var(--border) !important; color: var(--text) !important; }
+  #modal h2, #modal h3, #modal h4, #modal-body { color: var(--text); }
+  #modal-body { color: var(--text); }
+  #modal-body code, #modal-body pre { background: var(--bg-3) !important; color: var(--text) !important; }
+  #modal-body .ae-row { background: var(--bg-3) !important; border-color: var(--border) !important; color: var(--text) !important; }
+  #modal-body .ae-nested { border-left-color: var(--border) !important; }
+  /* Generic "secondary" / cancel button: inline-styled with #2a2f3a — works
+     on dark but reads as muddy gray-on-gray in light. Honour the theme vars. */
+  #modal-bg button[style*="#2a2f3a"], #modal-bg button[style*="background:#2a2f3a"] {
+    background: var(--bg-3) !important; color: var(--text) !important; border: 1px solid var(--border) !important;
+  }
 </style>
 </head>
 <body>

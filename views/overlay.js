@@ -34,8 +34,7 @@ function overlayJs() {
     function renderOverlay(msg) {
       if (!msg) return;
       if (msg.kind === 'dice-roll') return _renderDiceRoll(msg);
-      if (msg.kind === 'prize-wheel') return _mountPrizeWheel(msg);
-      if (msg.kind === 'prize-wheel-spin') return _animatePrizeWheel(msg);
+      if (msg.kind === 'prize-wheel') return _renderPrizeWheel(msg);
       if (msg.kind === 'lottie-overlay') return _renderLottieOverlay(msg);
       if (msg.kind === 'play-sound') return _playSound(msg);
       if (msg.kind === 'session-ending') return _renderSessionEnding(msg);
@@ -92,60 +91,29 @@ function overlayJs() {
     }
     // Phase 1: stationary mount + Spin button. The spinner sees the button;
     // everyone else sees the wheel paused waiting for the spinner.
-    function _mountPrizeWheel(msg) {
-      const sections = Array.isArray(msg.initialSections) ? msg.initialSections : [];
-      if (!sections.length) return;
+    // Single-shot wheel renderer: mounts the wheel and immediately spins the
+    // chain. No Spin button — the wheel comes up rolling so visitors don't
+    // wait on a click. The brief "stationary" mount + animation start are
+    // separated by one rAF so the CSS transition kicks in cleanly.
+    function _renderPrizeWheel(msg) {
+      const chain = Array.isArray(msg.chain) ? msg.chain : [];
+      if (!chain.length) return;
       const by = String(msg.by || 'someone').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
       const wheelName = String(msg.wheel?.name || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-      const isMine = window.__MY_EMAIL && msg.triggeredBy && window.__MY_EMAIL === msg.triggeredBy;
-      const spinBtn = isMine
-        ? '<button class="wheel-spin-btn" onclick="_doPrizeWheelSpin()">SPIN</button>'
-        : '<div class="wheel-wait">Waiting for ' + by + ' to spin…</div>';
       const banner = '<div class="dice-banner" id="wheel-banner">🎡 ' + by + ' — ' + wheelName + '</div>';
+      const spinPerStep = msg.durationMsPerSpin || 4500;
+      const totalMs = chain.length * spinPerStep + 800;
       _mountOverlay(
         '<div class="wheel-container">'
-        +   '<div class="wheel-stage" data-token="' + (msg.spinToken || '') + '">'
-        +     _buildWheelSvg(sections)
-        +   '</div>'
-        +   '<div class="wheel-controls">' + spinBtn + '</div>'
+        +   '<div class="wheel-stage">' + _buildWheelSvg(chain[0].sections) + '</div>'
         + '</div>'
         + banner,
-        45000  // longer than the server's auto-spin window so the overlay survives the wait
+        totalMs
       );
-    }
-    function _doPrizeWheelSpin() {
-      const stage = document.querySelector('#overlay-stage .wheel-stage');
-      const token = stage?.dataset.token;
-      const endpoint = window.__SPIN_ENDPOINT || '/api/minigame/prize-wheel/spin';
-      const btn = document.querySelector('.wheel-spin-btn');
-      if (btn) { btn.disabled = true; btn.textContent = 'SPINNING…'; }
-      fetch(endpoint, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ spinToken: token }) })
-        .then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'failed'); }); })
-        .catch(err => {
-          if (btn) { btn.disabled = false; btn.textContent = 'SPIN'; }
-          alert(err.message || 'failed to spin');
-        });
-    }
-    // Phase 2: server confirmed → animate the chain. Match by token so a stale
-    // overlay-spin can't hijack a different wheel.
-    function _animatePrizeWheel(msg) {
       const stage = document.getElementById('overlay-stage');
       const wheelEl = stage && stage.querySelector('.wheel-stage');
       if (!wheelEl) return;
-      if (msg.spinToken && wheelEl.dataset.token && wheelEl.dataset.token !== msg.spinToken) return;
-      const controls = stage.querySelector('.wheel-controls');
-      if (controls) controls.remove();
-      const chain = Array.isArray(msg.chain) ? msg.chain : [];
-      if (!chain.length) return;
-      const spinPerStep = msg.durationMsPerSpin || 4500;
       const animMs = Math.max(800, spinPerStep - 500);
-      const totalMs = chain.length * spinPerStep + 800;
-      // Extend the auto-dismiss timer past the full chain.
-      clearTimeout(window.__overlayTimer);
-      window.__overlayTimer = setTimeout(() => {
-        stage.classList.remove('active');
-        stage.innerHTML = '';
-      }, totalMs);
 
       let cumulativeRot = 0;
       function spinTo(targetIndex, totalSlices, isLast) {
@@ -185,31 +153,54 @@ function overlayJs() {
     }
 
     function _renderLottieOverlay(msg) {
-      // Mounted inside the host webcam tile (same target as text overlays) so
-      // it sits over the cam content, positioned + sized by percentages of
-      // the tile. Replaces whatever lottie was there.
+      // Anchor the lottie to the host cam TILE's bounds — captured at mount
+      // time so the lottie keeps its size + position even after the tile
+      // underneath gets destroyed by turn-off-host-cam. xPct/yPct/widthPct
+      // are percentages of the tile, so 100% width = exactly the cam width
+      // (matches the editor's preview rectangle).
       const safe = String(msg.path || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
       if (!safe) return;
-      const target = (window.__textOverlayTarget && window.__textOverlayTarget()) || null;
-      if (!target) return;
-      let stage = target.querySelector('.lottie-trigger-stage');
-      if (!stage) {
-        stage = document.createElement('div');
-        stage.className = 'lottie-trigger-stage';
-        target.appendChild(stage);
+      const stage = document.getElementById('trigger-fx-stage');
+      if (!stage) return;
+
+      // Target the host cam tile (local-tile on Launchpad, rt-<owner> on
+      // Visitor). Falls back to cam-owner-slot if the tile isn't mounted yet
+      // (e.g. visitor before host cam comes online).
+      const targetFn = window.__textOverlayTarget;
+      const tile = typeof targetFn === 'function' ? targetFn() : null;
+      const ref = tile || document.getElementById('cam-owner-slot');
+      const grid = stage.parentElement;
+      if (!ref || !grid) return;
+      const refRect = ref.getBoundingClientRect();
+      const gridRect = grid.getBoundingClientRect();
+      let left = refRect.left - gridRect.left;
+      let top  = refRect.top - gridRect.top;
+      let width = refRect.width;
+      let height = refRect.height;
+      // Fallback bounds if the reference happens to be collapsed.
+      if (width <= 1 || height <= 1) {
+        width = Math.min(gridRect.width || 400, 480);
+        height = width;
+        left = (gridRect.width - width) / 2;
+        top = 8;
       }
-      stage.innerHTML = '';
-      const slot = document.createElement('div');
-      slot.className = 'lottie-trigger-slot';
+
       const xPct = Math.max(0, Math.min(100, Number(msg.xPct != null ? msg.xPct : 50)));
       const yPct = Math.max(0, Math.min(100, Number(msg.yPct != null ? msg.yPct : 50)));
       const wPct = Math.max(5, Math.min(100, Number(msg.widthPct != null ? msg.widthPct : 40)));
-      slot.style.left = xPct + '%';
-      slot.style.top = yPct + '%';
-      slot.style.width = wPct + '%';
-      stage.appendChild(slot);
-      const dur = Math.max(200, Number(msg.durationMs) || 2500);
+      stage.innerHTML = '<div class="lottie-trigger-stage" style="position:absolute;'
+        + 'left:' + left + 'px;top:' + top + 'px;width:' + width + 'px;height:' + height + 'px">'
+        + '<div class="lottie-trigger-slot" style="left:' + xPct + '%;top:' + yPct + '%;width:' + wPct + '%"></div>'
+        + '</div>';
+
       const freeze = !!msg.freezeLastFrame;
+      const dur = Math.max(200, Number(msg.durationMs) || 2500);
+      clearTimeout(window.__triggerFxTimer);
+      if (!freeze) {
+        window.__triggerFxTimer = setTimeout(() => { stage.innerHTML = ''; }, dur);
+      }
+      const slot = stage.querySelector('.lottie-trigger-slot');
+      if (!slot) return;
       if (typeof window.lottie !== 'undefined') {
         try {
           window.lottie.loadAnimation({
@@ -223,27 +214,25 @@ function overlayJs() {
       } else {
         slot.textContent = msg.path;
       }
-      // When not freezing, auto-clear after the configured duration. Freeze
-      // mode leaves the final frame in place until something else replaces
-      // the stage (or the session ends).
-      clearTimeout(stage.__clearTimer);
-      if (!freeze) {
-        stage.__clearTimer = setTimeout(() => { stage.innerHTML = ''; }, dur);
-      }
     }
     function _renderSessionEnding(msg) {
-      // Full-stage countdown card — covers the visible app so visitors can't
-      // miss the warning. Uses the existing #overlay-stage (NOT the cam tile).
+      // Dedicated #countdown-stage so the countdown card layers ABOVE the
+      // lottie (which lives in #overlay-stage) instead of replacing it.
+      const stage = document.getElementById('countdown-stage');
+      if (!stage) return;
       const totalMs = Math.max(1000, Number(msg.durationMs) || 5000);
       const totalSec = Math.ceil(totalMs / 1000);
-      _mountOverlay(
-        '<div class="session-ending-card">'
+      stage.innerHTML = '<div class="session-ending-card">'
         +   '<div class="session-ending-eyebrow">Session ending in</div>'
         +   '<div class="session-ending-count" id="session-ending-count">' + totalSec + '</div>'
         +   '<div class="session-ending-sub">all controls disabled</div>'
-        + '</div>',
-        totalMs + 600
-      );
+        + '</div>';
+      stage.classList.add('active');
+      clearTimeout(window.__countdownTimer);
+      window.__countdownTimer = setTimeout(() => {
+        stage.classList.remove('active');
+        stage.innerHTML = '';
+      }, totalMs + 600);
       const endsAt = Date.now() + totalMs;
       clearInterval(window.__sessionEndingTick);
       window.__sessionEndingTick = setInterval(() => {
@@ -337,6 +326,10 @@ function overlayCss() {
   return `
     #overlay-stage { position: absolute; inset: 0; pointer-events: none; z-index: 100; display: none; align-items: center; justify-content: center; }
     #overlay-stage.active { display: flex; }
+    /* Countdown stage layers above #overlay-stage so the session-ending card
+       coexists with whatever's currently mounted there (e.g. a frozen lottie). */
+    #countdown-stage { position: absolute; inset: 0; pointer-events: none; z-index: 200; display: none; align-items: center; justify-content: center; }
+    #countdown-stage.active { display: flex; }
     .dice-cluster { display: grid; gap: 18px; padding: 16px; }
     .dice-cluster.dice-1 { grid-template-columns: 1fr; }
     .dice-cluster.dice-2 { grid-template-columns: repeat(2, 1fr); }
@@ -357,19 +350,18 @@ function overlayCss() {
        center, cross-browser. NEVER also set transform="..." on the same group. */
     .wheel-stage .wheel-rot { transform: rotate(0deg); transform-box: fill-box; transform-origin: center; will-change: transform; }
     .wheel-container { display: flex; flex-direction: column; align-items: center; gap: 18px; }
-    .wheel-controls { display: flex; gap: 12px; pointer-events: auto; }
-    .wheel-spin-btn { background: #7b3fd6; color: #fff; border: 0; border-radius: 999px; padding: 16px 44px; font-size: 1.25rem; font-weight: 800; letter-spacing: 0.1em; cursor: pointer; box-shadow: 0 8px 28px rgba(123,63,214,0.55); font-family: inherit; }
-    .wheel-spin-btn:hover { filter: brightness(1.1); }
-    .wheel-spin-btn:disabled { opacity: 0.6; cursor: progress; }
-    .wheel-wait { background: rgba(15,17,21,0.85); color: #f0c674; padding: 12px 22px; border-radius: 999px; font-size: 1rem; font-weight: 600; font-style: italic; }
     .trigger-lottie { width: clamp(260px, 50vh, 480px); height: clamp(260px, 50vh, 480px); }
     .trigger-lottie svg { width: 100% !important; height: 100% !important; }
-    /* Lottie trigger stage: lives inside the host cam tile, positions a slot
-       at (xPct, yPct) of the tile, slot width is a % of tile width. The slot
-       centers on its (x,y) point so the slider feels natural ("center here"). */
-    .lottie-trigger-stage { position: absolute; inset: 0; pointer-events: none; z-index: 11; }
-    .lottie-trigger-stage .lottie-trigger-slot { position: absolute; transform: translate(-50%, -50%); aspect-ratio: 1; }
-    .lottie-trigger-stage .lottie-trigger-slot svg { width: 100% !important; height: 100% !important; }
+    /* Trigger lottie stage: lives in #trigger-fx-stage which spans the
+       cam-grid. The .lottie-trigger-stage inside is explicitly sized by JS
+       to match the host cam TILE's bounds at mount time, so xPct/yPct/
+       widthPct percentages map 1:1 to the cam tile. The slot has no forced
+       aspect — the SVG renders at its natural aspect within the width. */
+    #trigger-fx-stage { position: absolute; inset: 0; pointer-events: none; z-index: 11; }
+    .cam-grid { position: relative; }
+    .lottie-trigger-stage { pointer-events: none; }
+    .lottie-trigger-stage .lottie-trigger-slot { position: absolute; transform: translate(-50%, -50%); }
+    .lottie-trigger-stage .lottie-trigger-slot svg { width: 100% !important; height: auto !important; display: block; }
     /* Session-ending countdown — full stage card. */
     .session-ending-card { background: rgba(15,17,21,0.92); border: 2px solid #f08484; border-radius: 18px; padding: 38px 56px; text-align: center; box-shadow: 0 12px 48px rgba(0,0,0,0.7); }
     .session-ending-eyebrow { color: #f08484; font-size: clamp(1rem, 2.4vh, 1.4rem); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; margin-bottom: 14px; }

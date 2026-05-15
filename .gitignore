@@ -11,6 +11,14 @@ install-service.ps1
 uninstall-service.ps1
 bin/nssm.exe
 
+# Owner-uploaded trigger assets (Lottie JSON + sound files dropped via the
+# editor's upload buttons). Keep directories alive via .gitkeep but exclude
+# the user's personal content.
+public/assets/triggers/lottie/*
+!public/assets/triggers/lottie/.gitkeep
+public/assets/triggers/sound/*
+!public/assets/triggers/sound/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db

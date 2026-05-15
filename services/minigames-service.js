@@ -110,20 +110,11 @@ function _shuffle(arr) {
   return arr;
 }
 
-// Two-phase prize-wheel flow:
-//   1. requestPrizeWheel — pre-computes the chain (incl. randomization per
-//      spin if the wheel has randomize=true), emits an `overlay` event with
-//      ONLY the first spin's section order (so clients can render the wheel
-//      stationary), stores the rest server-side keyed by a spin token, and
-//      schedules an auto-confirm in case the trigger never presses Spin.
-//   2. confirmPrizeSpin — fired when the trigger clicks the Spin button.
-//      Emits a second overlay event with the full chain (now safe to send,
-//      since the user committed to spinning) and fires the inline pump
-//      action with a chainLength * PRIZE_WHEEL_ANIMATION_MS off-step prefix
-//      so the gauge stays locked through the animation.
-const PENDING_PRIZE_SPINS = new Map();      // spinToken -> pending state
-const PRIZE_WHEEL_AUTO_SPIN_MS = 30000;     // safety cap for unconfirmed pendings
-
+// Single-shot prize-wheel: pre-computes the chain (incl. randomization per
+// spin if the wheel has randomize=true), emits ONE overlay with the wheel +
+// full chain, and immediately fires the inline pump action behind a
+// chainLength × PRIZE_WHEEL_ANIMATION_MS off-step so the gauge stays locked
+// through the animation. The wheel auto-spins client-side — no Spin button.
 function requestPrizeWheel({ wheelId, wheelIds, allowedWheelIds, byEmail, byNickname }) {
   // Caller can either pin a specific wheel (wheelId) or hand over a candidate
   // list (wheelIds); in the latter case the server picks one at random from
@@ -140,11 +131,6 @@ function requestPrizeWheel({ wheelId, wheelIds, allowedWheelIds, byEmail, byNick
     throw new Error('this wheel is not available at this button');
   }
   const wheel = templates.getWheel(chosenId);
-  // Reject if this trigger already has a pending spin or anything else is
-  // running on the gauge — keeps the UX from ending up in a weird race.
-  for (const p of PENDING_PRIZE_SPINS.values()) {
-    if (p.byEmail === byEmail) throw new Error('you already have a pending wheel spin — press Spin or wait');
-  }
 
   const chain = [];
   let finalSection = null;
@@ -164,67 +150,36 @@ function requestPrizeWheel({ wheelId, wheelIds, allowedWheelIds, byEmail, byNick
   }
 
   const by = byNickname || (byEmail ? byEmail.split('@')[0] : 'someone');
-  const spinToken = randomUUID();
-  const pending = { wheel, chain, finalSection, byEmail, byNickname: by, timeoutHandle: null };
-  pending.timeoutHandle = setTimeout(() => _confirmInternal(spinToken, 'timeout'), PRIZE_WHEEL_AUTO_SPIN_MS);
-  PENDING_PRIZE_SPINS.set(spinToken, pending);
 
   emitOverlay({
     kind: 'prize-wheel',
     wheel: { name: wheel.name },
-    initialSections: chain[0].sections,  // stationary display only — chain not leaked
+    chain,
     durationMsPerSpin: PRIZE_WHEEL_ANIMATION_MS,
+    finalLabel: finalSection.label,
+    finalType: finalSection.type,
     by,
     triggeredBy: byEmail,
-    spinToken,
   });
 
-  logger.info(`prize wheel requested: "${wheel.name}" by ${by} — token ${spinToken.slice(0,8)}, chain length ${chain.length}`);
-  return { ok: true, spinToken };
-}
-
-function confirmPrizeSpin({ spinToken, byEmail }) {
-  const pending = PENDING_PRIZE_SPINS.get(spinToken);
-  if (!pending) throw new Error('no pending spin for that token');
-  if (byEmail && byEmail !== pending.byEmail) throw new Error('only the spinner can press Spin');
-  return _confirmInternal(spinToken, 'user');
-}
-
-function _confirmInternal(spinToken, source) {
-  const pending = PENDING_PRIZE_SPINS.get(spinToken);
-  if (!pending) return;
-  PENDING_PRIZE_SPINS.delete(spinToken);
-  if (pending.timeoutHandle) { clearTimeout(pending.timeoutHandle); pending.timeoutHandle = null; }
-
-  emitOverlay({
-    kind: 'prize-wheel-spin',
-    spinToken,
-    chain: pending.chain,
-    durationMsPerSpin: PRIZE_WHEEL_ANIMATION_MS,
-    finalLabel: pending.finalSection.label,
-    finalType: pending.finalSection.type,
-  });
-
-  if (pending.chain.length > 1) {
-    chat.system(`${pending.byNickname} spun ${pending.wheel.name} — ${pending.chain.length} spins (${pending.chain.length - 1} re-roll${pending.chain.length - 1 === 1 ? '' : 's'}) → ${pending.finalSection.label}`);
+  if (chain.length > 1) {
+    chat.system(`${by} spun ${wheel.name} — ${chain.length} spins (${chain.length - 1} re-roll${chain.length - 1 === 1 ? '' : 's'}) → ${finalSection.label}`);
   }
+  logger.info(`prize wheel "${wheel.name}" by ${by} — ${chain.length} spin(s), result: ${finalSection.label} (${finalSection.type})`);
 
-  const animationLockMs = pending.chain.length * PRIZE_WHEEL_ANIMATION_MS;
-  const pumpSteps = (pending.finalSection.type === 'action' && Array.isArray(pending.finalSection.steps))
-    ? pending.finalSection.steps : [];
+  const animationLockMs = chain.length * PRIZE_WHEEL_ANIMATION_MS;
+  const pumpSteps = (finalSection.type === 'action' && Array.isArray(finalSection.steps))
+    ? finalSection.steps : [];
   const steps = [{ type: 'off', durationMs: animationLockMs }, ...pumpSteps];
 
-  // Fire the action AFTER the spin is confirmed so the gauge isn't locked
-  // while the wheel sits idle. If something else got fired between request
-  // and confirm (race), action-engine will throw — log and move on.
-  Promise.resolve(actionEngine.fireAction({
-    inline: { name: `🎡 ${pending.wheel.name} → ${pending.finalSection.label}`, steps },
-    byEmail: pending.byEmail, byNickname: pending.byNickname,
-  })).catch(e => logger.warn(`confirm spin fireAction failed (${source}): ${e.message}`));
+  return actionEngine.fireAction({
+    inline: { name: `🎡 ${wheel.name} → ${finalSection.label}`, steps },
+    byEmail, byNickname,
+  });
 }
 
 module.exports = {
   list, get, runDiceRoll,
-  requestPrizeWheel, confirmPrizeSpin,
+  requestPrizeWheel,
   DICE_ANIMATION_MS, PRIZE_WHEEL_ANIMATION_MS, PRIZE_WHEEL_MAX_CHAIN,
 };

@@ -16,6 +16,23 @@ function _ensureAssetDirs() {
 function listLottieFiles() { _ensureAssetDirs(); return fs.readdirSync(LOTTIE_DIR).filter(f => f.endsWith('.json')).sort(); }
 function listSoundFiles()  { _ensureAssetDirs(); return fs.readdirSync(SOUND_DIR).filter(f => /\.(mp3|wav|ogg|m4a)$/i.test(f)).sort(); }
 
+function _safeBasename(name) {
+  // Strip path separators, allow only filename-safe chars. Empty → 'upload'.
+  const stripped = String(name || '').replace(/[\\/]/g, '').replace(/[^a-zA-Z0-9_.\-]/g, '_');
+  return stripped || 'upload';
+}
+function _writeUnique(dir, sanitized) {
+  let target = sanitized, n = 1;
+  while (fs.existsSync(path.join(dir, target))) {
+    const dotIdx = sanitized.lastIndexOf('.');
+    const base = dotIdx >= 0 ? sanitized.slice(0, dotIdx) : sanitized;
+    const ext  = dotIdx >= 0 ? sanitized.slice(dotIdx) : '';
+    target = `${base}-${n}${ext}`;
+    n++;
+  }
+  return target;
+}
+
 router.get('/triggers', (req, res) => {
   const data = triggers.load();
   const lottieFiles = listLottieFiles();
@@ -122,8 +139,39 @@ router.get('/triggers', (req, res) => {
       const SUB_ACTION_KINDS = ${JSON.stringify(triggers.listSubActionKinds())};
       const DEVICES_ON       = ${JSON.stringify(devicesForEditor)};
       const DEVICES_OFF      = ${JSON.stringify(devicesForOff)};
-      const LOTTIE_FILES     = ${JSON.stringify(lottieFiles)};
-      const SOUND_FILES      = ${JSON.stringify(soundFiles)};
+      let LOTTIE_FILES       = ${JSON.stringify(lottieFiles)};
+      let SOUND_FILES        = ${JSON.stringify(soundFiles)};
+      // Pop a native file picker, upload the bytes to the matching trigger-
+      // assets endpoint, refresh the in-memory file list, and select the new
+      // filename on the row that requested it. Keeps the editor focused on
+      // doing instead of file-system bookkeeping.
+      function _uploadTriggerAsset(i, kind) {
+        const isLottie = kind === 'lottie';
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = isLottie ? '.json,application/json' : '.mp3,.wav,.ogg,.m4a,audio/*';
+        input.onchange = async () => {
+          const f = input.files && input.files[0];
+          if (!f) return;
+          let buf;
+          try { buf = await f.arrayBuffer(); }
+          catch (e) { flash('read failed: ' + e.message, 'bad'); return; }
+          const url = isLottie ? '/api/triggers/upload-lottie' : '/api/triggers/upload-sound';
+          const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/octet-stream', 'x-filename': encodeURIComponent(f.name) },
+            body: buf,
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok || d.error) { flash(d.error || 'upload failed', 'bad'); return; }
+          if (isLottie) LOTTIE_FILES = d.files || LOTTIE_FILES;
+          else          SOUND_FILES  = d.files || SOUND_FILES;
+          __subDraft[i].path = d.filename;
+          _renderSubActionRows();
+          flash('uploaded ' + d.filename, 'ok');
+        };
+        input.click();
+      }
       let ACTIVE_TPL_ID = ${JSON.stringify((data.triggerTemplates.find(t => t.id === (req.query?.template)) || data.triggerTemplates[0])?.id || null)};
       let modalSaveFn = null;
 
@@ -316,7 +364,10 @@ router.get('/triggers', (req, res) => {
           + '<div style="display:grid;grid-template-columns:1fr 340px;gap:14px;align-items:start">'
           +   '<div>'
           +     '<label style="display:block;margin-bottom:4px;font-size:0.85rem;color:var(--text-muted)">Lottie file</label>'
-          +     '<select onchange="__subDraft[' + i + '].path=this.value;_renderSubActionRows()" style="min-width:220px">' + opts + '</select>'
+          +     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+          +       '<select onchange="__subDraft[' + i + '].path=this.value;_renderSubActionRows()" style="min-width:220px">' + opts + '</select>'
+          +       '<button type="button" onclick="_uploadTriggerAsset(' + i + ',\\'lottie\\')">⬆ Upload .json</button>'
+          +     '</div>'
           +     '<div style="display:flex;gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">'
           +       '<label>Duration <input type="number" min="100" step="100" value="' + s.durationMs + '" style="width:100px" oninput="__subDraft[' + i + '].durationMs=Number(this.value)"> ms</label>'
           +       '<label><input type="checkbox"' + (s.freezeLastFrame ? ' checked' : '') + ' onchange="__subDraft[' + i + '].freezeLastFrame=this.checked"> Freeze last frame</label>'
@@ -325,12 +376,15 @@ router.get('/triggers', (req, res) => {
           +       '<label>Size: <strong id="tov-w-val-' + i + '">' + wPct + '%</strong> of cam width</label>'
           +       '<input type="range" min="5" max="100" step="1" value="' + wPct + '" style="width:100%;margin-top:4px" oninput="__subDraft[' + i + '].widthPct=Number(this.value); document.getElementById(\\'tov-w-val-' + i + '\\').textContent = this.value + \\'%\\'; _renderLottiePreview(' + i + ')">'
           +     '</div>'
-          +     '<p class="muted" style="font-size:0.85rem;margin:8px 0 0">Click/drag on the preview to move the Lottie center within the host webcam.</p>'
+          +     '<p style="margin:8px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+          +       '<button type="button" onclick="__subDraft[' + i + '].xPct=50;__subDraft[' + i + '].yPct=50;_renderLottiePreview(' + i + ')" title="snap center back to middle">Center</button>'
+          +       '<span class="muted" style="font-size:0.85rem">Click/drag on the preview to move the Lottie within the host webcam.</span>'
+          +     '</p>'
           +   '</div>'
           +   '<div>'
           +     '<div class="muted" style="font-size:0.85rem;margin-bottom:4px">Preview (cam-shaped, drag to position)</div>'
           +     '<div id="tov-lot-prev-' + i + '" data-idx="' + i + '" class="lottie-prev-stage" '
-          +       'style="position:relative;width:' + LOTTIE_PREVIEW_W + 'px;height:' + Math.round(LOTTIE_PREVIEW_W * 3 / 4) + 'px;'
+          +       'style="position:relative;width:' + LOTTIE_PREVIEW_W + 'px;height:' + LOTTIE_PREVIEW_W + 'px;'
           +       'background:#000;border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:crosshair;user-select:none">'
           +       _lottiePreviewSlotHtml(s)
           +     '</div>'
@@ -370,13 +424,25 @@ router.get('/triggers', (req, res) => {
       const TEXT_ANCHORS = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'];
       function _anchorGrid(idx, current, includeAll) {
         const opts = TEXT_ANCHORS.concat(includeAll ? ['all'] : []);
-        return opts.map(a => {
+        return '<div id="tov-anchors-' + idx + '" style="display:flex;flex-wrap:wrap;gap:6px">' + opts.map(a => {
           const sel = a === current;
           const label = a === 'all' ? 'ALL' : a;
-          return '<button type="button" onclick="__subDraft[' + idx + '].anchor=\\'' + a + '\\';_renderSubActionRows()" '
+          return '<button type="button" data-anchor="' + a + '" onclick="_setAnchor(' + idx + ',\\'' + a + '\\')" '
             + 'style="padding:8px 10px;border-radius:8px;font-size:0.85rem;border:1px solid var(--border);background:'
             + (sel ? '#7b3fd6' : 'var(--bg-2)') + ';color:' + (sel ? '#fff' : 'var(--text)') + ';cursor:pointer">' + label + '</button>';
-        }).join(' ');
+        }).join('') + '</div>';
+      }
+      function _setAnchor(i, anchor) {
+        __subDraft[i].anchor = anchor;
+        const grid = document.getElementById('tov-anchors-' + i);
+        if (grid) {
+          grid.querySelectorAll('button').forEach(b => {
+            const sel = b.dataset.anchor === anchor;
+            b.style.background = sel ? '#7b3fd6' : 'var(--bg-2)';
+            b.style.color = sel ? '#fff' : 'var(--text)';
+          });
+        }
+        _renderTextOverlayPreview(i);
       }
       function _textOverlayPreview(s) {
         // 4:3 black rectangle, 320×240, with the text positioned at the chosen anchor.
@@ -399,13 +465,21 @@ router.get('/triggers', (req, res) => {
           + bg + '">' + _safeAttr(s.text || '').replace(/\\n/g, '<br>') + '</div>'
         + '</div>';
       }
+      // Lightweight re-render: replaces ONLY the preview rectangle's contents
+      // — never the surrounding inputs — so focus stays in the textarea/font
+      // size while you're typing or pressing arrow keys.
+      function _renderTextOverlayPreview(i) {
+        const wrap = document.getElementById('tov-text-prev-' + i);
+        if (!wrap) return;
+        wrap.innerHTML = _textOverlayPreview(__subDraft[i]);
+      }
       function _textOverlayBody(s, i) {
         const modeRow =
             '<label style="margin-right:14px"><input type="radio" name="m-tov-mode-' + i + '" value="add"' + (s.mode === 'add' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'add\\';_renderSubActionRows()"> ADD</label>'
           + '<label><input type="radio" name="m-tov-mode-' + i + '" value="clear"' + (s.mode === 'clear' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'clear\\';_renderSubActionRows()"> CLEAR</label>';
         if (s.mode === 'clear') {
           return modeRow + '<div style="margin-top:8px"><div class="muted" style="font-size:0.85rem;margin-bottom:4px">Anchor</div>' + _anchorGrid(i, s.anchor, true) + '</div>'
-            + '<div style="margin-top:10px">' + _textOverlayPreview(s) + '</div>';
+            + '<div id="tov-text-prev-' + i + '" style="margin-top:10px">' + _textOverlayPreview(s) + '</div>';
         }
         const hasBg = !!s.bgColor;
         return ''
@@ -413,12 +487,12 @@ router.get('/triggers', (req, res) => {
           + '<div style="display:grid;grid-template-columns:1fr 340px;gap:14px;margin-top:10px;align-items:start">'
           +   '<div>'
           +     '<label style="display:block;margin-bottom:4px;font-size:0.85rem;color:var(--text-muted)">Text</label>'
-          +     '<textarea rows="3" style="width:100%" oninput="__subDraft[' + i + '].text=this.value;_renderSubActionRows()">' + _safeAttr(s.text || '') + '</textarea>'
+          +     '<textarea rows="3" style="width:100%" oninput="__subDraft[' + i + '].text=this.value;_renderTextOverlayPreview(' + i + ')">' + _safeAttr(s.text || '') + '</textarea>'
           +     '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">'
-          +       '<label>Font <input type="color" value="' + _safeAttr(s.fontColor || '#ffffff') + '" style="width:36px;height:32px;border:1px solid var(--border);border-radius:6px;padding:0" oninput="__subDraft[' + i + '].fontColor=this.value;_renderSubActionRows()"></label>'
+          +       '<label>Font <input type="color" value="' + _safeAttr(s.fontColor || '#ffffff') + '" style="width:36px;height:32px;border:1px solid var(--border);border-radius:6px;padding:0" oninput="__subDraft[' + i + '].fontColor=this.value;_renderTextOverlayPreview(' + i + ')"></label>'
           +       '<label><input type="checkbox"' + (hasBg ? ' checked' : '') + ' onchange="__subDraft[' + i + '].bgColor = this.checked ? \\'#000000aa\\' : null;_renderSubActionRows()"> Background</label>'
-          +       (hasBg ? '<input type="color" value="' + _safeAttr((s.bgColor || '#000000').slice(0, 7)) + '" style="width:36px;height:32px;border:1px solid var(--border);border-radius:6px;padding:0" oninput="__subDraft[' + i + '].bgColor=this.value;_renderSubActionRows()">' : '')
-          +       '<label>Size <input type="number" min="8" max="200" value="' + (s.fontSize || 24) + '" style="width:80px" oninput="__subDraft[' + i + '].fontSize=Number(this.value);_renderSubActionRows()"> px</label>'
+          +       (hasBg ? '<input type="color" value="' + _safeAttr((s.bgColor || '#000000').slice(0, 7)) + '" style="width:36px;height:32px;border:1px solid var(--border);border-radius:6px;padding:0" oninput="__subDraft[' + i + '].bgColor=this.value;_renderTextOverlayPreview(' + i + ')">' : '')
+          +       '<label>Size <input type="number" min="8" max="200" value="' + (s.fontSize || 24) + '" style="width:80px" oninput="__subDraft[' + i + '].fontSize=Number(this.value);_renderTextOverlayPreview(' + i + ')"> px</label>'
           +     '</div>'
           +     '<div style="margin-top:14px">'
           +       '<div class="muted" style="font-size:0.85rem;margin-bottom:4px">Anchor</div>'
@@ -427,7 +501,7 @@ router.get('/triggers', (req, res) => {
           +   '</div>'
           +   '<div>'
           +     '<div class="muted" style="font-size:0.85rem;margin-bottom:4px">Preview (cam-shaped)</div>'
-          +     _textOverlayPreview(s)
+          +     '<div id="tov-text-prev-' + i + '">' + _textOverlayPreview(s) + '</div>'
           +   '</div>'
           + '</div>';
       }
@@ -443,14 +517,19 @@ router.get('/triggers', (req, res) => {
             body = _lottieOverlayBody(s, i);
           } else if (s.kind === 'play-sound') {
             const opts = SOUND_FILES.map(f => '<option value="' + _safeAttr(f) + '"' + (s.path === f ? ' selected' : '') + '>' + _safeAttr(f) + '</option>').join('');
-            body = '<label>File <select onchange="__subDraft[' + i + '].path=this.value" style="min-width:200px">' + (opts || '<option value="">(drop .mp3/.wav/.ogg in public/assets/triggers/sound/)</option>') + '</select></label> '
-                 + '<label>Vol <input type="number" min="0" max="1" step="0.05" value="' + s.volume + '" style="width:70px" oninput="__subDraft[' + i + '].volume=Number(this.value)"></label> '
-                 + '<label><input type="checkbox"' + (s.blocking ? ' checked' : '') + ' onchange="__subDraft[' + i + '].blocking=this.checked;_renderSubActionRows()"> hold for ' + (s.blocking ? '<input type="number" min="0" step="100" value="' + s.estDurationMs + '" style="width:80px" oninput="__subDraft[' + i + '].estDurationMs=Number(this.value)"> ms' : 'duration') + '</label>';
+            body = '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+                 +   '<label>File <select onchange="__subDraft[' + i + '].path=this.value" style="min-width:200px">' + (opts || '<option value="">(no sounds uploaded yet)</option>') + '</select></label>'
+                 +   '<button type="button" onclick="_uploadTriggerAsset(' + i + ',\\'sound\\')">⬆ Upload audio</button>'
+                 +   '<label>Vol <input type="number" min="0" max="1" step="0.05" value="' + s.volume + '" style="width:70px" oninput="__subDraft[' + i + '].volume=Number(this.value)"></label>'
+                 +   '<label><input type="checkbox"' + (s.blocking ? ' checked' : '') + ' onchange="__subDraft[' + i + '].blocking=this.checked;_renderSubActionRows()"> hold for ' + (s.blocking ? '<input type="number" min="0" step="100" value="' + s.estDurationMs + '" style="width:80px" oninput="__subDraft[' + i + '].estDurationMs=Number(this.value)"> ms' : 'duration') + '</label>'
+                 + '</div>';
           } else if (s.kind === 'device-control') {
             const modeRadios = '<label><input type="radio" name="m-dc-mode-' + i + '" value="on"' + (s.mode === 'on' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'on\\';_renderSubActionRows()"> On</label> '
                              + '<label><input type="radio" name="m-dc-mode-' + i + '" value="on-cycle"' + (s.mode === 'on-cycle' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'on-cycle\\';_renderSubActionRows()"> Cycle</label> '
                              + '<label><input type="radio" name="m-dc-mode-' + i + '" value="off"' + (s.mode === 'off' ? ' checked' : '') + ' onchange="__subDraft[' + i + '].mode=\\'off\\';_renderSubActionRows()"> Off</label>';
-            const devList = (s.mode === 'off' ? DEVICES_OFF : DEVICES_ON);
+            // 'all' is always legal now (off = turn everything off; on / cycle
+            // = drive every device in lockstep) so we surface it for every mode.
+            const devList = DEVICES_OFF;
             const devOpts = devList.map(d => '<option value="' + _safeAttr(d.id) + '"' + (s.deviceId === d.id ? ' selected' : '') + '>' + _safeAttr(d.label) + '</option>').join('');
             const detail = s.mode === 'off'
               ? ''
@@ -480,17 +559,21 @@ router.get('/triggers', (req, res) => {
           } else {
             body = '<span class="muted">Spec TBD — this sub-action can\\'t be saved yet.</span>';
           }
+          const collapsed = !!s._collapsed;
+          const summary = collapsed ? _clientSummarize(s) : '';
           return ''
-            + '<div class="sub-action-row" draggable="true" data-idx="' + i + '" style="border:1px solid var(--border);border-radius:8px;background:var(--bg-3);padding:12px;margin-bottom:10px">'
+            + '<div class="sub-action-row" draggable="true" data-idx="' + i + '" style="border:1px solid var(--border);border-radius:8px;background:var(--bg-3);padding:10px 12px;margin-bottom:10px">'
             +   '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
             +     '<span class="sub-drag-handle" title="drag to reorder" style="cursor:grab;color:var(--text-faint);font-size:1.1rem;padding:4px 6px;user-select:none">⋮⋮</span>'
+            +     '<button type="button" onclick="_toggleSub(' + i + ')" title="' + (collapsed ? 'expand' : 'collapse') + '" style="background:transparent;color:var(--text);border:1px solid var(--border);padding:4px 8px;font-size:0.8rem;min-width:30px">' + (collapsed ? '▶' : '▼') + '</button>'
             +     '<select onchange="__subDraft[' + i + '] = _newSubAction(this.value);_renderSubActionRows()" style="min-width:180px">' + kindOpts + '</select>'
+            +     (collapsed ? '<span style="flex:1;min-width:0;color:var(--text-muted);font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _safeAttr(summary) + '</span>' : '')
             +     '<button onclick="_moveSub(' + i + ',-1)" ' + (i === 0 ? 'disabled' : '') + ' title="move up">↑</button>'
             +     '<button onclick="_moveSub(' + i + ',1)" ' + (i === __subDraft.length - 1 ? 'disabled' : '') + ' title="move down">↓</button>'
             +     '<button onclick="_copySub(' + i + ')" title="duplicate this sub-action">📋</button>'
-            +     '<button onclick="_removeSub(' + i + ')" style="background:#4a1b1b;margin-left:auto" title="delete">×</button>'
+            +     '<button onclick="_removeSub(' + i + ')" style="background:#4a1b1b' + (collapsed ? '' : ';margin-left:auto') + '" title="delete">×</button>'
             +   '</div>'
-            +   '<div style="margin-top:8px">' + body + '</div>'
+            +   (collapsed ? '' : '<div style="margin-top:8px">' + body + '</div>')
             + '</div>';
         }).join('');
         _attachSubActionDrag();
@@ -549,8 +632,37 @@ router.get('/triggers', (req, res) => {
       function _addSub() {
         const firstEnabled = SUB_ACTION_KINDS.find(k => k.enabled);
         if (!firstEnabled) return;
-        __subDraft.push(_newSubAction(firstEnabled.kind));
+        // Newly-added rows open expanded so the editor is ready to use.
+        __subDraft.push(Object.assign(_newSubAction(firstEnabled.kind), { _collapsed: false }));
         _renderSubActionRows();
+      }
+      function _toggleSub(i) {
+        if (!__subDraft[i]) return;
+        __subDraft[i]._collapsed = !__subDraft[i]._collapsed;
+        _renderSubActionRows();
+      }
+      // One-line client-side summary used in the collapsed-row header. Server
+      // has its own _summarizeSubAction for the actions table; this mirrors
+      // the same shapes but reads the in-progress draft.
+      function _clientSummarize(s) {
+        if (!s) return '';
+        if (s.kind === 'text-overlay') {
+          if (s.mode === 'clear') return 'clear text · ' + (s.anchor || '?');
+          const t = String(s.text || '');
+          const trimmed = t.length > 30 ? t.slice(0, 30) + '…' : t;
+          return 'text “' + trimmed + '” · ' + (s.anchor || '?');
+        }
+        if (s.kind === 'lottie-overlay') return 'lottie ' + (s.path || '?') + ' · ' + s.durationMs + 'ms' + (s.freezeLastFrame ? ' · frozen' : '');
+        if (s.kind === 'play-sound') return 'sound ' + (s.path || '?') + (s.blocking ? ' · hold ' + s.estDurationMs + 'ms' : '');
+        if (s.kind === 'device-control') {
+          if (s.mode === 'off') return 'device off · ' + (s.deviceId || '?');
+          if (s.mode === 'on') return 'device on · ' + (s.deviceId || '?') + (s.infinite ? ' · ∞' : ' · ' + s.durationMs + 'ms');
+          if (s.mode === 'on-cycle') return 'device cycle · ' + (s.deviceId || '?') + ' · ' + s.cycleOnMs + '/' + s.cycleOffMs + 'ms × ' + (s.cycleInfinite ? '∞' : s.cycleTimes);
+        }
+        if (s.kind === 'wait') return 'wait · ' + s.durationMs + 'ms';
+        if (s.kind === 'turn-off-host-cam') return 'host cam off';
+        if (s.kind === 'end-session') return 'end session' + (s.mode === 'delayed' ? ' · after ' + Math.round((s.delayMs || 0) / 1000) + 's' : ' · instant');
+        return s.kind;
       }
       function _actionFormHtml(a) {
         return ''
@@ -574,7 +686,9 @@ router.get('/triggers', (req, res) => {
         const list = await fetch('/api/triggers/actions').then(r => r.json());
         const a = (list.actions || []).find(x => x.id === id);
         if (!a) return flash('not found', 'bad');
-        __subDraft = JSON.parse(JSON.stringify(a.steps || []));
+        // Existing rows open collapsed — keeps the editor scannable rather than
+        // a mile of inputs. Click the chevron on any row to expand it.
+        __subDraft = (a.steps || []).map(s => Object.assign(JSON.parse(JSON.stringify(s)), { _collapsed: true }));
         modalOpen('Edit trigger action', _actionFormHtml(a), async () => {
           const name = document.getElementById('m-name').value.trim();
           const r = await fetch('/api/triggers/actions/' + id, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ name, steps: __subDraft }) });
@@ -695,6 +809,37 @@ function _summarizeSubAction(s) {
 // =====================
 // REST API
 // =====================
+
+// File upload — the global express.json() body parser ignores octet-stream,
+// so this route gets the raw bytes via express.raw().
+router.post('/api/triggers/upload-lottie', express.raw({ type: '*/*', limit: '10mb' }), (req, res) => {
+  try {
+    const raw = decodeURIComponent(String(req.headers['x-filename'] || 'upload.json'));
+    const sanitized = _safeBasename(raw);
+    if (!sanitized.toLowerCase().endsWith('.json')) return res.status(400).json({ error: 'file must be .json' });
+    if (!req.body || !req.body.length) return res.status(400).json({ error: 'empty upload' });
+    try { JSON.parse(req.body.toString('utf8')); }
+    catch { return res.status(400).json({ error: 'file is not valid JSON (Lottie files are JSON)' }); }
+    _ensureAssetDirs();
+    const filename = _writeUnique(LOTTIE_DIR, sanitized);
+    fs.writeFileSync(path.join(LOTTIE_DIR, filename), req.body);
+    res.json({ ok: true, filename, files: listLottieFiles() });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/triggers/upload-sound', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
+  try {
+    const raw = decodeURIComponent(String(req.headers['x-filename'] || 'upload.mp3'));
+    const sanitized = _safeBasename(raw);
+    if (!/\.(mp3|wav|ogg|m4a)$/i.test(sanitized)) return res.status(400).json({ error: 'sound must be .mp3 / .wav / .ogg / .m4a' });
+    if (!req.body || !req.body.length) return res.status(400).json({ error: 'empty upload' });
+    _ensureAssetDirs();
+    const filename = _writeUnique(SOUND_DIR, sanitized);
+    fs.writeFileSync(path.join(SOUND_DIR, filename), req.body);
+    res.json({ ok: true, filename, files: listSoundFiles() });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 router.get('/api/triggers/actions', (_req, res) => res.json({ actions: triggers.listActions() }));
 router.get('/api/triggers/actions/:id', (req, res) => {
   try { res.json({ action: triggers.getAction(req.params.id) }); }

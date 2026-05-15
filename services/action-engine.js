@@ -89,6 +89,17 @@ function _setCapacity(c) {
   session._setLive && session._setLive(live);
 }
 
+// Public setter used by the Launchpad "Set capacity" button. Routes through
+// the engine's internal `live.capacity` so the next capacity-tick doesn't
+// stomp on the manually-set value (the tick uses live.capacity as its base).
+// Also rebases pumpOnSince so any partial in-flight pump segment doesn't
+// retroactively charge time against the new starting point.
+function setCapacity(c) {
+  _setCapacity(c);
+  if (pumpOnSince) pumpOnSince = Date.now();
+  _publish();
+}
+
 function _calcRatePerMs(primary) {
   // capacity grows from 0 to 100 over `secondsTo100` seconds while pump is on
   const sec = primary?.calibration?.secondsTo100;
@@ -209,7 +220,7 @@ async function fireAction({ actionTemplateId, inline, byEmail, byNickname }) {
   let action;
   if (inline) {
     templates.validateSteps(inline.steps);
-    action = { id: '_inline_' + Date.now(), name: inline.name || 'Manual', steps: inline.steps };
+    action = { id: '_inline_' + Date.now(), name: inline.name || 'Manual', mode: 'standard', steps: inline.steps };
   } else if (actionTemplateId) {
     const tplData = templates.load();
     action = tplData.actionTemplates.find(a => a.id === actionTemplateId);
@@ -218,14 +229,42 @@ async function fireAction({ actionTemplateId, inline, byEmail, byNickname }) {
     throw new Error('actionTemplateId or inline required');
   }
 
-  const primary = devices.primary();
-  if (!primary || !primary.calibration?.secondsTo100) throw new Error('primary pump not calibrated');
-
   const sessData = session.load();
   const profile = sessData.sessionProfiles.find(p => p.id === s.sessionProfileId);
   if (profile?.settings?.disableControlAt100 && live.capacity >= 100) {
     throw new Error('device control disabled at 100% (session profile setting)');
   }
+
+  // Mode dispatch: trigger-mode action templates fire a Trigger Action / Group
+  // instead of running pump steps. The action lock still ticks the same way
+  // (currentActionTemplateId=action.id) so all the existing UI disables apply.
+  if (action.mode === 'trigger' && action.triggerTarget) {
+    abortController = new AbortController();
+    _setRunning(action.id);
+    chat.system(`${byNickname || 'someone'} fired ${action.name}`);
+    _publish();
+    (async () => {
+      let wasAborted = false;
+      try {
+        await _triggers().runActionTarget(action.triggerTarget, abortController.signal);
+      } catch (e) {
+        if (e?.name !== 'AbortError') logger.error('trigger-mode action run failed: ' + e.message);
+        else wasAborted = true;
+      } finally {
+        wasAborted = wasAborted || !!(abortController && abortController.signal.aborted);
+        abortController = null;
+        _setRunning(null);
+        _setStep(null);
+        _setRepeat(null);
+        chat.system(wasAborted ? `${action.name} aborted` : `${action.name} finished`);
+        _publish();
+      }
+    })();
+    return { ok: true };
+  }
+
+  const primary = devices.primary();
+  if (!primary || !primary.calibration?.secondsTo100) throw new Error('primary pump not calibrated');
 
   abortController = new AbortController();
   _setRunning(action.id);
@@ -294,4 +333,4 @@ function stopForSessionEnd() {
   _publish();
 }
 
-module.exports = { fireAction, abort, resetForNewSession, stopForSessionEnd, startCapacityLoop, stopCapacityLoop };
+module.exports = { fireAction, abort, setCapacity, resetForNewSession, stopForSessionEnd, startCapacityLoop, stopCapacityLoop };

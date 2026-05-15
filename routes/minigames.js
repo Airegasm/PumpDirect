@@ -334,14 +334,5 @@ router.post('/api/minigame/prize-wheel', async (req, res) => {
   }
 });
 
-router.post('/api/minigame/prize-wheel/spin', (req, res) => {
-  try {
-    const o = _ownerNick();
-    minigames.confirmPrizeSpin({ spinToken: req.body?.spinToken, byEmail: o.email });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
 
 module.exports = router;

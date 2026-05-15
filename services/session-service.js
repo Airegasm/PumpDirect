@@ -98,6 +98,19 @@ function updateProfile(id, patch) {
     // Allow null/'' to detach; otherwise persist the id.
     profile.triggerTemplateId = patch.triggerTemplateId || null;
   }
+  if (patch.customEndButton !== undefined) {
+    // Shape: { enabled:bool, text:string, target:{kind,id}|null }.
+    // The Launchpad UI controls the inputs; the runtime validates the target
+    // against triggers-service when the button is pressed (loose here).
+    const ceb = patch.customEndButton || {};
+    profile.customEndButton = {
+      enabled: !!ceb.enabled,
+      text: typeof ceb.text === 'string' ? ceb.text.slice(0, 80) : '',
+      target: ceb.target && typeof ceb.target === 'object' && (ceb.target.kind === 'action' || ceb.target.kind === 'group') && ceb.target.id
+        ? { kind: ceb.target.kind, id: String(ceb.target.id) }
+        : null,
+    };
+  }
   if (patch.settings) {
     if (typeof patch.settings.chatroomEnabled === 'boolean') profile.settings.chatroomEnabled = patch.settings.chatroomEnabled;
     if (typeof patch.settings.disableControlAt100 === 'boolean') profile.settings.disableControlAt100 = patch.settings.disableControlAt100;

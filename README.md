@@ -160,9 +160,18 @@ SystemCallArchitectures=native
 Controller-pressable buttons that pre-compute a result server-side, broadcast it to every viewer, and run a synchronized animation before the resulting pump fires:
 
 - **🎲 Dice Roll** — owner-configurable popup picks 1–6 d6 dice and Continuous (`total pips × 1s` pump-on) or Cycle (`total pips × 1s on / 1s off`). Animated Lottie dice land on the same faces on every screen.
-- **🎡 Prize Wheel** — owner-built wheels (1–10 sections, optional per-spin section shuffle). Section types: `action` (fires its pump steps), `spin-again` (re-rolls, max 8 chained spins), `no-prize` (silent lands). Programmatic SVG wheel with radial labels; the trigger user gets a SPIN button (only visible to them) and the server emits the spin event so all clients animate in lockstep.
+- **🎡 Prize Wheel** — owner-built wheels (1–10 sections, optional per-spin section shuffle). Section types: `action` (fires its pump steps), `spin-again` (re-rolls, max 8 chained spins), `no-prize` (silent lands). Programmatic SVG wheel with radial labels — **auto-spins on press**, no Spin button; all clients animate in lockstep, the wheel lands on the server-pre-computed wedge, pump fires.
 
 Per-milestone (or always-available) tickboxes attach minigames to a button; multi-wheel buttons have the server randomly pick one of the assigned wheels on each press — the spinner never gets to choose.
+
+## Action templates — Standard vs Trigger mode
+
+Pump-action templates (the buttons on milestones) have a **mode radio** in the editor:
+
+- **Standard** — the historical shape; runs the on/off/repeat step tree against the primary pump.
+- **Trigger** — fires a Trigger Action / Group instead of pump steps. Same lock behavior (gauge locks while it runs), but the chain can include any sub-action kind from the Triggers tab — overlays, sounds, device-control, end-session, etc.
+
+A trigger-mode button is the cleanest way to attach rich theatrics to a milestone (e.g. a "Reveal" button on the 50% milestone that plays a Lottie + sound).
 
 ## Triggers
 
@@ -170,17 +179,25 @@ Three reusable layers, all on the **Triggers** tab:
 
 | Layer | Shape | Notes |
 |---|---|---|
-| **Trigger Action** | named profile · ordered sub-actions | Sub-action kinds: `text-overlay` (5 anchors over host cam, add/clear/all), `lottie-overlay` (positioned + sized over host cam, optional freeze-last-frame), `play-sound` (`/assets/triggers/sound/*.{mp3,wav,ogg}`), `device-control` (on / on-cycle / off, with `all` target on off), `wait`, `turn-off-host-cam`, `end-session` (instant or delayed with full-screen "Session ending in N" countdown). |
+| **Trigger Action** | named profile · ordered sub-actions | Sub-action kinds: `text-overlay` (5 anchors over host cam — top-left/top-right/bottom-left/bottom-right/center, with ADD/CLEAR modes + `all` for clear), `lottie-overlay` (positioned + sized over the host cam tile, optional freeze-last-frame, drag-to-position editor with a Center button + width slider), `play-sound` (audio with optional blocking hold), `device-control` (on / on-cycle / off, `all` legal for every mode — `on infinite` is non-blocking so the chain proceeds while the device stays on), `wait`, `turn-off-host-cam`, `end-session` (instant OR delayed with full-stage "Session ending in N" countdown). |
 | **Trigger Action Group** | named profile · ordered list of Trigger Actions | Macro of macros — runs its actions sequentially. |
 | **Trigger Template** | named profile · rows of `{type, value, target}` | Only one row per capacity number; target is either a Trigger Action or a Group. |
 
 A trigger template attaches to a session profile (Launchpad → Settings). At runtime the action engine's capacity tick fires unfired triggers when their `value` is crossed upward — fire-once per session. The runtime locks the gauge (same UI lock actions/minigames use), queues additional triggers behind in-flight ones, and preempts manual Pump On when a trigger fires.
 
-Asset directories (drop files in; the editor enumerates):
+**Asset uploads** are inline — the lottie + sound rows each have an **⬆ Upload** button that takes a file picker, copies the bytes into the right directory, and selects the new filename automatically. Files land in:
 - `public/assets/triggers/lottie/*.json` — Lottie JSON for `lottie-overlay`.
 - `public/assets/triggers/sound/*.{mp3,wav,ogg,m4a}` — audio for `play-sound`.
 
-The sub-action editor supports drag-to-reorder rows, a copy button (📋) per row that deep-clones, and live previews for both `text-overlay` (cam-shaped preview with the styled text) and `lottie-overlay` (cam-shaped preview with draggable center + width slider).
+The sub-action editor supports drag-to-reorder rows, a copy button (📋) per row that deep-clones, **collapsible rows** (each row has a `▼/▶` toggle so a long chain doesn't fill the screen — newly-added rows open expanded, existing rows open collapsed), and live previews for both `text-overlay` (cam-shaped preview with the styled text) and `lottie-overlay` (cam-shaped preview with draggable center + width slider + Center snap).
+
+### Custom Session End Button
+
+Each session profile gets an optional **Custom Session End Button** in Launchpad → Settings. Tick the box, set the button label, pick a Trigger Action or Group, and a purple labelled button appears below the Stop / E-STOP / Standby cluster. Pressing it fires the chosen trigger sequence — include an `end-session` sub-action in the chain if you want it to actually end the session (otherwise it just runs the effects).
+
+## Participant control hand-off
+
+In a multi-controller setup, the active controller can **tap a voyeur's name in the participant list** to pass control. Confirmation popup; on accept, the tapper becomes a voyeur and the chosen visitor becomes the active controller with **video disabled by default** (the V tickbox resets, so a new controller has to be granted webcam by the owner explicitly).
 
 ## Customization
 
@@ -195,9 +212,16 @@ The sub-action editor supports drag-to-reorder rows, a copy button (📋) per ro
 Everyone who runs `start.sh` / `start.bat` gets their own instance from scratch:
 
 - `config.json` — gitignored; never published.
-- `data/` — gitignored; per-instance devices.json, templates.json, sessions.json.
+- `data/` — gitignored; per-instance `devices.json`, `templates.json`, `sessions.json`, `triggers.json`. Your session profiles, trigger templates, milestone layouts, and device list never enter the repo.
 - `.venv/`, `node_modules/` — gitignored.
 - `pumpdirect.service`, `install-service.ps1`, `bin/nssm.exe` — gitignored (generated on each host).
+
+What **does** ship as defaults (committed in `services/templates-defaults.json`):
+
+- 18 standard pump action templates with descriptions: Slow Stream, Pulse, Sip, Soft Ramp, Tease, Slow Drip, Steady Push, Throb, Bounce, Sustain, Long Push, Hammer, Hold, Rapid Fire, Burst, Inferno, Overdrive, Saturate.
+- 4 prize-wheel templates at escalating intensity: Easy Mode, Warm Up, Heat Up, Mercy is Dead.
+
+These are seeded into a fresh install's templates.json the first time the service boots. Personal pump-template profiles (the milestone layouts on the Pump Templates tab) and personal session/trigger profiles are NOT shipped — each operator builds their own.
 
 If you change your repo URL, update `views/tos.js` and `start.sh` accordingly.
 

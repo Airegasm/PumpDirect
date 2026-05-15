@@ -2,6 +2,7 @@ const express = require('express');
 const templates = require('../services/templates-service');
 const devicesSvc = require('../services/devices-service');
 const minigames = require('../services/minigames-service');
+const triggers = require('../services/triggers-service');
 const { ownerLayout, escape } = require('../views/layout');
 const { createLogger } = require('../utils/logger');
 
@@ -66,7 +67,9 @@ router.get('/templates', (req, res) => {
             <td class="drag-handle" style="cursor:grab;color:#7a8597;text-align:center">⋮⋮</td>
             <td><strong>${escape(a.name)}</strong></td>
             <td class="muted" style="max-width:340px">${escape((a.description || '').slice(0, 120))}${(a.description || '').length > 120 ? '…' : ''}</td>
-            <td><code>${summarizeSteps(a.steps)}</code></td>
+            <td>${a.mode === 'trigger'
+              ? '<code>🎯 ' + (a.triggerTarget?.kind === 'group' ? '📦 group: ' : 'action: ') + escape((triggers.listActions().find(x => x.id === a.triggerTarget?.id)?.name) || (triggers.listGroups().find(x => x.id === a.triggerTarget?.id)?.name) || '?') + '</code>'
+              : '<code>' + summarizeSteps(a.steps) + '</code>'}</td>
             <td>
               <button onclick="tplEditAction('${escape(a.id)}')">Edit</button>
               <button onclick="tplDeleteAction('${escape(a.id)}', '${escape(a.name)}')">Delete</button>
@@ -157,6 +160,10 @@ router.get('/templates', (req, res) => {
       const ALL_ACTIONS = ${JSON.stringify(data.actionTemplates.map(a => ({ id: a.id, name: a.name })))};
       const ALL_MINIGAMES = ${JSON.stringify(minigames.list().map(m => ({ id: m.id, name: m.name, color: m.color, configurable: !!m.configurable })))};
       const ALL_WHEELS = ${JSON.stringify((data.wheelTemplates || []).map(w => ({ id: w.id, name: w.name, sectionCount: (w.sections || []).length })))};
+      // Trigger actions + groups available as targets when an action template
+      // is in 'trigger' mode (fires a Trigger Action/Group instead of pump steps).
+      const ALL_TRIGGER_ACTIONS = ${JSON.stringify(triggers.listActions().map(a => ({ id: a.id, name: a.name })))};
+      const ALL_TRIGGER_GROUPS  = ${JSON.stringify(triggers.listGroups().map(g => ({ id: g.id, name: g.name })))};
       const ALL_DEVICES = ${JSON.stringify((() => {
         const list = devicesSvc.loadAll();
         const primary = list.find(d => d.isPrimary);
@@ -451,6 +458,14 @@ router.get('/templates', (req, res) => {
         });
       }
       function _actionFormHtml(a) {
+        const mode = a?.mode || 'standard';
+        const tgt = a?.triggerTarget || null;
+        const triggerOpts = '<optgroup label="Trigger Actions">'
+          + ALL_TRIGGER_ACTIONS.map(x => '<option value="action:' + x.id + '"' + (tgt?.kind === 'action' && tgt?.id === x.id ? ' selected' : '') + '>🎯 ' + x.name + '</option>').join('')
+          + '</optgroup><optgroup label="Trigger Action Groups">'
+          + ALL_TRIGGER_GROUPS.map(x => '<option value="group:' + x.id + '"' + (tgt?.kind === 'group' && tgt?.id === x.id ? ' selected' : '') + '>📦 ' + x.name + '</option>').join('')
+          + '</optgroup>';
+        const triggerEmpty = (ALL_TRIGGER_ACTIONS.length + ALL_TRIGGER_GROUPS.length) === 0;
         return ''
           + '<style>'
           +   '.ae-row { background:#0a0c10; border:1px solid #2a2f3a; border-radius:8px; padding:10px 12px; margin:8px 0; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }'
@@ -462,18 +477,52 @@ router.get('/templates', (req, res) => {
           + '</style>'
           + '<p><label>Name <input id="m-name" type="text" value="' + (a?.name?.replace(/"/g, '&quot;') || '') + '" style="width:100%"></label></p>'
           + '<p><label>Description <textarea id="m-desc" rows="2" style="width:100%;resize:vertical;font-family:inherit" placeholder="Short sentence shown to controllers when they tap the ? button next to this action.">' + (a?.description ? String(a.description).replace(/</g, '&lt;') : '') + '</textarea></label></p>'
-          + '<p class="muted" style="font-size:0.9rem;margin:6px 0 0">Build the sequence with the + buttons. "Repeat" wraps Device On/Off steps and runs them N times.</p>'
-          + '<div id="m-steps-container"></div>';
+          + '<p style="margin:14px 0 4px"><strong>What happens when this action fires:</strong></p>'
+          + '<p style="margin:0 0 10px">'
+          +   '<label style="margin-right:14px"><input type="radio" name="m-mode" value="standard"' + (mode === 'standard' ? ' checked' : '') + ' onchange="_toggleActionMode()"> Standard — pump on/off/repeat steps</label>'
+          +   '<label><input type="radio" name="m-mode" value="trigger"' + (mode === 'trigger' ? ' checked' : '') + ' onchange="_toggleActionMode()"> Trigger — fires a Trigger Action or Group instead</label>'
+          + '</p>'
+          + '<div id="m-standard-pane" style="display:' + (mode === 'standard' ? 'block' : 'none') + '">'
+          +   '<p class="muted" style="font-size:0.9rem;margin:6px 0 0">Build the sequence with the + buttons. "Repeat" wraps Device On/Off steps and runs them N times.</p>'
+          +   '<div id="m-steps-container"></div>'
+          + '</div>'
+          + '<div id="m-trigger-pane" style="display:' + (mode === 'trigger' ? 'block' : 'none') + '">'
+          +   (triggerEmpty
+                ? '<p class="muted">No trigger actions or groups exist yet — create one on the <a href="/triggers" style="color:var(--accent)">Triggers</a> tab first.</p>'
+                : '<p><label>Target <select id="m-trigger-target" style="min-width:300px">' + triggerOpts + '</select></label></p>'
+                  + '<p class="muted" style="font-size:0.9rem;margin:4px 0 0">When fired from a milestone button, this runs the chosen trigger sequence instead of any pump steps.</p>')
+          + '</div>';
+      }
+      function _toggleActionMode() {
+        const mode = (document.querySelector('input[name="m-mode"]:checked') || {}).value || 'standard';
+        const std = document.getElementById('m-standard-pane');
+        const trg = document.getElementById('m-trigger-pane');
+        if (std) std.style.display = mode === 'standard' ? '' : 'none';
+        if (trg) trg.style.display = mode === 'trigger' ? '' : 'none';
       }
       function _readActionForm() {
-        return { name: document.getElementById('m-name').value.trim(), description: document.getElementById('m-desc').value, steps: _serializeActionTree() };
+        const mode = (document.querySelector('input[name="m-mode"]:checked') || {}).value || 'standard';
+        const out = {
+          name: document.getElementById('m-name').value.trim(),
+          description: document.getElementById('m-desc').value,
+          mode,
+        };
+        if (mode === 'trigger') {
+          const t = (document.getElementById('m-trigger-target') || {}).value || '';
+          const [kind, id] = t.split(':');
+          out.triggerTarget = { kind, id };
+        } else {
+          out.steps = _serializeActionTree();
+        }
+        return out;
       }
       function tplNewAction() {
         __actionTree = [];
         __actionEditorId = 0;
         modalOpen('New action template', _actionFormHtml(null), async () => {
           const body = _readActionForm();
-          if (!body.steps.length) return flash('add at least one step', 'bad');
+          if (body.mode === 'standard' && !body.steps.length) return flash('standard mode needs at least one step', 'bad');
+          if (body.mode === 'trigger' && !body.triggerTarget?.id) return flash('trigger mode needs a target', 'bad');
           const r = await fetch('/api/templates/actions', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
           const d = await r.json();
           if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
@@ -488,7 +537,8 @@ router.get('/templates', (req, res) => {
         __actionTree = _cloneWithIds(a?.steps || []);
         modalOpen('Edit action template', _actionFormHtml(a), async () => {
           const body = _readActionForm();
-          if (!body.steps.length) return flash('add at least one step', 'bad');
+          if (body.mode === 'standard' && !body.steps.length) return flash('standard mode needs at least one step', 'bad');
+          if (body.mode === 'trigger' && !body.triggerTarget?.id) return flash('trigger mode needs a target', 'bad');
           const r = await fetch('/api/templates/actions/' + id, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
           const d = await r.json();
           if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');

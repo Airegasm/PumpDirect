@@ -265,7 +265,6 @@ function renderVisitorPage(req) {
         <div class="splash">
           <h1><span class="dot"></span>No active session</h1>
           <p style="color:var(--text-muted)">The owner hasn't started a session yet. This page will refresh automatically when one begins.</p>
-          ${profile?.welcomeMessage ? `<p class="welcome">${escapeHtml(profile.welcomeMessage)}</p>` : ''}
         </div>
         <script>
           ${themeToggleJs}
@@ -364,8 +363,10 @@ function renderVisitorPage(req) {
       <div class="cam-grid">
         <div class="cam-slot" id="cam-controller-slot"></div>
         <div class="cam-slot" id="cam-owner-slot"></div>
+        <div id="trigger-fx-stage"></div>
       </div>
       <div id="overlay-stage"></div>
+      <div id="countdown-stage"></div>
       </div><!-- /session-stage -->
 
       <div class="chat-row">
@@ -445,7 +446,6 @@ function renderVisitorPage(req) {
       // Globals consumed by views/overlay.js for Spin-button visibility + the
       // POST endpoint when the trigger visitor confirms the spin.
       window.__MY_EMAIL = MY_EMAIL;
-      window.__SPIN_ENDPOINT = '/api/visitor/minigame/prize-wheel/spin';
       // Host (owner) tile lives at id="rt-<sanitized owner email>" once their
       // stream connects via WebRTC. Use the same css-id sanitizer the rtc code
       // uses so the lookup matches.
@@ -560,19 +560,24 @@ function renderVisitorPage(req) {
         document.getElementById('dice-config-bg').classList.remove('open');
       }
       function _nickFor(e) { return NICKS[e] || (e || '').split('@')[0] || e; }
-      function _partRow(p, isMe) {
+      function _partRow(p, isMe, viewerIsController) {
         const nick = _nickFor(p.email);
         const dotCls = p.presence === 'afk' ? 'afk' : (p.presence === 'connected' ? 'online' : '');
         const itemCls = p.presence === 'afk' ? ' afk' : '';
         const meTag = isMe ? ' <span class="muted" style="font-size:0.8rem;font-style:normal">(you)</span>' : '';
         const afkTag = p.presence === 'afk' ? ' <span class="muted" style="font-size:0.8rem;font-style:normal">· afk</span>' : '';
-        return '<div class="p-item' + itemCls + '"><span class="presence-dot ' + dotCls + '"></span><span>' + escapeHtml(nick) + meTag + afkTag + '</span></div>';
+        // A current controller can click a voyeur's row to hand off control.
+        // Server enforces the same conditions; this just gates the affordance.
+        const clickable = viewerIsController && !p.canControl && !isMe;
+        const click = clickable ? ' onclick="vPassControl(\\'' + p.email.replace(/'/g, '\\\\\\'') + '\\')" style="cursor:pointer" title="Pass control to ' + escapeHtml(nick) + '"' : '';
+        return '<div class="p-item' + itemCls + '"' + click + '><span class="presence-dot ' + dotCls + '"></span><span>' + escapeHtml(nick) + meTag + afkTag + (clickable ? ' <span class="muted" style="font-size:0.78rem;font-style:normal">· tap to pass control</span>' : '') + '</span></div>';
       }
       function renderParticipants(s) {
         const list = document.getElementById('p-list');
         if (!list) return;
         const ownerPresence = s.ownerPresence || null;
-        const ownerEntry = { email: OWNER_EMAIL, presence: ownerPresence };
+        const me = (s.participants || []).find(p => p.email === MY_EMAIL);
+        const viewerIsController = !!(me && me.canControl);
         const ownerHtml = '<div class="p-item' + (ownerPresence === 'afk' ? ' afk' : '') + '">'
           + '<span class="presence-dot ' + (ownerPresence === 'afk' ? 'afk' : ownerPresence === 'connected' ? 'online' : '') + '"></span>'
           + '<span>' + escapeHtml(OWNER_NICK) + (MY_EMAIL === OWNER_EMAIL ? ' <span class="muted" style="font-size:0.8rem;font-style:normal">(you)</span>' : '')
@@ -583,12 +588,18 @@ function renderVisitorPage(req) {
         const controllers = present.filter(p => p.canControl);
         const voyeurs = present.filter(p => !p.canControl);
         let out = '<div class="p-section-title">Host</div>' + ownerHtml;
-        if (controllers.length) out += '<div class="p-section-title">Controllers</div>' + controllers.map(p => _partRow(p, p.email === MY_EMAIL)).join('');
-        if (voyeurs.length)     out += '<div class="p-section-title">Voyeurs</div>'     + voyeurs.map(p => _partRow(p, p.email === MY_EMAIL)).join('');
+        if (controllers.length) out += '<div class="p-section-title">Controllers</div>' + controllers.map(p => _partRow(p, p.email === MY_EMAIL, viewerIsController)).join('');
+        if (voyeurs.length)     out += '<div class="p-section-title">Voyeurs</div>'     + voyeurs.map(p => _partRow(p, p.email === MY_EMAIL, viewerIsController)).join('');
         if (!controllers.length && !voyeurs.length) {
           out += '<p class="muted" style="font-size:0.9rem;margin:8px 0 0">No other visitors connected.</p>';
         }
         list.innerHTML = out;
+      }
+      async function vPassControl(targetEmail) {
+        const nick = _nickFor(targetEmail);
+        if (!confirm('Pass control to ' + nick + '? You will become a voyeur; they get control with video disabled.')) return;
+        const r = await fetch('/api/visitor/pass-control', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ to: targetEmail }) });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'failed'); }
       }
       function vActionHelp(id) {
         const a = ACTIONS_INFO[id];
@@ -601,12 +612,16 @@ function renderVisitorPage(req) {
         if (e && e.target && e.target.id !== 'help-modal-bg' && !e.target.classList.contains('help-close')) return;
         document.getElementById('help-modal-bg').classList.remove('open');
       }
-      // Show age gate on a live session unless already confirmed this browser session.
-      if (!sessionStorage.getItem('pd_age_ok')) {
+      // Show age gate every time the owner starts a NEW session. The accept
+      // flag is keyed by the session's startedAt so a fresh session forces a
+      // fresh consent — previously the flag was global and persisted for the
+      // whole browser tab, so visitors only saw the gate once.
+      const __AGE_KEY = 'pd_age_ok_' + (${JSON.stringify(state.startedAt || '')} || '_init');
+      if (!sessionStorage.getItem(__AGE_KEY)) {
         document.getElementById('age-gate').style.display = 'flex';
       }
       function vAgeConfirm() {
-        sessionStorage.setItem('pd_age_ok', '1');
+        sessionStorage.setItem(__AGE_KEY, '1');
         document.getElementById('age-gate').style.display = 'none';
       }
       function vAgeDecline() {
@@ -658,7 +673,11 @@ function renderVisitorPage(req) {
       }
       function removeRemoteTile(email) {
         const tile = document.getElementById('rt-' + cssId(email));
-        if (tile) tile.remove();
+        if (tile) {
+          const v = tile.querySelector('video');
+          if (v) { try { v.srcObject = null; } catch {} }
+          tile.remove();
+        }
       }
       function escapeHtml(s) { return String(s||'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
       let myBroadcastStream = null;
@@ -753,7 +772,10 @@ function renderVisitorPage(req) {
       function applyBroadcastCard(s) {
         // Show/hide the local placeholder tile based on broadcast permission.
         const myP = (s.participants || []).find(p => p.email === MY_EMAIL);
-        const allowed = CAN_CONTROL && s?.ownerCamera?.allowControllerBroadcast && !!(myP && myP.canBroadcast);
+        // Mirror the server-side gate: must be the active controller (canControl),
+        // global must be on, and canBroadcast must be set. canControl can flip
+        // mid-session (sole-controller reassignment) so we re-read from state.
+        const allowed = !!(myP && myP.canControl) && !!s?.ownerCamera?.allowControllerBroadcast && !!(myP && myP.canBroadcast);
         if (!allowed) {
           // Permission revoked mid-session — drop any active broadcast.
           if (myBroadcastStream) {
@@ -1007,6 +1029,17 @@ function renderVisitorPage(req) {
             // for any other direction (e.g. owner's still-active stream).
             removeRemoteTile(m.email);
             if (window.__rtc) window.__rtc.onSignalingMsg(m);
+          } else if (m.type === 'force-unbroadcast') {
+            // Server revoked broadcast permission (owner toggled global off,
+            // unchecked canBroadcast/canControl, etc). Tear down our publish.
+            if (myBroadcastStream) {
+              if (window.__rtc) window.__rtc.unpublish();
+              myBroadcastStream.getTracks().forEach(t => t.stop());
+              myBroadcastStream = null;
+              removeLocalBroadcastTile();
+            }
+            removeLocalPlaceholder();
+            alert('Your broadcast was stopped: ' + (m.reason || 'permission revoked'));
           } else if (m.type === 'overlay') {
             renderOverlay(m);
           } else {
@@ -1086,6 +1119,42 @@ router.post('/api/visitor/pump-off', (req, res) => {
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+router.post('/api/visitor/pass-control', (req, res) => {
+  // Current controller hands their role to a fellow visitor. Server-enforced:
+  // requester must currently have canControl; target must be a session
+  // participant. The new controller starts with canBroadcast=false so the
+  // V tickbox effectively resets.
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'unauthenticated' });
+  const state = session.getState();
+  if (!state.active) return res.status(400).json({ error: 'no active session' });
+  const me = (state.participants || []).find(p => p.email === email);
+  if (!me || !me.canControl) return res.status(403).json({ error: 'only the current controller can hand off' });
+  const targetEmail = String(req.body?.to || '').trim().toLowerCase();
+  if (!targetEmail || targetEmail === email) return res.status(400).json({ error: 'invalid target' });
+  const target = (state.participants || []).find(p => p.email === targetEmail);
+  if (!target) return res.status(404).json({ error: 'target not in session' });
+  try {
+    const profile = session.getProfile(state.sessionProfileId);
+    const next = profile.allowedParticipants.map(p => {
+      if (p.email === email)        return { ...p, canControl: false };
+      if (p.email === targetEmail)  return { ...p, canControl: true, canBroadcast: false };
+      return p;
+    });
+    session.updateProfile(state.sessionProfileId, { allowedParticipants: next });
+    // Keep the live session participants in sync too.
+    try { session.updateParticipantFlags(email,       { canControl: false }); } catch {}
+    try { session.updateParticipantFlags(targetEmail, { canControl: true, canBroadcast: false }); } catch {}
+    require('../services/event-bus').emitState(session.getState());
+    const meAcct  = (config.load().accounts || []).find(a => a.email === email);
+    const tgtAcct = (config.load().accounts || []).find(a => a.email === targetEmail);
+    const meNick  = meAcct?.nickname  || email.split('@')[0];
+    const tgtNick = tgtAcct?.nickname || targetEmail.split('@')[0];
+    chat.system(`${meNick} passed control to ${tgtNick}`);
+    res.json({ ok: true });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 router.post('/api/visitor/pump-on', async (req, res) => {
   const ctx = _visitorCtx(req, res); if (!ctx) return;
   try {
@@ -1159,13 +1228,6 @@ router.post('/api/visitor/minigame/prize-wheel', async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
-router.post('/api/visitor/minigame/prize-wheel/spin', (req, res) => {
-  const ctx = _visitorCtx(req, res); if (!ctx) return;
-  try {
-    minigames.confirmPrizeSpin({ spinToken: req.body?.spinToken, byEmail: ctx.email });
-    res.json({ ok: true });
-  } catch (e) { res.status(400).json({ error: e.message }); }
-});
 
 router.post('/api/visitor/cycle', async (req, res) => {
   const ctx = _visitorCtx(req, res); if (!ctx) return;

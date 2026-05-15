@@ -10,15 +10,17 @@ const TEMPLATES_FILE = path.join(DATA_DIR, 'templates.json');
 
 const FACTORY_PROFILE_ID = 'factory-default';
 
+// Shipped defaults — the 18 standard action templates (Slow Stream, Pulse, Sip,
+// Soft Ramp, Tease, Slow Drip, Steady Push, Throb, Bounce, Sustain, Long Push,
+// Hammer, Hold, Rapid Fire, Burst, Inferno, Overdrive, Saturate) and the four
+// escalating-intensity wheel templates (Easy Mode, Warm Up, Heat Up, Mercy is
+// Dead). Personal session profiles, trigger templates, and pump-template
+// profiles like "Basic Bloating" are intentionally NOT shipped — they're each
+// owner's own taste and stay in their gitignored data/ folder.
+const _DEFAULTS = require('./templates-defaults.json');
 const SEED = {
-  actionTemplates: [
-    { id: 'seed-slow-stream', name: 'Slow Stream', steps: [{ type: 'on', durationMs: 10000 }] },
-    {
-      id: 'seed-pulse', name: 'Pulse',
-      steps: [{ type: 'repeat', times: 10, steps: [{ type: 'on', durationMs: 2000 }, { type: 'off', durationMs: 1000 }] }]
-    },
-  ],
-  wheelTemplates: [],
+  actionTemplates: JSON.parse(JSON.stringify(_DEFAULTS.actionTemplates)),
+  wheelTemplates:  JSON.parse(JSON.stringify(_DEFAULTS.wheelTemplates)),
   templateProfiles: [
     {
       id: FACTORY_PROFILE_ID,
@@ -109,13 +111,38 @@ function listActions() {
   return load().actionTemplates;
 }
 
-function createAction({ name, description, steps }) {
+// Action templates now come in two modes:
+//   * 'standard' — the historical shape; runs a sequence of on/off/repeat
+//                  device steps via action-engine.
+//   * 'trigger'  — fires a Trigger Action or Trigger Action Group instead;
+//                  steps are ignored. The trigger target is validated lazily
+//                  against triggers-service so cross-checks work without
+//                  hard-importing that module here.
+function _normalizeTriggerTarget(t) {
+  if (!t || typeof t !== 'object') throw new Error('triggerTarget required');
+  if (t.kind !== 'action' && t.kind !== 'group') throw new Error('triggerTarget.kind must be action or group');
+  if (typeof t.id !== 'string' || !t.id) throw new Error('triggerTarget.id required');
+  const triggers = require('./triggers-service');
+  if (t.kind === 'action') triggers.getAction(t.id);    // throws if missing
+  else                     triggers.getGroup(t.id);
+  return { kind: t.kind, id: t.id };
+}
+
+function createAction({ name, description, mode, steps, triggerTarget }) {
   name = (name || '').trim();
   if (!name) throw new Error('name required');
-  validateSteps(steps);
   const data = load();
   if (data.actionTemplates.some(a => a.name === name)) throw new Error('action template with this name already exists');
-  const action = { id: randomUUID(), name, description: (description || '').toString().trim(), steps: normalizeSteps(steps) };
+  const action = { id: randomUUID(), name, description: (description || '').toString().trim() };
+  if (mode === 'trigger') {
+    action.mode = 'trigger';
+    action.triggerTarget = _normalizeTriggerTarget(triggerTarget);
+    action.steps = [];
+  } else {
+    action.mode = 'standard';
+    validateSteps(steps);
+    action.steps = normalizeSteps(steps);
+  }
   data.actionTemplates.push(action);
   save(data);
   return action;
@@ -134,7 +161,18 @@ function updateAction(id, patch) {
   if (patch.description != null) {
     data.actionTemplates[idx].description = patch.description.toString().trim();
   }
-  if (patch.steps != null) {
+  if (patch.mode === 'trigger') {
+    data.actionTemplates[idx].mode = 'trigger';
+    data.actionTemplates[idx].triggerTarget = _normalizeTriggerTarget(patch.triggerTarget);
+    data.actionTemplates[idx].steps = [];
+  } else if (patch.mode === 'standard') {
+    data.actionTemplates[idx].mode = 'standard';
+    delete data.actionTemplates[idx].triggerTarget;
+    if (patch.steps != null) {
+      validateSteps(patch.steps);
+      data.actionTemplates[idx].steps = normalizeSteps(patch.steps);
+    }
+  } else if (patch.steps != null) {
     validateSteps(patch.steps);
     data.actionTemplates[idx].steps = normalizeSteps(patch.steps);
   }

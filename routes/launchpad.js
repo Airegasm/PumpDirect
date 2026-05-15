@@ -4,6 +4,7 @@ const templatesSvc = require('../services/templates-service');
 const devicesSvc = require('../services/devices-service');
 const actionEngine = require('../services/action-engine');
 const minigames = require('../services/minigames-service');
+const triggersSvc = require('../services/triggers-service');
 const chat = require('../services/chat-service');
 const config = require('../config');
 const { ownerLayout, escape } = require('../views/layout');
@@ -41,9 +42,12 @@ function gauge(pct) {
 router.get('/', (req, res) => {
   const sessionData = session.load();
   const profiles = sessionData.sessionProfiles;
-  const activeProfileId = req.query.profile || profiles[0].id;
-  const profile = profiles.find(p => p.id === activeProfileId) || profiles[0];
   const state = session.getState();
+  // Remember the last-used session profile across reloads: prefer ?profile=
+  // from URL, then the in-memory session.sessionProfileId (persists across
+  // session-stop until the next start), then fall back to the first profile.
+  const activeProfileId = req.query.profile || state.sessionProfileId || profiles[0].id;
+  const profile = profiles.find(p => p.id === activeProfileId) || profiles[0];
   const templates = templatesSvc.load();
   const templateProfile = templates.templateProfiles.find(p => p.id === profile.templateProfileId) || templates.templateProfiles[0];
   const actionsById = Object.fromEntries(templates.actionTemplates.map(a => [a.id, a]));
@@ -141,7 +145,7 @@ router.get('/', (req, res) => {
           ? '<span class="pill warn">factory — cannot rename/delete</span>'
           : `<button onclick="lpRenameProfile()">Rename</button> <button onclick="lpDeleteProfile()">Delete</button>`}
       </p>
-      <p class="muted">Template profile: <strong>${escape(templateProfile?.name || '?')}</strong></p>
+      <p class="muted">Template profile: <strong>${escape(templateProfile?.name || '?')}</strong> · Trigger profile: <strong>${escape((profile.triggerTemplateId && (triggersSvc.listTemplates().find(t => t.id === profile.triggerTemplateId)?.name)) || '(none)')}</strong></p>
     </div>`}
 
     <div id="session-stage">
@@ -164,6 +168,10 @@ router.get('/', (req, res) => {
                <button onclick="lpTogglePause()" style="background:${state.paused ? '#2a6df4' : '#7a8597'};min-width:140px">${state.paused ? 'Exit Standby' : 'Enter Standby'}</button>`
             : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>`}
         </p>
+        ${state.active && profile.customEndButton?.enabled && profile.customEndButton?.target ? `
+          <p style="margin-top:8px">
+            <button onclick="lpCustomEnd()" style="background:#7b3fd6;color:#fff;font-weight:700;min-width:180px">${escape(profile.customEndButton.text || 'Custom End')}</button>
+          </p>` : ''}
         ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin-top:6px">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
       </div>
       <div class="card milestone-pane">
@@ -185,13 +193,15 @@ router.get('/', (req, res) => {
       <div class="cam-slot" id="cam-owner-slot">
         <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">Local cam off</div>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-          <button id="btn-cam" onclick="lpToggleCam()">${cfg.owner?.camera?.mode === 'live' ? 'Stop camera' : 'Start camera'}</button>
+          <button id="btn-cam" onclick="lpToggleCam()">Start camera</button>
           <button id="btn-vid" onclick="lpToggleVideo()" disabled>Mute video</button>
           <button id="btn-aud" onclick="lpToggleAudio()" disabled>Mute audio</button>
         </div>
       </div>
+      <div id="trigger-fx-stage"></div>
     </div>
     <div id="overlay-stage"></div>
+    <div id="countdown-stage"></div>
     </div><!-- /session-stage -->
 
     <div class="chat-row">
@@ -258,7 +268,6 @@ router.get('/', (req, res) => {
       // Globals consumed by views/overlay.js for Spin-button visibility + the
       // POST endpoint when the trigger user confirms the spin.
       window.__MY_EMAIL = ${JSON.stringify(cfg.cloudflare?.ownerEmail || 'owner@local')};
-      window.__SPIN_ENDPOINT = '/api/minigame/prize-wheel/spin';
       // Where the text-overlay stage gets hung. On Launchpad it's the owner's
       // own local cam tile — the same element that visitors see streamed.
       window.__textOverlayTarget = () => document.getElementById('local-tile');
@@ -437,23 +446,49 @@ router.get('/', (req, res) => {
         Promise.all([
           fetch('/api/launchpad/profiles/' + PROFILE_ID).then(r => r.json()),
           fetch('/api/triggers/templates').then(r => r.json()).catch(() => ({ templates: [] })),
-        ]).then(([d, trigData]) => {
+          fetch('/api/triggers/actions').then(r => r.json()).catch(() => ({ actions: [] })),
+          fetch('/api/triggers/groups').then(r => r.json()).catch(() => ({ groups: [] })),
+        ]).then(([d, trigData, taData, tgData]) => {
           const p = d.profile;
           const tplOptions = TEMPLATE_OPTIONS.map(o => '<option value="' + o.id + '"' + (o.id === p.templateProfileId ? ' selected' : '') + '>' + o.name + '</option>').join('');
           const triggerOptions = '<option value=""' + (!p.triggerTemplateId ? ' selected' : '') + '>(none)</option>'
             + (trigData.templates || []).map(t => '<option value="' + t.id + '"' + (t.id === p.triggerTemplateId ? ' selected' : '') + '>' + t.name + '</option>').join('');
+          const ceb = p.customEndButton || { enabled: false, text: '', target: null };
+          const cebTargetOpts = '<optgroup label="Trigger Actions">'
+            + (taData.actions || []).map(a => '<option value="action:' + a.id + '"' + (ceb.target?.kind === 'action' && ceb.target?.id === a.id ? ' selected' : '') + '>🎯 ' + a.name + '</option>').join('')
+            + '</optgroup><optgroup label="Trigger Action Groups">'
+            + (tgData.groups || []).map(g => '<option value="group:' + g.id + '"' + (ceb.target?.kind === 'group' && ceb.target?.id === g.id ? ' selected' : '') + '>📦 ' + g.name + '</option>').join('')
+            + '</optgroup>';
           modalOpen('Settings — ' + p.name, ''
             + '<p><label>Pump template <select id="m-tpl">' + tplOptions + '</select></label></p>'
             + '<p><label>Trigger template <select id="m-trig">' + triggerOptions + '</select></label></p>'
             + '<p><label><input type="checkbox" id="m-chat"' + (p.settings.chatroomEnabled ? ' checked' : '') + '> Enable chatroom</label></p>'
-            + '<p><label><input type="checkbox" id="m-d100"' + (p.settings.disableControlAt100 ? ' checked' : '') + '> Disable device control at 100% capacity</label></p>',
+            + '<p><label><input type="checkbox" id="m-d100"' + (p.settings.disableControlAt100 ? ' checked' : '') + '> Disable device control at 100% capacity</label></p>'
+            + '<p><label><input type="checkbox" id="m-ceb-en"' + (ceb.enabled ? ' checked' : '') + ' onchange="document.getElementById(\\'m-ceb-rows\\').style.display = this.checked ? \\'block\\' : \\'none\\'"> Enable Custom Session End Button</label></p>'
+            + '<div id="m-ceb-rows" style="display:' + (ceb.enabled ? 'block' : 'none') + ';margin-left:22px;padding-left:10px;border-left:2px solid var(--border)">'
+            +   '<p><label>Button Text <input type="text" id="m-ceb-text" value="' + (ceb.text || '').replace(/"/g, '&quot;') + '" placeholder="e.g. Burst &amp; Wrap" style="width:100%"></label></p>'
+            +   '<p><label>Trigger or Group <select id="m-ceb-target" style="min-width:280px">' + cebTargetOpts + '</select></label></p>'
+            +   '<p class="muted" style="font-size:0.85rem;margin:4px 0 0">Appears below the Stop / E-STOP / Standby cluster on Launchpad. Fires the chosen trigger sequence — include an <code>end-session</code> sub-action in it if you want it to also end the session.</p>'
+            + '</div>',
             async () => {
+              const cebEnabled = document.getElementById('m-ceb-en').checked;
+              let cebTarget = null;
+              if (cebEnabled) {
+                const t = document.getElementById('m-ceb-target').value || '';
+                const [kind, id] = t.split(':');
+                if (id) cebTarget = { kind, id };
+              }
               const body = {
                 templateProfileId: document.getElementById('m-tpl').value,
                 triggerTemplateId: document.getElementById('m-trig').value || null,
                 settings: {
                   chatroomEnabled: document.getElementById('m-chat').checked,
                   disableControlAt100: document.getElementById('m-d100').checked,
+                },
+                customEndButton: {
+                  enabled: cebEnabled,
+                  text: document.getElementById('m-ceb-text').value || '',
+                  target: cebTarget,
                 },
               };
               const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID, { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
@@ -505,6 +540,12 @@ router.get('/', (req, res) => {
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
         location.reload();
+      }
+      async function lpCustomEnd() {
+        if (!confirm('Fire the custom end-session button?')) return;
+        const r = await fetch('/api/launchpad/session/custom-end', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
       }
       async function lpFireAction(actionId) {
         const r = await fetch('/api/launchpad/session/fire-action', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ actionTemplateId: actionId }) });
@@ -592,14 +633,19 @@ router.get('/', (req, res) => {
         log.scrollTop = log.scrollHeight;
       }
       function escapeHtml(s) { return String(s||'').replace(/[<>&"']/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
-      let wasActive = null;
+      // Owner-cam STARTING is manual only. Auto-STOP fires only when the
+      // mode TRANSITIONS into 'off' from a different value — not on every
+      // state event that happens to carry mode='off'. Without the transition
+      // check, a stale persisted 'off' (set by a previous turn-off-host-cam)
+      // would kill the local stream the moment any state event arrived.
+      let __lastCamMode;
       function maybeAutoToggleCam(s) {
-        if (OWNER_CAM_MODE !== 'live') return;
-        const active = !!s.active;
-        if (wasActive === active) return;
-        if (active && !localStream) lpStartCam();
-        else if (!active && localStream) lpStopCam();
-        wasActive = active;
+        const mode = s?.ownerCamera?.mode;
+        if (__lastCamMode === undefined) { __lastCamMode = mode; return; }
+        if (__lastCamMode !== 'off' && mode === 'off' && localStream) {
+          lpStopCam();
+        }
+        __lastCamMode = mode;
       }
       let __stepState = null, __repeatState = null, __pumpOnState = false;
       function renderPumpLine() {
@@ -661,6 +707,15 @@ router.get('/', (req, res) => {
       }
       function applyState(s) {
         window.__lastState = s;
+        // Session active-toggle: reload so the server-rendered controls
+        // (Stop/E-STOP/Standby ↔ Start Session) refresh to the right shape.
+        // Same model the visitor uses for its idle/active layout swap.
+        const nowActive = !!s.active;
+        if (window.__lpActive !== undefined && window.__lpActive !== nowActive) {
+          setTimeout(() => location.reload(), 250);
+          return;
+        }
+        window.__lpActive = nowActive;
         applyStandby(s);
         maybeAutoToggleCam(s);
         renderMilestonePane(s);
@@ -740,6 +795,9 @@ router.get('/', (req, res) => {
         renderTextOverlays(window.__lastState);
       }
       async function lpStartCam() {
+        // Diagnostic: nothing should call this except the Start camera button.
+        // If you see this fire from anywhere else, the stack tells you who.
+        console.warn('[lpStartCam] called — stack:', new Error().stack);
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           flash('Browser has no getUserMedia. Use Chrome/Firefox/Edge over http://localhost or https://.', 'bad');
           return;
@@ -775,17 +833,25 @@ router.get('/', (req, res) => {
           flash('camera failed: ' + e.name + ': ' + e.message + hint, 'bad');
         }
       }
-      function lpStopCam() {
+      async function lpStopCam() {
+        // Tell every peer we're done BEFORE pulling the rug — the visitor's
+        // broadcast-state:false handler removes the owner's tile immediately,
+        // and an unpublish() renegotiation lands the empty-sender SDP on each
+        // PC so the video element's track ends cleanly (no lingering last
+        // frame). tearDownAll() used to be called here, which closed the PCs
+        // synchronously on this side — the remote side's PC stays in
+        // 'connected' long enough to keep showing the last decoded frame,
+        // which is exactly what visitors were reporting.
+        if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: false }));
+        if (window.__rtc && window.__rtc.unpublish) {
+          try { await window.__rtc.unpublish(); } catch {}
+        }
         if (localStream) localStream.getTracks().forEach(t => t.stop());
         localStream = null;
         resetLocalTile();
         document.getElementById('btn-cam').textContent = 'Start camera';
         document.getElementById('btn-vid').disabled = true;
         document.getElementById('btn-aud').disabled = true;
-        if (window.__rtc) {
-          wsSig?.send(JSON.stringify({ type: 'broadcast-state', broadcasting: false }));
-          window.__rtc.tearDownAll();
-        }
       }
       function lpToggleCam() { localStream ? lpStopCam() : lpStartCam(); }
       function lpToggleVideo() {
@@ -840,7 +906,13 @@ router.get('/', (req, res) => {
       }
       function removeRemoteTile(email) {
         const tile = document.getElementById('remote-' + cssId(email));
-        if (tile) tile.remove();
+        if (tile) {
+          // Null the srcObject before detaching so the browser doesn't keep
+          // showing the last decoded frame in any lingering reference.
+          const v = tile.querySelector('video');
+          if (v) { try { v.srcObject = null; } catch {} }
+          tile.remove();
+        }
       }
       function cssId(s) { return String(s).replace(/[^a-z0-9_-]/gi, '_'); }
 
@@ -1063,7 +1135,9 @@ router.post('/api/launchpad/session/stop', (_req, res) => {
 });
 router.post('/api/launchpad/session/estop', (_req, res) => {
   try {
-    actionEngine.abort('E-STOP — pump cut, capacity frozen');
+    // Pass null reason so abort() doesn't chat-narrate; session-control button
+    // presses shouldn't pollute the chat with system messages.
+    actionEngine.abort(null);
     const state = session.emergencyStop();
     res.json({ state });
   } catch (e) { res.status(400).json({ error: e.message }); }
@@ -1071,10 +1145,29 @@ router.post('/api/launchpad/session/estop', (_req, res) => {
 router.post('/api/launchpad/session/pause', (_req, res) => {
   try {
     const wasPaused = session.getState().paused;
-    if (!wasPaused) actionEngine.abort('entering standby');
+    if (!wasPaused) actionEngine.abort(null);
     const state = session.setPaused(!wasPaused);
-    chat.system(state.paused ? 'Entered standby' : 'Standby exited — session is live');
     res.json({ state });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.post('/api/launchpad/session/custom-end', async (_req, res) => {
+  try {
+    const s = session.getState();
+    if (!s.active) throw new Error('no active session');
+    const profile = session.getProfile(s.sessionProfileId);
+    const ceb = profile.customEndButton;
+    if (!ceb?.enabled || !ceb.target?.id) throw new Error('custom end button not configured');
+    // Preempt anything running on the gauge, then fire the trigger target.
+    // The target's contents decide whether the session also ends (via the
+    // end-session sub-action). Pass null reason so abort() doesn't chat.
+    actionEngine.abort(null);
+    const triggerRuntime = require('../services/trigger-runtime');
+    logger.info(`custom-end button: firing ${ceb.target.kind}:${ceb.target.id.slice(0,8)}…`);
+    // Fire-and-forget; the target may include long waits or end-session itself.
+    Promise.resolve(triggerRuntime.runActionTarget(ceb.target, new AbortController().signal))
+      .catch(e => logger.error('custom-end target run failed: ' + (e?.message || e)));
+    res.json({ ok: true });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
@@ -1094,8 +1187,10 @@ router.post('/api/launchpad/session/capacity', (req, res) => {
     if (!session.getState().active) throw new Error('no active session');
     const v = parseFloat(req.body?.value);
     if (!Number.isFinite(v) || v < 0) throw new Error('value must be a non-negative number');
-    session._setLive({ capacity: v });
-    require('../services/event-bus').emitState(session.getState());
+    // Route through action-engine so its internal live.capacity (the base
+    // for the capacity-tick loop) stays in sync — otherwise the next pump
+    // tick would re-overwrite session.capacity with the stale internal value.
+    actionEngine.setCapacity(v);
     chat.system(`Capacity manually set to ${Math.round(v)}%`);
     res.json({ ok: true, capacity: v });
   } catch (e) { res.status(400).json({ error: e.message }); }
