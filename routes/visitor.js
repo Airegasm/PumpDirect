@@ -125,8 +125,10 @@ function renderVisitorPage(req) {
     .chat-pane .chat-input-row { margin-top: 10px; display: flex; gap: 8px; }
     .chat-pane .chat-input-row input { flex:1; min-height:48px; padding:12px 14px; background:#0a0c10; color:#e8e8e8; border:1px solid #2a2f3a; border-radius:10px; font-size:1rem; font-family:inherit; }
     .chat-pane .chat-input-row button { min-height:48px; padding:0 22px; background:#2a6df4; color:#fff; border:0; border-radius:10px; font-size:1rem; cursor:pointer; }
-    .participants-pane .p-list { display: flex; flex-direction: column; gap: 6px; max-height: 56vh; overflow-y: auto; }
-    .participants-pane .p-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background:#0a0c10; border:1px solid #2a2f3a; border-radius:6px; font-size: 0.95rem; }
+    .participants-pane .p-list { display: flex; flex-direction: column; gap: 4px; max-height: 56vh; overflow-y: auto; }
+    .participants-pane .p-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background:#0a0c10; border:1px solid #2a2f3a; border-radius:6px; font-size: 0.95rem; }
+    .participants-pane .p-section-title { font-size: 0.78rem; color: #7a8597; text-transform: uppercase; letter-spacing: 0.08em; margin: 10px 0 4px; font-weight: 700; }
+    .participants-pane .p-section-title:first-child { margin-top: 0; }
     .presence-dot { width: 8px; height: 8px; border-radius: 50%; background:#7a8597; flex-shrink:0; }
     @media (max-width: 760px) {
       .top-row { grid-template-columns: 1fr; }
@@ -206,17 +208,24 @@ function renderVisitorPage(req) {
         : '<p class="muted" style="color:#7a8597">No actions available at this capacity.</p>';
 
   // Participant list — live during session, allowlist preview when idle.
+  // Grouped into Host (owner) / Controllers (canControl) / Voyeurs (everyone else).
   const ownerEmailCfg = cfg.cloudflare?.ownerEmail || '';
-  const partList = (state.active ? (state.participants || []) : (profile?.allowedParticipants || []))
-    .map(p => {
-      const nick = (cfg.accounts || []).find(a => a.email === p.email)?.nickname || (p.email.split('@')[0]);
-      const isOwner = p.email === ownerEmailCfg;
-      const isMe = p.email === email;
-      return `<div class="p-item">
-        <span class="presence-dot"></span>
-        <span>${escapeHtml(nick)}${isOwner ? ' <span class="pill ok" style="font-size:0.7rem;padding:1px 6px">owner</span>' : ''}${isMe ? ' <span class="muted" style="font-size:0.8rem">(you)</span>' : ''}</span>
-      </div>`;
-    }).join('');
+  const partsRaw = state.active ? (state.participants || []) : (profile?.allowedParticipants || []);
+  const ownerNick = (cfg.accounts || []).find(a => a.email === ownerEmailCfg)?.nickname || (ownerEmailCfg ? ownerEmailCfg.split('@')[0] : 'owner');
+  const formatRow = (p) => {
+    const nick = (cfg.accounts || []).find(a => a.email === p.email)?.nickname || (p.email.split('@')[0]);
+    const isMe = p.email === email;
+    return `<div class="p-item"><span class="presence-dot"></span><span>${escapeHtml(nick)}${isMe ? ' <span class="muted" style="font-size:0.8rem">(you)</span>' : ''}</span></div>`;
+  };
+  const hostRow = `<div class="p-item"><span class="presence-dot"></span><span>${escapeHtml(ownerNick)}${email === ownerEmailCfg ? ' <span class="muted" style="font-size:0.8rem">(you)</span>' : ''}</span></div>`;
+  const others = partsRaw.filter(p => p.email !== ownerEmailCfg);
+  const controllers = others.filter(p => p.canControl);
+  const voyeurs = others.filter(p => !p.canControl);
+  const partList = [
+    `<div class="p-section-title">Host</div>${hostRow}`,
+    controllers.length ? `<div class="p-section-title">Controllers</div>${controllers.map(formatRow).join('')}` : '',
+    voyeurs.length ? `<div class="p-section-title">Voyeurs</div>${voyeurs.map(formatRow).join('')}` : '',
+  ].filter(Boolean).join('');
 
   return `<!doctype html><html lang="en"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
