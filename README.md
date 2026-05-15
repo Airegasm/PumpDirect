@@ -1,5 +1,7 @@
 # PumpDirect
 
+**v1.0 beta**
+
 Self-hosted session controller for smart-plug-attached pumps, designed for invited remote guests.
 Each operator runs their own instance on their own hardware — there is no central server.
 
