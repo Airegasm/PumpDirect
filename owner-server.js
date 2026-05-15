@@ -83,14 +83,17 @@ function start() {
     if (!reg.ok) { ws.close(1008, reg.reason); return; }
 
     send('hello', { email: ownerEmail, nickname: nicknameFor(ownerEmail), isOwner: true, peers: peerListWithNicks(ownerEmail) });
+    send('chat-key', { key: chat.getKeyBase64() });
     send('state', { state: enrichState() });
     send('chat-history', { messages: chat.snapshot() });
     signaling.broadcast({ type: 'peer-joined', email: ownerEmail, nickname: nicknameFor(ownerEmail), isOwner: true }, ownerEmail);
 
     const onState = () => send('state', { state: enrichState() });
     const onChat = (message) => send('chat', { message });
+    const onChatKey = (key) => send('chat-key', { key });
     bus.on('state', onState);
     bus.on('chat', onChat);
+    bus.on('chat-key', onChatKey);
 
     ws.on('message', (raw) => {
       let msg;
@@ -106,6 +109,7 @@ function start() {
     ws.on('close', () => {
       bus.off('state', onState);
       bus.off('chat', onChat);
+      bus.off('chat-key', onChatKey);
       signaling.unregister(ownerEmail, ws);
       signaling.broadcast({ type: 'peer-left', email: ownerEmail });
     });

@@ -192,18 +192,21 @@ async function fireAction({ actionTemplateId, byEmail, byNickname }) {
   chat.system(`${byNickname || 'someone'} fired ${action.name}`);
   _publish();
 
+  let wasAborted = false;
   try {
     await _runSteps(action.steps, primary, abortController.signal);
   } catch (e) {
     if (e.name !== 'AbortError') logger.error('action run failed', e.message);
+    else wasAborted = true;
   } finally {
+    wasAborted = wasAborted || !!(abortController && abortController.signal.aborted);
     abortController = null;
     _setRunning(null);
     _setStep(null);
     _setRepeat(null);
     try { await control.turnOff(primary); } catch {}
     _setPump(false);
-    chat.system(`${action.name} finished`);
+    chat.system(wasAborted ? `${action.name} aborted` : `${action.name} finished`);
     _publish();
   }
 
@@ -228,6 +231,7 @@ function resetForNewSession(welcomeMessage) {
   live.currentDisplayMessage = welcomeMessage || '';
   session._setLive && session._setLive(live);
   chat.reset();
+  chat.rotateKey();  // fresh AES key per session — old ciphertext stays undecryptable
   pumpOnSince = null;
   startCapacityLoop();
   _publish();

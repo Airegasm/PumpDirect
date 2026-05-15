@@ -88,6 +88,7 @@ function start() {
 
     const peerListWithNicks = signaling.allPeers(ownerEmail).map(p => ({ ...p, nickname: nicknameFor(p.email) }));
     send('hello', { email, nickname: nicknameFor(email), isOwner: false, peers: peerListWithNicks });
+    send('chat-key', { key: chat.getKeyBase64() });
     send('state', { state: enrichState() });
     send('chat-history', { messages: chat.snapshot() });
 
@@ -107,8 +108,10 @@ function start() {
       }
       send('chat', { message });
     };
+    const onChatKey = (key) => send('chat-key', { key });
     bus.on('state', onState);
     bus.on('chat', onChat);
+    bus.on('chat-key', onChatKey);
 
     ws.on('message', (raw) => {
       let msg;
@@ -134,7 +137,7 @@ function start() {
     });
 
     ws.on('close', () => {
-      bus.off('state', onState); bus.off('chat', onChat);
+      bus.off('state', onState); bus.off('chat', onChat); bus.off('chat-key', onChatKey);
       signaling.unregister(email, ws);
       const next = (visitorConns.get(email) || 1) - 1;
       if (next <= 0) {

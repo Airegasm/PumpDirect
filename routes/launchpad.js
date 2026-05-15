@@ -7,6 +7,7 @@ const chat = require('../services/chat-service');
 const config = require('../config');
 const { ownerLayout, escape } = require('../views/layout');
 const { rtcClientJs } = require('../views/rtc-client');
+const { chatCryptoJs } = require('../views/chat-crypto');
 const { createLogger } = require('../utils/logger');
 
 const logger = createLogger('Launchpad');
@@ -217,6 +218,7 @@ router.get('/', (req, res) => {
 
     <script>
       ${rtcClientJs({ myEmail: cfg.cloudflare?.ownerEmail || 'owner@local' })}
+      ${chatCryptoJs()}
     </script>
     <script>
       const OWNER_CAM_MODE = ${JSON.stringify(cfg.owner?.camera?.mode || 'off')};
@@ -346,17 +348,24 @@ router.get('/', (req, res) => {
         const r = await fetch('/api/launchpad/chat', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ text }) });
         if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
       }
-      function renderChatMessage(m) {
+      async function renderChatMessage(m) {
         const log = document.getElementById('chat-log');
+        if (!log) return;
+        // Decrypt text payload if needed.
+        let text = m.text || '';
+        if (m.encrypted) {
+          if (!window.__chat.ready()) { window.__chat.bufferIfNotReady(m); return; }
+          text = (await window.__chat.decrypt(m.encrypted)) || '[encrypted — key mismatch]';
+        }
         const row = document.createElement('div');
         const time = new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         if (m.type === 'system') {
-          row.innerHTML = '<span class="muted" style="font-style:italic;font-size:0.95rem">' + escapeHtml(m.text) + ' <span style="opacity:0.6">· ' + time + '</span></span>';
+          row.innerHTML = '<span class="muted" style="font-style:italic;font-size:0.95rem">' + escapeHtml(text) + ' <span style="opacity:0.6">· ' + time + '</span></span>';
         } else if (m.type === 'image' && m.image && m.image.dataUrl) {
           row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' +
             '<img src="' + m.image.dataUrl + '" alt="snapshot" style="max-width:100%;width:320px;height:auto;border-radius:8px;display:block;margin-top:6px">';
         } else {
-          row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' + escapeHtml(m.text);
+          row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' + escapeHtml(text);
         }
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
@@ -552,9 +561,13 @@ router.get('/', (req, res) => {
             onRemoteGone: removeRemoteTile,
           });
         }
-        ws.onmessage = (e) => {
+        ws.onmessage = async (e) => {
           const m = JSON.parse(e.data);
           if (m.type === 'state') applyState(m.state);
+          else if (m.type === 'chat-key') {
+            const buffered = await window.__chat.setKey(m.key);
+            if (buffered && buffered.length) buffered.forEach(renderChatMessage);
+          }
           else if (m.type === 'chat') renderChatMessage(m.message);
           else if (m.type === 'chat-history') {
             const log = document.getElementById('chat-log');

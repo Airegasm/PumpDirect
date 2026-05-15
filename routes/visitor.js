@@ -5,6 +5,7 @@ const actionEngine = require('../services/action-engine');
 const chat = require('../services/chat-service');
 const config = require('../config');
 const { rtcClientJs } = require('../views/rtc-client');
+const { chatCryptoJs } = require('../views/chat-crypto');
 const { createLogger } = require('../utils/logger');
 
 const logger = createLogger('Visitor');
@@ -294,6 +295,7 @@ function renderVisitorPage(req) {
 
     <script>
       ${rtcClientJs({ myEmail: email })}
+      ${chatCryptoJs()}
     </script>
     <script>
       const CAN_CONTROL = ${JSON.stringify(canControl)};
@@ -497,19 +499,24 @@ function renderVisitorPage(req) {
           window.__visitorActive = s.active;
         }
       }
-      function renderChat(m) {
+      async function renderChat(m) {
         const log = document.getElementById('chat-log');
         if (!log) return;
+        let text = m.text || '';
+        if (m.encrypted) {
+          if (!window.__chat.ready()) { window.__chat.bufferIfNotReady(m); return; }
+          text = (await window.__chat.decrypt(m.encrypted)) || '[encrypted — key mismatch]';
+        }
         const row = document.createElement('div');
         row.className = 'chat-row' + (m.type === 'system' ? ' system' : '');
         const time = new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         if (m.type === 'system') {
-          row.innerHTML = escapeHtml(m.text) + ' <span style="opacity:0.6">· ' + time + '</span>';
+          row.innerHTML = escapeHtml(text) + ' <span style="opacity:0.6">· ' + time + '</span>';
         } else if (m.type === 'image' && m.image && m.image.dataUrl) {
           row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' +
             '<img src="' + m.image.dataUrl + '" alt="snapshot" style="max-width:100%;width:280px;height:auto;border-radius:8px;display:block;margin-top:6px">';
         } else {
-          row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' + escapeHtml(m.text);
+          row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' + escapeHtml(text);
         }
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
@@ -523,7 +530,10 @@ function renderVisitorPage(req) {
         const text = input.value.trim();
         if (!text) return;
         input.value = '';
-        const r = await fetch('/api/visitor/chat', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ text }) });
+        // E2EE: encrypt client-side so server (and CF edge) only see ciphertext.
+        const encrypted = window.__chat?.ready() ? await window.__chat.encrypt(text) : null;
+        const body = encrypted ? { encrypted } : { text };
+        const r = await fetch('/api/visitor/chat', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
       }
       function connect() {
@@ -538,9 +548,13 @@ function renderVisitorPage(req) {
             onRemoteGone: removeRemoteTile,
           });
         }
-        ws.onmessage = (e) => {
+        ws.onmessage = async (e) => {
           const m = JSON.parse(e.data);
           if (m.type === 'state') applyState(m.state);
+          else if (m.type === 'chat-key') {
+            const buffered = await window.__chat.setKey(m.key);
+            if (buffered && buffered.length) buffered.forEach(renderChat);
+          }
           else if (m.type === 'chat') renderChat(m.message);
           else if (m.type === 'chat-history') {
             const log = document.getElementById('chat-log');
@@ -572,9 +586,10 @@ router.post('/api/visitor/chat', (req, res) => {
   if (participant?.muted) return res.status(403).json({ error: 'you are muted' });
   const account = findAccount(email);
   const nickname = account?.nickname || email.split('@')[0];
+  const encrypted = typeof req.body?.encrypted === 'string' ? req.body.encrypted : null;
   const text = (req.body?.text || '').trim();
-  if (!text) return res.status(400).json({ error: 'empty message' });
-  chat.push({ fromEmail: email, fromNickname: nickname, text });
+  if (!encrypted && !text) return res.status(400).json({ error: 'empty message' });
+  chat.push({ fromEmail: email, fromNickname: nickname, text, encrypted });
   res.json({ ok: true });
 });
 
