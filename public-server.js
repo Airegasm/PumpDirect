@@ -133,6 +133,8 @@ function start() {
         const allowed = !!cfg2.owner?.camera?.allowControllerBroadcast;
         if (!allowed && msg.broadcasting) return;
         signaling.broadcast({ type: 'broadcast-state', email, broadcasting: !!msg.broadcasting }, email);
+      } else if (msg && msg.type === 'track-state') {
+        signaling.broadcast({ type: 'track-state', email, videoMuted: !!msg.videoMuted, audioMuted: !!msg.audioMuted }, email);
       }
     });
 

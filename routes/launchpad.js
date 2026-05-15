@@ -410,6 +410,22 @@ router.get('/', (req, res) => {
       setInterval(renderPumpLine, 250);
 
       let __isStandby = false;
+      const __peerTrackState = new Map(); // remote email -> { videoMuted, audioMuted }
+      function broadcastTrackState() {
+        if (!wsSig || wsSig.readyState !== 1 || !localStream) return;
+        const v = localStream.getVideoTracks()[0];
+        const a = localStream.getAudioTracks()[0];
+        wsSig.send(JSON.stringify({
+          type: 'track-state',
+          videoMuted: !!(v && v._userMuted),
+          audioMuted: !!(a && a._userMuted),
+        }));
+      }
+      function applyPeerTrackState(email, videoMuted /*, audioMuted */) {
+        __peerTrackState.set(email, { videoMuted: !!videoMuted });
+        const tile = document.getElementById('remote-' + cssId(email));
+        if (tile) tile.classList.toggle('peer-video-muted', !!videoMuted);
+      }
       function applyOutgoingTrackState() {
         if (!localStream) return;
         for (const track of localStream.getTracks()) {
@@ -497,6 +513,7 @@ router.get('/', (req, res) => {
           document.getElementById('btn-aud').disabled = !audioTrack;
           applyOutgoingTrackState();   // honour standby + any pre-existing user-mute
           if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: true }));
+          broadcastTrackState();
           if (window.__rtc) await window.__rtc.publishToAll();
         } catch (e) {
           console.error('camera failed', e);
@@ -526,6 +543,7 @@ router.get('/', (req, res) => {
         const t = localStream.getVideoTracks()[0]; if (!t) return;
         t._userMuted = !t._userMuted;
         applyOutgoingTrackState();
+        broadcastTrackState();
         document.getElementById('btn-vid').textContent = t._userMuted ? 'Unmute video' : 'Mute video';
       }
       function lpToggleAudio() {
@@ -533,6 +551,7 @@ router.get('/', (req, res) => {
         const t = localStream.getAudioTracks()[0]; if (!t) return;
         t._userMuted = !t._userMuted;
         applyOutgoingTrackState();
+        broadcastTrackState();
         document.getElementById('btn-aud').textContent = t._userMuted ? 'Unmute audio' : 'Mute audio';
       }
       function attachRemoteTile(email, stream, nickname, isOwner) {
@@ -559,6 +578,9 @@ router.get('/', (req, res) => {
         }
         tile.querySelector('.rt-label').textContent = label;
         tile.querySelector('video').srcObject = stream;
+        // re-apply any known peer mute state to the freshly-created tile
+        const ps = __peerTrackState.get(email);
+        if (ps) tile.classList.toggle('peer-video-muted', !!ps.videoMuted);
       }
       function removeRemoteTile(email) {
         const tile = document.getElementById('remote-' + cssId(email));
@@ -592,8 +614,12 @@ router.get('/', (req, res) => {
             const log = document.getElementById('chat-log');
             log.innerHTML = '';
             (m.messages || []).forEach(renderChatMessage);
-          } else if (window.__rtc) {
-            window.__rtc.onSignalingMsg(m);
+          } else if (m.type === 'track-state') {
+            applyPeerTrackState(m.email, m.videoMuted, m.audioMuted);
+          } else {
+            if (window.__rtc) window.__rtc.onSignalingMsg(m);
+            // When a new peer connects, re-send our mute state so their tile renders correctly.
+            if (m.type === 'peer-joined' && localStream) setTimeout(broadcastTrackState, 800);
           }
         };
         ws.onclose = () => { wsSig = null; setTimeout(connectWs, 1500); };

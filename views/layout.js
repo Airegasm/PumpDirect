@@ -97,14 +97,23 @@ function ownerLayout({ title, active, body }) {
   /* Standby: blacks out every cam tile in place. Visual + the publisher's
      outgoing tracks get disabled in JS so no real frames travel. */
   #session-stage { position: relative; }
-  .cam-tile.standby-blackout video { visibility: hidden; }
+  .cam-tile.standby-blackout video,
+  .cam-tile.peer-video-muted video { visibility: hidden; }
+  .cam-tile.peer-video-muted::after {
+    content: "VIDEO MUTED";
+    position: absolute; inset: 0; background: #000;
+    display: flex; align-items: center; justify-content: center;
+    color: #555; font-weight: 700; font-size: 1.1rem; letter-spacing: 0.15em; z-index: 2;
+  }
+  /* Standby supersedes a per-peer mute — both apply, standby's label wins. */
   .cam-tile.standby-blackout::after {
     content: "STANDBY";
     position: absolute; inset: 0; background: #000;
     display: flex; align-items: center; justify-content: center;
-    color: #4a3413; font-weight: 900; font-size: 1.5rem; letter-spacing: 0.2em; z-index: 2;
+    color: #4a3413; font-weight: 900; font-size: 1.5rem; letter-spacing: 0.2em; z-index: 3;
   }
-  .cam-tile.standby-blackout .rt-ctrls, .cam-tile.standby-blackout .rt-label { z-index: 3; }
+  .cam-tile.standby-blackout .rt-ctrls, .cam-tile.standby-blackout .rt-label,
+  .cam-tile.peer-video-muted .rt-ctrls, .cam-tile.peer-video-muted .rt-label { z-index: 4; }
   details summary { cursor: pointer; padding: 8px 0; font-size: 1.05rem; }
   input[type="text"], input[type="email"], input[type="password"], input[type="number"], select {
     padding: 10px 12px !important; background: #0a0c10 !important; color: #e8e8e8 !important;

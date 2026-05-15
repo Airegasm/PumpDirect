@@ -138,8 +138,10 @@ function renderVisitorPage(req) {
     #standby-overlay { display:none; position:absolute; inset:0; background: rgba(15,17,21,0.85); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); z-index: 50; align-items: center; justify-content: center; border-radius: 12px; }
     #standby-overlay.active { display: flex; }
     .standby-text { font-size: clamp(2.5rem, 12vw, 6rem); font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; color: #f0c674; text-shadow: 0 6px 40px rgba(0,0,0,0.6); text-align: center; padding: 0 20px; }
-    .cam-tile.standby-blackout video { visibility: hidden; }
-    .cam-tile.standby-blackout::after { content: "STANDBY"; position:absolute; inset:0; background:#000; display:flex; align-items:center; justify-content:center; color:#4a3413; font-weight:900; font-size:1.4rem; letter-spacing:0.2em; z-index:2; }
+    .cam-tile.standby-blackout video,
+    .cam-tile.peer-video-muted video { visibility: hidden; }
+    .cam-tile.peer-video-muted::after { content: "VIDEO MUTED"; position:absolute; inset:0; background:#000; display:flex; align-items:center; justify-content:center; color:#555; font-weight:700; font-size:1.05rem; letter-spacing:0.15em; z-index:2; }
+    .cam-tile.standby-blackout::after { content: "STANDBY"; position:absolute; inset:0; background:#000; display:flex; align-items:center; justify-content:center; color:#4a3413; font-weight:900; font-size:1.4rem; letter-spacing:0.2em; z-index:3; }
   `;
 
   if (!canConnect) {
@@ -342,6 +344,8 @@ function renderVisitorPage(req) {
         }
         tile.querySelector('.rt-label').textContent = label;
         tile.querySelector('video').srcObject = stream;
+        const ps = __peerTrackState.get(email);
+        if (ps) tile.classList.toggle('peer-video-muted', !!ps.videoMuted);
       }
       function removeRemoteTile(email) {
         const tile = document.getElementById('rt-' + cssId(email));
@@ -392,6 +396,7 @@ function renderVisitorPage(req) {
           btn.textContent = 'Stop broadcasting';
           applyMyBroadcastTrackState();  // honour current standby state
           if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: true }));
+          broadcastTrackState();
           if (window.__rtc) await window.__rtc.publishToAll();
         } catch (e) { alert('Camera failed: ' + e.message); }
       }
@@ -400,6 +405,7 @@ function renderVisitorPage(req) {
         const t = myBroadcastStream.getVideoTracks()[0]; if (!t) return;
         t._userMuted = !t._userMuted;
         applyMyBroadcastTrackState();
+        broadcastTrackState();
         document.getElementById('my-vid-btn').textContent = t._userMuted ? 'Show video' : 'Hide video';
       }
       function vMuteMyAudio() {
@@ -407,6 +413,7 @@ function renderVisitorPage(req) {
         const t = myBroadcastStream.getAudioTracks()[0]; if (!t) return;
         t._userMuted = !t._userMuted;
         applyMyBroadcastTrackState();
+        broadcastTrackState();
         document.getElementById('my-aud-btn').textContent = t._userMuted ? 'Unmute audio' : 'Mute audio';
       }
       function applyBroadcastCard(s) {
@@ -444,6 +451,22 @@ function renderVisitorPage(req) {
       setInterval(renderPumpLine, 250);
 
       let __isStandby = false;
+      const __peerTrackState = new Map();
+      function broadcastTrackState() {
+        if (!wsSig || wsSig.readyState !== 1 || !myBroadcastStream) return;
+        const v = myBroadcastStream.getVideoTracks()[0];
+        const a = myBroadcastStream.getAudioTracks()[0];
+        wsSig.send(JSON.stringify({
+          type: 'track-state',
+          videoMuted: !!(v && v._userMuted),
+          audioMuted: !!(a && a._userMuted),
+        }));
+      }
+      function applyPeerTrackState(email, videoMuted) {
+        __peerTrackState.set(email, { videoMuted: !!videoMuted });
+        const tile = document.getElementById('rt-' + cssId(email));
+        if (tile) tile.classList.toggle('peer-video-muted', !!videoMuted);
+      }
       function applyMyBroadcastTrackState() {
         if (!myBroadcastStream) return;
         for (const track of myBroadcastStream.getTracks()) {
@@ -582,8 +605,11 @@ function renderVisitorPage(req) {
           else if (m.type === 'chat-history') {
             const log = document.getElementById('chat-log');
             if (log) { log.innerHTML = ''; (m.messages || []).forEach(renderChat); }
-          } else if (window.__rtc) {
-            window.__rtc.onSignalingMsg(m);
+          } else if (m.type === 'track-state') {
+            applyPeerTrackState(m.email, m.videoMuted);
+          } else {
+            if (window.__rtc) window.__rtc.onSignalingMsg(m);
+            if (m.type === 'peer-joined' && myBroadcastStream) setTimeout(broadcastTrackState, 800);
           }
         };
         ws.onclose = () => { wsSig = null; setTimeout(connect, 1500); };

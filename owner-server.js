@@ -103,6 +103,8 @@ function start() {
         signaling.deliver(msg.toEmail, { ...msg, fromEmail: ownerEmail });
       } else if (msg && msg.type === 'broadcast-state') {
         signaling.broadcast({ type: 'broadcast-state', email: ownerEmail, broadcasting: !!msg.broadcasting }, ownerEmail);
+      } else if (msg && msg.type === 'track-state') {
+        signaling.broadcast({ type: 'track-state', email: ownerEmail, videoMuted: !!msg.videoMuted, audioMuted: !!msg.audioMuted }, ownerEmail);
       }
     });
 
