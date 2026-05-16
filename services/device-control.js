@@ -1,6 +1,7 @@
 const config = require('../config');
 const tapo = require('./tapo-service');
 const kasa = require('./kasa-service');
+const kasaKlap = require('./kasa-klap-service');
 const wyze = require('./wyze-service');
 const govee = require('./govee-service');
 const tuya = require('./tuya-service');
@@ -13,6 +14,7 @@ const logger = createLogger('DeviceControl');
 const VENDOR_INFO = {
   tapo:          { name: 'TP-Link Tapo',  credFields: ['email', 'password'],                    idFields: ['ip'] },
   kasa:          { name: 'TP-Link Kasa',  credFields: [],                                        idFields: ['ip'] },
+  'kasa-klap':   { name: 'TP-Link Kasa 1.1.x+', credFields: ['email', 'password'],               idFields: ['ip'] },
   wyze:          { name: 'Wyze',          credFields: ['email', 'password', 'keyId', 'apiKey'], idFields: ['mac', 'model'] },
   govee:         { name: 'Govee',         credFields: ['apiKey'],                                idFields: ['deviceId', 'sku'] },
   tuya:          { name: 'Tuya',          credFields: ['accessId', 'accessSecret', 'region'],   idFields: ['deviceId'] },
@@ -65,6 +67,10 @@ function applyCredsIfNeeded(vendor) {
     const { email, password } = getCreds('tapo');
     if (!email || !password) throw new Error('Tapo credentials not set — fill them in the Vendor Credentials section');
     tapo.setCredentials(email, password);
+  } else if (vendor === 'kasa-klap') {
+    const { email, password } = getCreds('kasa-klap');
+    if (!email || !password) throw new Error('Kasa 1.1.x+ credentials not set — fill them in the Vendor Credentials section');
+    kasaKlap.setCredentials(email, password);
   } else if (vendor === 'wyze') {
     if (wyze.isConfigured && wyze.isConfigured()) return;
     const c = getCreds('wyze');
@@ -100,6 +106,7 @@ async function turnOn(device) {
   switch (device.vendor) {
     case 'tapo':          return tapo.turnOn(device.ip);
     case 'kasa':          return new kasa.KasaDevice(device.ip, device.childId ? { childId: device.childId } : {}).turnOn();
+    case 'kasa-klap':     return kasaKlap.turnOn(device.ip);
     case 'wyze':          return wyze.turnOn(device.mac, device.model);
     case 'govee':         return govee.turnOn(device.deviceId, device.sku);
     case 'tuya':          return tuya.turnOn(device.deviceId);
@@ -116,6 +123,7 @@ async function turnOff(device) {
   switch (device.vendor) {
     case 'tapo':          return tapo.turnOff(device.ip);
     case 'kasa':          return new kasa.KasaDevice(device.ip, device.childId ? { childId: device.childId } : {}).turnOff();
+    case 'kasa-klap':     return kasaKlap.turnOff(device.ip);
     case 'wyze':          return wyze.turnOff(device.mac, device.model);
     case 'govee':         return govee.turnOff(device.deviceId, device.sku);
     case 'tuya':          return tuya.turnOff(device.deviceId);
@@ -130,6 +138,7 @@ async function getState(device) {
   switch (device.vendor) {
     case 'tapo':          return tapo.getPowerState(device.ip);
     case 'kasa':          return new kasa.KasaDevice(device.ip, device.childId ? { childId: device.childId } : {}).getState();
+    case 'kasa-klap':     return kasaKlap.getPowerState(device.ip);
     case 'wyze':          return wyze.getPowerState(device.mac);
     case 'govee':         return govee.getPowerState(device.deviceId, device.sku);
     case 'tuya':          return tuya.getPowerState(device.deviceId);

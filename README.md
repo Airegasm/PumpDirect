@@ -67,46 +67,30 @@ There's a clear separation between:
 - **Owner GUI** — bound to `127.0.0.1` only, never reachable from the internet, full setup + admin.
 - **Visitor app** — served through your Cloudflare Tunnel, gated by Cloudflare Access (email allowlist).
 
-## Architecture at a glance
+## Supported smart outlets
 
-```
-┌────────────────┐                                   ┌────────────────┐
-│   visitor      │── HTTPS (TLS) ──► Cloudflare ───► │  cloudflared   │
-│   browser      │  (chat = AES-GCM   Access edge    │  (your PC)     │
-│                │   ciphertext over  (email PIN)    │                │
-│                │   the TLS frame)                  │                │
-└────────────────┘                                   └───────┬────────┘
-                                                             │
-                                                             ▼
-                                                     ┌────────────────┐
-                                                     │ public-server  │
-                                                     │ :3000  127.0.0.1│
-                                                     └───────┬────────┘
-                                                             │
-        ┌────────────────┐    loopback only        ┌────────┴────────┐
-        │   owner        │◄──────────────────────► │ owner-server    │
-        │   browser      │    http://localhost:3001│ :3001  127.0.0.1│
-        │   (local)      │                         └────────┬────────┘
-        └────────────────┘                                  │
-                                                            ▼
-                                                  ┌──────────────────┐
-                                                  │ device-control + │
-                                                  │ action-engine +  │
-                                                  │ vendor services  │
-                                                  └────────┬─────────┘
-                                                           │
-                                                  ┌────────▼─────────┐
-                                                  │ Kasa / Tapo /    │
-                                                  │ Wyze / Govee /   │
-                                                  │ Tuya plug on LAN │
-                                                  └──────────────────┘
+PumpDirect drives the pump through a smart outlet. **For pump use, a local-network outlet is strongly recommended** — see the rate-limit warning below.
 
-Webcam media (Live / controller broadcasts) flows browser-to-browser via
-WebRTC DTLS-SRTP; the server only relays SDP/ICE.
-```
+**Local (LAN-controlled — fast, no cloud round-trip):**
 
-- **Both servers** live in one Node process, behind a single in-process `event-bus`.
-- **Python helpers** (Kasa, Wyze, Tapo) are invoked as subprocesses via the local venv — only protocols that need them.
+| Vendor | Notes |
+|---|---|
+| **TP-Link Kasa** | No account needed — discovered via local UDP broadcast. The simplest option. |
+| **TP-Link Kasa 1.1.x+ (KLAP)** | Newer Kasa firmware — needs your TP-Link account for the local handshake, but control still happens on the LAN. |
+| **TP-Link Tapo** | Local control; needs your Tapo account credentials. |
+| **Generic** | Any outlet reachable directly by IP. |
+
+**Cloud-controlled (every command round-trips through the vendor's API):**
+
+| Vendor | Notes |
+|---|---|
+| **Wyze** | Requires a Wyze account plus an API key + key ID. |
+| **Govee** | Requires a Govee API key. |
+| **Tuya** | Requires Tuya IoT Platform access ID + secret. |
+
+**Home Assistant** — optional bridge. Point PumpDirect at a running Home Assistant install (configured on the **Devices** tab) and it can drive *anything* Home Assistant controls — Zigbee, Z-Wave, Matter, Shelly, MQTT, and more — addressed by an entity ID like `switch.your_pump`. HA commands are rate-limited the same as cloud devices, since each one is a REST round-trip.
+
+> ⚠️ **Rate-limit warning — cloud-connected outlets.** Wyze, Govee, Tuya, and Home Assistant send every on/off through a cloud (or REST) API. Those APIs **throttle, delay, or temporarily block** clients that send commands too quickly — and a pump session fires rapid, repeated on/off steps. A throttled or delayed command on a *pump* is a safety problem, not just an annoyance. PumpDirect ships a built-in rate limiter (tune it on the **System** tab) that defaults to **1 command / 2 s per cloud device** versus **2 commands / 1 s for LAN devices** — but it cannot raise the vendor's ceiling, and the cloud round-trip always adds latency. **Use a local outlet (Kasa or Tapo) for the pump itself**, and keep a hardware disconnect within arm's reach regardless — see the safety warning in the Terms of Service.
 
 ## Quick start
 
@@ -229,51 +213,6 @@ In a multi-controller setup, the active controller can **tap a voyeur's name in 
 - **Vendor support**: each vendor's adapter is in `services/<vendor>-service.js`. Drop a new file + register it in `services/device-control.js`'s `VENDOR_INFO` map.
 - **Milestone "100%+" type**: regular milestones cap at 99%; mark one milestone as `is100Plus` for anything beyond.
 - **TOS**: bump `TOS_VERSION` in `views/tos.js` whenever you revise the terms — every owner is forced to re-accept on next launch.
-
-## Distributing your fork
-
-Everyone who runs `start.sh` / `start.bat` gets their own instance from scratch:
-
-- `config.json` — gitignored; never published.
-- `data/` — gitignored; per-instance `devices.json`, `templates.json`, `sessions.json`, `triggers.json`. Your session profiles, trigger templates, milestone layouts, and device list never enter the repo.
-- `.venv/`, `node_modules/` — gitignored.
-- `pumpdirect.service`, `install-service.ps1`, `bin/nssm.exe` — gitignored (generated on each host).
-
-What **does** ship as defaults (committed in `services/templates-defaults.json`):
-
-- 18 standard pump action templates with descriptions: Slow Stream, Pulse, Sip, Soft Ramp, Tease, Slow Drip, Steady Push, Throb, Bounce, Sustain, Long Push, Hammer, Hold, Rapid Fire, Burst, Inferno, Overdrive, Saturate.
-- 4 prize-wheel templates at escalating intensity: Easy Mode, Warm Up, Heat Up, Mercy is Dead.
-
-These are seeded into a fresh install's templates.json the first time the service boots. Personal pump-template profiles (the milestone layouts on the Pump Templates tab) and personal session/trigger profiles are NOT shipped — each operator builds their own.
-
-If you change your repo URL, update `views/tos.js` and `start.sh` accordingly.
-
-## Layout (high-level)
-
-```
-config.js                  Single config-file loader/saver
-server.js                  Entrypoint — starts public + owner servers
-public-server.js           Visitor side, /ws/visitor (max 5 distinct emails)
-owner-server.js            Loopback owner GUI, /ws/owner
-routes/                    Express routers per tab (launchpad, templates,
-                           devices, network, users, chat-webcam, minigames,
-                           triggers, visitor)
-services/                  Action engine, device control, signaling, chat (E2EE),
-                           minigames (dice + prize-wheel), triggers + runtime,
-                           vendors
-views/                     Shared layout + page templates (no framework)
-views/chat-crypto.js       Browser-side AES-256-GCM helper bundled into both pages
-views/overlay.js           Shared overlay renderer (dice, prize-wheel, lottie,
-                           text overlay, play-sound, session-ending countdown)
-public/assets/             Statically-served assets
-  dice/                    Lottie dice (dice-number-1.json … dice-number-6.json)
-  vendor/lottie.min.js     Self-hosted lottie-web player (≈305 KB)
-  triggers/lottie/         User-supplied Lottie JSON for trigger actions
-  triggers/sound/          User-supplied audio for play-sound
-python/, scripts/          Python helpers for Tapo / Kasa / Wyze
-utils/                     Logger, errors
-start.sh, start.bat        Cross-platform launchers
-```
 
 ## License
 

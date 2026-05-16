@@ -14,7 +14,7 @@ const logger = createLogger('Devices');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DEVICES_FILE = path.join(DATA_DIR, 'devices.json');
 
-const SUPPORTED_VENDORS = ['tapo', 'kasa', 'wyze', 'govee', 'tuya', 'homeassistant', 'generic'];
+const SUPPORTED_VENDORS = ['tapo', 'kasa', 'kasa-klap', 'wyze', 'govee', 'tuya', 'homeassistant', 'generic'];
 
 function loadAll() {
   ensureDirSync(DATA_DIR);
@@ -143,6 +143,7 @@ function add({ label, vendor, ip, mac, deviceId, sku, model, childId, entityId }
   const need = {
     tapo:          ['ip'],
     kasa:          ['ip'],
+    'kasa-klap':   ['ip'],
     wyze:          ['mac', 'model'],
     govee:         ['deviceId', 'sku'],
     tuya:          ['deviceId'],

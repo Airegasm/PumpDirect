@@ -41,6 +41,7 @@ const DEFAULTS = {
   vendors: {
     tapo:  { email: '', password: '' },
     kasa:  {},
+    'kasa-klap': { email: '', password: '' },
     wyze:  { email: '', password: '', keyId: '', apiKey: '', totpKey: '' },
     govee: { apiKey: '' },
     tuya:  { accessId: '', accessSecret: '', region: 'us' },

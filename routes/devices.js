@@ -1,6 +1,7 @@
 const express = require('express');
 const devices = require('../services/devices-service');
 const control = require('../services/device-control');
+const ha = require('../services/homeassistant-service');
 const config = require('../config');
 const { ownerLayout, escape } = require('../views/layout');
 const { createLogger } = require('../utils/logger');
@@ -17,6 +18,7 @@ function vendorIdHelp(vendor) {
   return {
     tapo: 'IP',
     kasa: 'IP',
+    'kasa-klap': 'IP',
     wyze: 'MAC + Model',
     govee: 'Device ID + SKU',
     tuya: 'Device ID',
@@ -26,7 +28,9 @@ function vendorIdHelp(vendor) {
 
 function renderVendorCredentials() {
   const cfg = config.load();
-  const sections = Object.entries(control.VENDOR_INFO).map(([key, info]) => {
+  const sections = Object.entries(control.VENDOR_INFO)
+    .filter(([key]) => key !== 'homeassistant')  // HA has its own card below
+    .map(([key, info]) => {
     const stored = (cfg.vendors && cfg.vendors[key]) || {};
     const complete = control.credsComplete(key);
     if (info.credFields.length === 0) {
@@ -62,6 +66,32 @@ function renderVendorCredentials() {
       <h3>Vendor Credentials</h3>
       <p class="muted">Fill in only the vendors you use. Stored in <code>config.json</code> on this machine; never sent to visitors.</p>
       ${sections}
+    </div>`;
+}
+
+function renderHomeAssistant() {
+  const cfg = config.load();
+  const ha_ = cfg.vendors?.homeassistant || {};
+  return `
+    <div class="card">
+      <h3>Home Assistant <span class="muted" style="font-size:0.9rem;font-weight:normal">— optional integration</span></h3>
+      <p class="muted">Connect a running Home Assistant install to control any HA-supported device (Zigbee, Z-Wave, Matter, Shelly, MQTT, …) as if it were a native vendor. Once connected, add it below with the <strong>Home Assistant</strong> vendor and an entity ID like <code>switch.your_entity</code> (or any other domain with <code>turn_on</code> / <code>turn_off</code>).</p>
+      <p>
+        <label class="muted" style="display:block;margin:6px 0">Base URL</label>
+        <input id="ha-base" type="text" placeholder="http://homeassistant.local:8123"
+               value="${escape(ha_.baseUrl || '')}"
+               style="width:60%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
+      </p>
+      <p>
+        <label class="muted" style="display:block;margin:6px 0">Long-lived access token (Profile → Security → Create Token)</label>
+        <input id="ha-token" type="password" placeholder="${ha_.token ? '•••••••• (saved)' : 'paste token'}"
+               style="width:60%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
+      </p>
+      <p>
+        <button onclick="haSave()">Save</button>
+        <button onclick="haTest()">Test connection</button>
+        <span id="ha-status" class="muted" style="margin-left:12px;font-size:0.95rem"></span>
+      </p>
     </div>`;
 }
 
@@ -145,6 +175,8 @@ router.get('/devices', (_req, res) => {
 
     ${renderVendorCredentials()}
 
+    ${renderHomeAssistant()}
+
     <div class="card">
       <h3>LAN scan</h3>
       <p class="muted">Lists devices in the local ARP cache. If yours doesn't show, ping it from the host once to populate.</p>
@@ -173,6 +205,7 @@ router.get('/devices', (_req, res) => {
       const VENDOR_FIELDS = {
         tapo:          ['ip'],
         kasa:          ['ip'],
+        'kasa-klap':   ['ip'],
         wyze:          ['mac', 'model'],
         govee:         ['deviceId', 'sku'],
         tuya:          ['deviceId'],
@@ -388,6 +421,23 @@ router.get('/devices', (_req, res) => {
         flash(vendor + ' credentials saved', 'ok');
         setTimeout(() => location.reload(), 500);
       }
+      async function haSave() {
+        const baseUrl = document.getElementById('ha-base').value.trim();
+        const tokenRaw = document.getElementById('ha-token').value;
+        const body = { baseUrl };
+        if (tokenRaw && tokenRaw !== '••••••••') body.token = tokenRaw;
+        const r = await fetch('/api/devices/ha/save', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
+        const d = await r.json();
+        document.getElementById('ha-status').textContent = (!r.ok || d.error) ? ('error: ' + (d.error || '?')) : 'saved';
+        if (r.ok && !d.error) setTimeout(() => location.reload(), 600);
+      }
+      async function haTest() {
+        const s = document.getElementById('ha-status');
+        s.textContent = 'testing…';
+        const r = await fetch('/api/devices/ha/test', { method: 'POST' });
+        const d = await r.json();
+        s.textContent = (!r.ok || d.error) ? ('error: ' + (d.error || '?')) : (d.ok ? 'ok' : 'failed');
+      }
     </script>
   `;
   res.type('html').send(ownerLayout({ title: 'Device Discovery', active: 'devices', body }));
@@ -484,6 +534,36 @@ router.patch('/api/vendors/:vendor/creds', (req, res) => {
   const updated = { ...existing, ...(req.body || {}) };
   config.save({ vendors: { [vendor]: updated } });
   res.json({ message: 'saved' });
+});
+
+router.post('/api/devices/ha/save', (req, res) => {
+  const baseUrl = (req.body?.baseUrl || '').trim();
+  const tokenIn = (req.body?.token || '').trim();
+  if (baseUrl && !/^https?:\/\//.test(baseUrl)) {
+    return res.status(400).json({ error: 'baseUrl must start with http:// or https://' });
+  }
+  const cfg = config.load();
+  const existing = cfg.vendors?.homeassistant || {};
+  const next = {
+    baseUrl: baseUrl || existing.baseUrl || '',
+    token: tokenIn || existing.token || '',
+  };
+  config.save({ vendors: { homeassistant: next } });
+  ha.setCredentials(next.baseUrl, next.token);
+  res.json({ message: 'saved' });
+});
+
+router.post('/api/devices/ha/test', async (_req, res) => {
+  const cfg = config.load();
+  const c = cfg.vendors?.homeassistant || {};
+  if (!c.baseUrl || !c.token) return res.status(400).json({ error: 'baseUrl + token required (save first)' });
+  ha.setCredentials(c.baseUrl, c.token);
+  try {
+    const ok = await ha.testConnection();
+    res.json({ ok });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 module.exports = router;
