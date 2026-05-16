@@ -1371,10 +1371,24 @@ router.patch('/api/launchpad/profiles/:id/participants/:email', (req, res) => {
     // Standard C/A/V flag path.
     const profile = session.getProfile(req.params.id);
     const prev = profile.allowedParticipants.find(p => p.email === email) || {};
-    const next = profile.allowedParticipants.map(p => p.email === email ? { ...p, ...body } : p);
+    // V (canBroadcast) is mutex — only one guest cam slot alongside the host.
+    // Granting it to one participant clears it from everyone else.
+    const grantsBroadcast = body.canBroadcast === true;
+    const next = profile.allowedParticipants.map(p => {
+      if (p.email === email) return { ...p, ...body };
+      if (grantsBroadcast && p.canBroadcast) return { ...p, canBroadcast: false };
+      return p;
+    });
     session.updateProfile(req.params.id, { allowedParticipants: next });
     if (session.getState().active && session.getState().sessionProfileId === req.params.id) {
       try { session.updateParticipantFlags(email, body); } catch {}
+      if (grantsBroadcast) {
+        for (const lp of session.getState().participants || []) {
+          if (lp.email !== email && lp.canBroadcast) {
+            try { session.updateParticipantFlags(lp.email, { canBroadcast: false }); } catch {}
+          }
+        }
+      }
       require('../services/event-bus').emitState(session.getState());
     }
     res.json({ ok: true });

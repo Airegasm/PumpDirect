@@ -1,3 +1,5 @@
+const { fetchShimJs } = require('../utils/csrf');
+
 // Bump TOS_VERSION whenever the text changes — owner is forced to re-accept on next launch.
 const TOS_VERSION = 1;
 const TOS_EFFECTIVE = 'May 2026';
@@ -92,15 +94,27 @@ function renderTosPage({ updateInfo }) {
     <button id="accept" disabled onclick="acceptTos()">I Agree</button>
   </div>
 </div>
+<script>${fetchShimJs()}</script>
 <script>
   async function acceptTos() {
     const btn = document.getElementById('accept');
     btn.disabled = true;
     btn.textContent = 'Saving…';
-    const r = await fetch('/api/owner/tos/accept', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ version: ${TOS_VERSION} }) });
-    const d = await r.json();
-    if (!r.ok || d.error) { alert(d.error || 'failed'); btn.disabled = false; btn.textContent = 'I Agree'; return; }
-    location.href = '/';
+    function reset() { btn.disabled = false; btn.textContent = 'I Agree'; }
+    try {
+      const r = await fetch('/api/owner/tos/accept', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ version: ${TOS_VERSION} }) });
+      let d = {};
+      try { d = await r.json(); } catch {}
+      if (!r.ok || d.error) {
+        alert(d.error || ('Save failed (HTTP ' + r.status + '). Check the PumpDirect terminal window for the error.'));
+        reset();
+        return;
+      }
+      location.href = '/';
+    } catch (e) {
+      alert('Could not reach PumpDirect (' + e.message + '). Make sure the app is still running in its terminal window, then try again.');
+      reset();
+    }
   }
 </script>
 </body></html>`;

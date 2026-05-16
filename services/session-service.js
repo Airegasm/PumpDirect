@@ -140,12 +140,18 @@ function updateProfile(id, patch) {
     // Mode swap cleanup: reset T flags on profile + live state, wipe token cache
     // and target state cache so the next session starts clean.
     if (prevMode !== nextMode) {
-      profile.allowedParticipants = (profile.allowedParticipants || []).map(p => ({ ...p, canTarget: false }));
+      // Swapping into dual mode also clears V (canBroadcast): mutual sessions
+      // reserve both cam slots for host + target, so no guest cam broadcasts.
+      const clearBroadcast = nextMode === 'dual-target';
+      profile.allowedParticipants = (profile.allowedParticipants || []).map(p => ({
+        ...p, canTarget: false, ...(clearBroadcast ? { canBroadcast: false } : {}),
+      }));
       if (sessionState.active && sessionState.sessionProfileId === profile.id) {
         sessionState.mode = nextMode;
         for (const lp of sessionState.participants || []) {
           lp.canTarget = false;
           lp.targetDeviceLabel = null;
+          if (clearBroadcast) lp.canBroadcast = false;
         }
         sessionState.targetState = null;
         _targetTokens.clear();

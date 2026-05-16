@@ -928,9 +928,10 @@ function renderVisitorPage(req) {
         // Show/hide the local placeholder tile based on broadcast permission.
         const myP = (s.participants || []).find(p => p.email === MY_EMAIL);
         // Mirror the server-side gate: must be the active controller (canControl),
-        // global must be on, and canBroadcast must be set. canControl can flip
+        // global must be on, canBroadcast must be set, and the session must not
+        // be dual-target (host + target take both cam slots). canControl can flip
         // mid-session (sole-controller reassignment) so we re-read from state.
-        const allowed = !!(myP && myP.canControl) && !!s?.ownerCamera?.allowControllerBroadcast && !!(myP && myP.canBroadcast);
+        const allowed = !!(myP && myP.canControl) && !!s?.ownerCamera?.allowControllerBroadcast && !!(myP && myP.canBroadcast) && s?.mode !== 'dual-target';
         if (!allowed) {
           // Permission revoked mid-session — drop any active broadcast.
           if (myBroadcastStream) {

@@ -118,6 +118,21 @@ cd PumpDirect
 start.bat           # Windows
 ```
 
+### Cloudflare account & domain — set up before step 2 below
+
+PumpDirect's tunnel wizard needs a Cloudflare account, a domain on Cloudflare, Zero Trust enabled, and an API token. Everything is free except the domain (~$10/year). One-time setup, done in your browser at <https://dash.cloudflare.com>:
+
+1. **Create the account** — sign up, then confirm the verification email.
+2. **Add a domain** — register one via **Domain Registration → Register Domain**, or add a domain you already own with **+ Add a domain** (pick the **Free** plan) and point your registrar at the two nameservers Cloudflare gives you. Wait until the domain shows **Active**.
+3. **Enable Zero Trust** — open **Zero Trust** in the dashboard sidebar, pick any team name, and choose the **Free** plan. This is the layer that gates visitor logins.
+4. **Create the API token** — **My Profile → API Tokens → Create Token → Create Custom Token**, with exactly two permissions:
+   - **Account** · **Access: Apps and Policies** · **Edit**
+   - **Zone** · **DNS** · **Read**
+
+   Create it, then copy the token — it is shown only once. You will paste it into the wizard in step 2.
+
+Free tier covers up to 50 invited guest emails.
+
 Then on first launch, in your local browser:
 
 1. Accept the **Terms of Service** splash (one-time per TOS version).

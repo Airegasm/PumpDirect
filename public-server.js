@@ -205,6 +205,9 @@ function start() {
     if (!cfg.owner?.camera?.allowControllerBroadcast) return false;
     const s = session.getState();
     if (!s.active) return false;
+    // Dual-target sessions reserve both cam slots for host + target —
+    // no guest cam broadcasts in mutual mode.
+    if (s.mode === 'dual-target') return false;
     const p = (s.participants || []).find(x => x.email === email);
     if (!p) return false;
     if (p.canConnect === false) return false;
