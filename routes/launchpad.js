@@ -1126,6 +1126,7 @@ router.get('/', (req, res) => {
 
       // ---- WebSocket ----
       let wsSig = null;
+      let wsBackoff = 0;
       function _sendVisibility() {
         if (wsSig && wsSig.readyState === 1) wsSig.send(JSON.stringify({ type: 'visibility', hidden: !!document.hidden }));
       }
@@ -1134,6 +1135,7 @@ router.get('/', (req, res) => {
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new WebSocket(proto + '://' + location.host + '/ws/owner');
         wsSig = ws;
+        ws.addEventListener('open', () => { wsBackoff = 0; });
         if (window.__rtc) {
           window.__rtc.init({
             sendSig: (obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); },
@@ -1173,7 +1175,12 @@ router.get('/', (req, res) => {
             if (m.type === 'peer-joined' && localStream) setTimeout(broadcastTrackState, 800);
           }
         };
-        ws.onclose = () => { wsSig = null; setTimeout(connectWs, 1500); };
+        ws.onclose = () => {
+          wsSig = null;
+          const delay = Math.min(30000, 500 * Math.pow(2, wsBackoff)) + Math.floor(Math.random() * 500);
+          wsBackoff = Math.min(wsBackoff + 1, 6);
+          setTimeout(connectWs, delay);
+        };
       }
       connectWs();
 

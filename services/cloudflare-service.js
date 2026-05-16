@@ -174,7 +174,7 @@ async function isAccessEnabled(token, accountId) {
   }
 }
 
-async function ensureAccessApp(token, accountId, { name, domain, sessionDuration = '24h', allowedEmails }) {
+async function ensureAccessApp(token, accountId, { name, domain, sessionDuration = '8h', allowedEmails }) {
   let app = await findAccessApp(token, accountId, domain);
   if (!app) {
     app = await cfFetch(token, `/accounts/${accountId}/access/apps`, {
@@ -207,7 +207,9 @@ async function ensureAccessApp(token, accountId, { name, domain, sessionDuration
       body: policyBody,
     });
   }
-  return { appId: app.id, domain: app.domain };
+  // app.aud is the Application AUD tag — JWT verification requires it to be
+  // saved into config alongside the team subdomain.
+  return { appId: app.id, domain: app.domain, aud: app.aud || null };
 }
 
 function downloadFile(url, dest, redirects = 5) {

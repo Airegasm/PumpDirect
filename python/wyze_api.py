@@ -6,13 +6,12 @@ Uses the wyze-sdk library
 """
 
 import sys
-import os
 import json
 
-# Add wyze-sdk to path
-WYZE_SDK_PATH = os.path.expanduser('~/Projects/wyze-sdk')
-if os.path.exists(WYZE_SDK_PATH):
-    sys.path.insert(0, WYZE_SDK_PATH)
+# Use the pip-installed wyze-sdk. Earlier versions of this file injected
+# ~/Projects/wyze-sdk onto sys.path, which is an arbitrary-code-loading
+# primitive (anything able to write to that path runs as our user on every
+# command). Don't reintroduce it — install via requirements.txt instead.
 
 try:
     from wyze_sdk import Client

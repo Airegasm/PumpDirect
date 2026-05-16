@@ -11,6 +11,7 @@ const session = require('./services/session-service');
 const chat = require('./services/chat-service');
 const signaling = require('./services/signaling-service');
 const visitorRoutes = require('./routes/visitor');
+const { verifyAccessJwt } = require('./utils/cf-access-jwt');
 
 const logger = createLogger('Public');
 
@@ -23,28 +24,95 @@ try {
 } catch {}
 function _majorOf(v) { return String(v || '').split('.')[0] || '0'; }
 
+let httpServer = null;
+let wss = null;
+let lastJwtUnconfiguredWarn = 0;
+
+function _warnJwtUnconfigured(extra = '') {
+  const now = Date.now();
+  if (now - lastJwtUnconfiguredWarn < 60_000) return;
+  lastJwtUnconfiguredWarn = now;
+  logger.warn(
+    `Cloudflare Access JWT verification is NOT enabled — trusting Cf-Access-Authenticated-User-Email header alone.` +
+    ` Configure cloudflare.teamDomain and cloudflare.accessAud (Network tab → step 6) to enable strict verification.` +
+    (extra ? ' ' + extra : '')
+  );
+}
+
+async function verifyRequest(jwt, email) {
+  const cfg = config.load();
+  const { teamDomain, accessAud } = cfg.cloudflare || {};
+  if (!teamDomain || !accessAud) {
+    _warnJwtUnconfigured();
+    return { ok: true, mode: 'header-only', email };
+  }
+  try {
+    const payload = await verifyAccessJwt(jwt, { teamDomain, audTag: accessAud });
+    const jwtEmail = (payload.email || payload.identity?.email || '').toLowerCase();
+    if (email && jwtEmail && jwtEmail !== email.toLowerCase()) {
+      return { ok: false, reason: 'header/jwt email mismatch' };
+    }
+    return { ok: true, mode: 'jwt-verified', email: jwtEmail || email, payload };
+  } catch (e) {
+    return { ok: false, reason: `jwt invalid: ${e.message}` };
+  }
+}
+
 function start() {
   const app = express();
   const PORT = parseInt(process.env.PUBLIC_PORT || process.env.PORT || '3000', 10);
   const HOST = process.env.PUBLIC_HOST || '127.0.0.1';
   const AUTH_HEADER = process.env.AUTH_HEADER || 'Cf-Access-Authenticated-User-Email';
+  const JWT_HEADER = 'cf-access-jwt-assertion';
   const TRUST_PROXY = process.env.TRUST_PROXY || 'loopback';
 
   app.set('trust proxy', TRUST_PROXY);
-  app.use(cors());
+
+  // Tight CORS: only the configured public hostname, no credentials.
+  app.use(cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, false);  // same-origin/no-origin allowed via no CORS headers
+      const cfg = config.load();
+      const allowed = cfg.cloudflare?.hostname ? `https://${cfg.cloudflare.hostname}` : null;
+      cb(null, !!(allowed && origin === allowed));
+    },
+    credentials: false,
+  }));
+
   app.use(express.json({ limit: '1mb' }));
   app.use(rateLimit({ windowMs: 60_000, max: 240, standardHeaders: true, legacyHeaders: false }));
 
-  app.use((req, _res, next) => {
+  // Per-route stricter limiter for the dangerous mutation paths.
+  const sensitiveLimiter = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
+  app.use('/api/visitor/fire-action', sensitiveLimiter);
+  app.use('/api/visitor/chat', rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false }));
+
+  // Auth middleware. Two layers: (1) header email gives identity,
+  // (2) JWT verification (when configured) proves it came from Cloudflare.
+  app.use(async (req, res, next) => {
+    if (req.path === '/healthz') return next();
     const email = req.header(AUTH_HEADER);
-    req.user = email ? { email } : null;
+    const jwt = req.headers[JWT_HEADER];
+    if (!email) { req.user = null; return next(); }
+
+    const verdict = await verifyRequest(jwt, email);
+    if (!verdict.ok) {
+      logger.warn(`auth rejected for ${email}: ${verdict.reason}`);
+      return res.status(401).json({ error: 'authentication failed' });
+    }
+    req.user = { email: verdict.email, authMode: verdict.mode };
     next();
   });
 
   app.get('/healthz', (_req, res) => res.json({ ok: true }));
+  app.get('/readyz', (_req, res) => {
+    const cfg = config.load();
+    const ready = !!cfg.setupComplete;
+    res.status(ready ? 200 : 503).json({ ok: ready, setupComplete: ready });
+  });
 
   app.use((req, res, next) => {
-    if (req.path === '/healthz') return next();
+    if (req.path === '/healthz' || req.path === '/readyz') return next();
     const cfg = config.load();
     if (!cfg.setupComplete) {
       return res.status(503).type('html').send(`<!doctype html><title>PumpDirect</title>
@@ -61,17 +129,39 @@ function start() {
 
   app.use(visitorRoutes.router);
 
-  const server = http.createServer(app);
-  const wss = new WebSocket.Server({ noServer: true });
+  httpServer = http.createServer(app);
+  wss = new WebSocket.Server({ noServer: true });
 
-  server.on('upgrade', (req, socket, head) => {
+  httpServer.on('upgrade', async (req, socket, head) => {
     if (req.url !== '/ws/visitor') { socket.destroy(); return; }
     const email = req.headers[AUTH_HEADER.toLowerCase()];
+    const jwt = req.headers[JWT_HEADER];
     if (!email) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
     const cfg = config.load();
     if (!cfg.setupComplete) { socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n'); socket.destroy(); return; }
+
+    const verdict = await verifyRequest(jwt, String(email));
+    if (!verdict.ok) {
+      logger.warn(`ws auth rejected for ${email}: ${verdict.reason}`);
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return;
+    }
+
+    const emailNorm = String(verdict.email).toLowerCase();
+    const ownerEmail = (cfg.cloudflare?.ownerEmail || '').toLowerCase();
+    if (emailNorm === ownerEmail) {
+      // The owner GUI lives on a different (loopback) server. A visitor must
+      // never register on the public WS as the owner — that would let them
+      // intercept signaling targeted at the real owner browser.
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return;
+    }
+    const accounts = (cfg.accounts || []).map(a => (a.email || '').toLowerCase()).filter(Boolean);
+    if (!accounts.includes(emailNorm)) {
+      logger.warn(`ws rejected: ${emailNorm} not in allowlist`);
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n'); socket.destroy(); return;
+    }
+
     wss.handleUpgrade(req, socket, head, (ws) => {
-      ws.userEmail = String(email);
+      ws.userEmail = emailNorm;
       wss.emit('connection', ws, req);
     });
   });
@@ -207,6 +297,15 @@ function start() {
           logger.warn(`dropped webrtc-offer from ${email}: not allowed to broadcast`);
           return;
         }
+        // Restrict signaling delivery to known peers — the owner or other
+        // visitors currently registered for this session — never arbitrary
+        // emails. Defense in depth on top of the broadcast-permission check.
+        const toLower = String(msg.toEmail).toLowerCase();
+        const knownPeers = signaling.allPeers(ownerEmail).map(p => p.email.toLowerCase());
+        if (!knownPeers.includes(toLower)) {
+          logger.warn(`dropped ${msg.type} from ${email}: target ${msg.toEmail} not a known peer`);
+          return;
+        }
         signaling.deliver(msg.toEmail, { ...msg, fromEmail: email });
       } else if (msg && msg.type === 'broadcast-state') {
         if (msg.broadcasting && !_canVisitorBroadcast(email)) {
@@ -313,12 +412,24 @@ function start() {
         visitorConns.set(email, next);
       }
     });
-    ws.on('error', () => {});
+    ws.on('error', (err) => { logger.warn('visitor ws error', err.message); });
   });
 
-  server.listen(PORT, HOST, () => {
+  httpServer.listen(PORT, HOST, () => {
     logger.info(`public server on ${HOST}:${PORT} (auth header: ${AUTH_HEADER}) + ws on /ws/visitor`);
+    const cfg = config.load();
+    if (!cfg.cloudflare?.teamDomain || !cfg.cloudflare?.accessAud) _warnJwtUnconfigured('Run setup or update step 6 to enable.');
   });
 }
 
-module.exports = { start };
+async function shutdown() {
+  if (!httpServer) return;
+  logger.always('public server shutting down');
+  return new Promise(resolve => {
+    try { wss?.clients.forEach(ws => { try { ws.close(1001, 'shutdown'); } catch {} }); } catch {}
+    httpServer.close(() => resolve());
+    setTimeout(() => resolve(), 1500);
+  });
+}
+
+module.exports = { start, shutdown };

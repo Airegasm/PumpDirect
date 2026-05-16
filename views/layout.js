@@ -1,4 +1,5 @@
 const session = require('../services/session-service');
+const { fetchShimJs } = require('../utils/csrf');
 
 function escape(s) {
   return String(s).replace(/[&<>"']/g, c => ({
@@ -15,6 +16,7 @@ const TABS = [
   { id: 'minigames', label: 'Mini Games', href: '/minigames' },
   { id: 'network', label: 'Network', href: '/network' },
   { id: 'users', label: 'Users', href: '/users' },
+  { id: 'system', label: 'System', href: '/system' },
   { id: 'help', label: 'Help', href: '/help' },
 ];
 
@@ -254,6 +256,7 @@ function ownerLayout({ title, active, body }) {
 </div>
 <div class="tabs">${tabs}</div>
 <main>${body}</main>
+<script>${fetchShimJs()}</script>
 <script>
 function toggleTheme() {
   var cur = document.documentElement.getAttribute('data-theme') || 'dark';

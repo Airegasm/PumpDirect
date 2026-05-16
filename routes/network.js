@@ -1,6 +1,7 @@
 const express = require('express');
 const cf = require('../services/cloudflare-service');
 const hardening = require('../services/hardening-service');
+const ha = require('../services/homeassistant-service');
 const config = require('../config');
 const { ownerLayout, escape } = require('../views/layout');
 const { createLogger } = require('../utils/logger');
@@ -211,12 +212,45 @@ router.get('/network', async (_req, res) => {
       <p>Your email is auto-added as the only allowed user. Add more later from the Users tab.</p>
       <p>
         <input id="cf-owner-email" type="email" placeholder="your@email.com" value="${escape(cf_.ownerEmail || '')}" style="width:40%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
+      </p>
+      <p>
+        <label class="muted" style="display:block;margin:6px 0">Cloudflare team subdomain (required to verify JWTs and prevent header impersonation):</label>
+        <input id="cf-team-domain" type="text" placeholder="yourteam.cloudflareaccess.com"
+               value="${escape(cf_.teamDomain || '')}"
+               style="width:60%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
+        <span class="muted" style="font-size:0.9rem">Find it at <a href="https://one.dash.cloudflare.com/" target="_blank">one.dash.cloudflare.com</a> → Settings → Custom Pages (or the URL of the team's login page).</span>
+      </p>
+      <p>
         <button ${!cf_.apiTokenValidated || !cf_.hostname ? 'disabled' : ''} onclick="cfCreateAccessPolicy()">${cf_.accessPolicyConfirmed ? 'Re-sync policy' : 'Create policy'}</button>
       </p>
+      ${cf_.accessAud
+        ? `<p class="muted" style="font-size:0.9rem">JWT verification: <span class="pill ${cf_.teamDomain ? 'ok' : 'warn'}">${cf_.teamDomain ? 'enabled' : 'aud captured, set team domain to enable'}</span></p>`
+        : `<p class="muted" style="font-size:0.9rem">JWT verification: ${pill('warn', 'header-only auth — fill the form above and re-sync')}</p>`}
     `)}
 
     <h3 style="margin-top:24px">OS Hardening <span class="muted">— ${escape(s.hardening.platform)} detected</span></h3>
     ${renderHardening(s.hardening)}
+
+    <h3 style="margin-top:24px">Home Assistant <span class="muted">— optional integration</span></h3>
+    <div class="card">
+      <p class="muted">Connect a running Home Assistant install to control any HA-supported device (Zigbee, Z-Wave, Matter, Shelly, MQTT, …) as if it were a native vendor. Add devices on the Device Discovery tab using <code>switch.your_entity</code> (or any other domain with <code>turn_on</code> / <code>turn_off</code>).</p>
+      <p>
+        <label class="muted" style="display:block;margin:6px 0">Base URL</label>
+        <input id="ha-base" type="text" placeholder="http://homeassistant.local:8123"
+               value="${escape(s.cfg.vendors?.homeassistant?.baseUrl || '')}"
+               style="width:60%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
+      </p>
+      <p>
+        <label class="muted" style="display:block;margin:6px 0">Long-lived access token (Profile → Security → Create Token)</label>
+        <input id="ha-token" type="password" placeholder="${s.cfg.vendors?.homeassistant?.token ? '•••••••• (saved)' : 'paste token'}"
+               style="width:60%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
+      </p>
+      <p>
+        <button onclick="haSave()">Save</button>
+        <button onclick="haTest()">Test connection</button>
+        <span id="ha-status" class="muted" style="margin-left:12px;font-size:0.95rem"></span>
+      </p>
+    </div>
 
     <div id="cf-msg" style="position:fixed;bottom:20px;right:20px;max-width:380px"></div>
 
@@ -334,7 +368,25 @@ router.get('/network', async (_req, res) => {
       function cfCreateAccessPolicy() {
         const ownerEmail = document.getElementById('cf-owner-email').value.trim();
         if (!ownerEmail) return flash('email required', 'bad');
-        cfAction('/api/network/cf/access', { ownerEmail });
+        const teamDomain = (document.getElementById('cf-team-domain').value || '').trim().replace(/^https?:\\/\\//, '').replace(/\\/+$/, '');
+        cfAction('/api/network/cf/access', { ownerEmail, teamDomain });
+      }
+      async function haSave() {
+        const baseUrl = document.getElementById('ha-base').value.trim();
+        const tokenRaw = document.getElementById('ha-token').value;
+        const body = { baseUrl };
+        if (tokenRaw && tokenRaw !== '••••••••') body.token = tokenRaw;
+        const r = await fetch('/api/network/ha/save', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
+        const d = await r.json();
+        document.getElementById('ha-status').textContent = (!r.ok || d.error) ? ('error: ' + (d.error || '?')) : 'saved';
+        if (r.ok && !d.error) setTimeout(() => location.reload(), 600);
+      }
+      async function haTest() {
+        const s = document.getElementById('ha-status');
+        s.textContent = 'testing…';
+        const r = await fetch('/api/network/ha/test', { method: 'POST' });
+        const d = await r.json();
+        s.textContent = (!r.ok || d.error) ? ('error: ' + (d.error || '?')) : (d.ok ? 'ok' : 'failed');
       }
     </script>
   `;
@@ -432,6 +484,7 @@ router.post('/api/network/cf/hostname', async (req, res) => {
 router.post('/api/network/cf/access', async (req, res) => {
   const ownerEmail = (req.body?.ownerEmail || '').trim();
   if (!ownerEmail) return res.status(400).json({ error: 'email required' });
+  const teamDomain = (req.body?.teamDomain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '') || null;
   const cfg = config.load();
   const { apiToken, accountId, hostname } = cfg.cloudflare;
   if (!apiToken) return res.status(400).json({ error: 'validate API token first' });
@@ -446,7 +499,7 @@ router.post('/api/network/cf/access', async (req, res) => {
     }
     const existingEmails = (cfg.accounts || []).map(a => a.email).filter(Boolean);
     const allowedEmails = Array.from(new Set([ownerEmail, ...existingEmails]));
-    await cf.ensureAccessApp(apiToken, accountId, {
+    const result = await cf.ensureAccessApp(apiToken, accountId, {
       name: 'PumpDirect',
       domain: hostname,
       allowedEmails,
@@ -457,11 +510,19 @@ router.post('/api/network/cf/access', async (req, res) => {
       { email: ownerEmail, nickname: 'owner', isOwner: true, addedAt: new Date().toISOString() },
     ];
     config.save({
-      cloudflare: { ownerEmail, accessPolicyConfirmed: true },
+      cloudflare: {
+        ownerEmail,
+        accessPolicyConfirmed: true,
+        teamDomain,
+        accessAud: result.aud || cfg.cloudflare.accessAud,
+      },
       accounts,
       setupComplete: true,
     });
-    res.json({ message: 'Access policy synced. Setup complete.' });
+    const jwtMsg = (teamDomain && result.aud)
+      ? ' JWT verification is now enabled.'
+      : ' WARNING: JWT verification not enabled — provide the team subdomain on this step to harden authentication.';
+    res.json({ message: 'Access policy synced.' + jwtMsg });
   } catch (e) {
     logger.error('access policy failed', e.message);
     res.status(400).json({ error: e.message });
@@ -509,6 +570,36 @@ router.post('/api/network/hd/win/generate', (_req, res) => {
 router.get('/api/network/hd/win/uninstall-command', (_req, res) => {
   if (process.platform !== 'win32') return res.status(400).json({ error: 'only Windows here' });
   res.json({ command: hardening.windowsUninstallCommand() });
+});
+
+router.post('/api/network/ha/save', (req, res) => {
+  const baseUrl = (req.body?.baseUrl || '').trim();
+  const tokenIn = (req.body?.token || '').trim();
+  if (baseUrl && !/^https?:\/\//.test(baseUrl)) {
+    return res.status(400).json({ error: 'baseUrl must start with http:// or https://' });
+  }
+  const cfg = config.load();
+  const existing = cfg.vendors?.homeassistant || {};
+  const next = {
+    baseUrl: baseUrl || existing.baseUrl || '',
+    token: tokenIn || existing.token || '',
+  };
+  config.save({ vendors: { homeassistant: next } });
+  ha.setCredentials(next.baseUrl, next.token);
+  res.json({ message: 'saved' });
+});
+
+router.post('/api/network/ha/test', async (_req, res) => {
+  const cfg = config.load();
+  const c = cfg.vendors?.homeassistant || {};
+  if (!c.baseUrl || !c.token) return res.status(400).json({ error: 'baseUrl + token required (save first)' });
+  ha.setCredentials(c.baseUrl, c.token);
+  try {
+    const ok = await ha.testConnection();
+    res.json({ ok });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 router.post('/api/network/hd/refresh', async (_req, res) => {

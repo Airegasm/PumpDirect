@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const { createLogger } = require('../utils/logger');
+const { writeAtomicSync, ensureDirSync } = require('../utils/atomic-write');
 const templates = require('./templates-service');
 const { emitState } = require('./event-bus');
 
@@ -32,12 +33,8 @@ const SEED = {
   ],
 };
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
 function load() {
-  ensureDataDir();
+  ensureDirSync(DATA_DIR);
   let data;
   try {
     data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
@@ -53,8 +50,7 @@ function load() {
 }
 
 function save(data) {
-  ensureDataDir();
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2));
+  writeAtomicSync(SESSIONS_FILE, JSON.stringify(data, null, 2));
   return data;
 }
 

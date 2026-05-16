@@ -21,6 +21,9 @@ public/assets/triggers/sound/*
 public/assets/triggers/video/*
 !public/assets/triggers/video/.gitkeep
 
+# Local helpers (machine-specific)
+ssh_launcher
+
 # OS
 .DS_Store
 Thumbs.db

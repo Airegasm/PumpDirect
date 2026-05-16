@@ -42,7 +42,7 @@ function renderVendorCredentials() {
         <p class="muted">No account or API key required.</p></details>`;
     }
     const fields = info.credFields.map(f => {
-      const isSecret = /password|secret|key/i.test(f);
+      const isSecret = /password|secret|key|token/i.test(f);
       const display = isSecret && stored[f] ? '••••••••' : (stored[f] || '');
       return `<label style="display:block;margin:8px 0">
         <span class="muted" style="display:inline-block;width:130px">${escape(f)}</span>
@@ -84,6 +84,7 @@ function renderAddForm() {
           <input id="dv-model" type="text" placeholder="Model (Wyze, e.g. WLPP1)" style="width:25%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
           <input id="dv-deviceId" type="text" placeholder="Device ID (Govee/Tuya)" style="width:35%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
           <input id="dv-sku" type="text" placeholder="SKU (Govee, e.g. H7141)" style="width:20%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
+          <input id="dv-entityId" type="text" placeholder="Entity ID (HA, e.g. switch.pump)" style="width:35%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
         </p>
       </div>
       <p>
@@ -170,12 +171,13 @@ router.get('/devices', (_req, res) => {
     <script>
       const elapsedTimers = {};
       const VENDOR_FIELDS = {
-        tapo:    ['ip'],
-        kasa:    ['ip'],
-        wyze:    ['mac', 'model'],
-        govee:   ['deviceId', 'sku'],
-        tuya:    ['deviceId'],
-        generic: ['ip'],
+        tapo:          ['ip'],
+        kasa:          ['ip'],
+        wyze:          ['mac', 'model'],
+        govee:         ['deviceId', 'sku'],
+        tuya:          ['deviceId'],
+        homeassistant: ['entityId'],
+        generic:       ['ip'],
       };
       function flash(msg, cls) {
         const el = document.getElementById('dv-msg');
@@ -185,7 +187,7 @@ router.get('/devices', (_req, res) => {
       function dvVendorChanged() {
         const v = document.getElementById('dv-vendor').value;
         const visible = new Set(VENDOR_FIELDS[v] || []);
-        for (const id of ['ip', 'mac', 'model', 'deviceId', 'sku']) {
+        for (const id of ['ip', 'mac', 'model', 'deviceId', 'sku', 'entityId']) {
           document.getElementById('dv-' + id).style.display = visible.has(id) ? '' : 'none';
         }
       }
@@ -305,6 +307,7 @@ router.get('/devices', (_req, res) => {
           model: document.getElementById('dv-model').value.trim(),
           deviceId: document.getElementById('dv-deviceId').value.trim(),
           sku: document.getElementById('dv-sku').value.trim(),
+          entityId: document.getElementById('dv-entityId').value.trim(),
           childId: (document.getElementById('dv-childId') || {}).value || '',
         };
         if (!payload.label) return flash('label required', 'bad');

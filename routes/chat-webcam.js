@@ -209,14 +209,20 @@ router.get('/chat-webcam', (_req, res) => {
           if (url) postSnapshot(url);
         }
       }
+      let cwWsBackoff = 0;
       function connectOwnerWs() {
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new WebSocket(proto + '://' + location.host + '/ws/owner');
+        ws.addEventListener('open', () => { cwWsBackoff = 0; });
         ws.onmessage = (e) => {
           const m = JSON.parse(e.data);
           if (m.type === 'state') maybeSnap(m.state);
         };
-        ws.onclose = () => setTimeout(connectOwnerWs, 1500);
+        ws.onclose = () => {
+          const delay = Math.min(30000, 500 * Math.pow(2, cwWsBackoff)) + Math.floor(Math.random() * 500);
+          cwWsBackoff = Math.min(cwWsBackoff + 1, 6);
+          setTimeout(connectOwnerWs, delay);
+        };
       }
       connectOwnerWs();
     </script>

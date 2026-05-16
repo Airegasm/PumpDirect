@@ -3,6 +3,7 @@ const devices = require('./devices-service');
 const control = require('./device-control');
 const templates = require('./templates-service');
 const chat = require('./chat-service');
+const rateLimit = require('./rate-limit-service');
 const config = require('../config');
 const { emitState, emitOverlay } = require('./event-bus');
 const { createLogger } = require('../utils/logger');
@@ -32,15 +33,25 @@ function _sleep(ms, signal) {
   });
 }
 
-// device may be primary or any other configured device. Only primary toggles
-// global pumpOn / capacity tracking; other devices fire independently.
+// device may be primary or any other configured device. Only the primary
+// toggles global pumpOn / capacity tracking + rate-limit duty cycling;
+// other devices fire independently of the safety watchdog.
 async function _pumpOn(device) {
   if (!device) return;
-  await control.turnOn(device);
   const primary = devices.primary();
   const isPrimary = !!(primary && device.id === primary.id);
   if (isPrimary) {
+    const verdict = rateLimit.checkPumpStart();
+    if (!verdict.ok) {
+      logger.warn(`pump start blocked: ${verdict.reason}`);
+      chat.system(`Safety: ${verdict.reason}`);
+      throw new Error(verdict.reason);
+    }
+  }
+  await control.turnOn(device);
+  if (isPrimary) {
     if (!pumpOnSince) pumpOnSince = Date.now();
+    rateLimit.recordPumpOn();
     _setPump(true);
   }
   _publish();
@@ -53,6 +64,7 @@ async function _pumpOff(device) {
   const isPrimary = !!(primary && device.id === primary.id);
   if (isPrimary) {
     pumpOnSince = null;
+    rateLimit.recordPumpOff();
     _setPump(false);
   }
   _publish();
@@ -138,6 +150,24 @@ function startCapacityLoop() {
     const s = session.getState();
     if (!s.active || s.paused || s.emergencyStopped) return;
     if (!live.pumpOn || !pumpOnSince) return;
+
+    // Dead-man hard cap: if the pump has been continuously on for longer
+    // than the configured limit, force it off and abort the current action.
+    // This is the final safety net behind the per-action timing.
+    if (rateLimit.shouldForceOff()) {
+      const primary = devices.primary();
+      logger.error(`HARD CAP reached — forcing pump off after ${(rateLimit.continuousRuntimeMs()/1000).toFixed(0)}s`);
+      chat.system('Safety: pump hard cap reached — forced off');
+      if (abortController) abortController.abort();
+      if (primary) control.turnOff(primary).catch(e => logger.error('hardcap turnOff', e.message));
+      pumpOnSince = null;
+      rateLimit.recordPumpOff();
+      _setPump(false);
+      _setRunning(null);
+      _publish();
+      return;
+    }
+
     const primary = devices.primary();
     if (!primary) return;
     const rate = _calcRatePerMs(primary);
@@ -228,6 +258,16 @@ async function fireAction({ actionTemplateId, inline, byEmail, byNickname, silen
   } else {
     throw new Error('actionTemplateId or inline required');
   }
+
+  // Anti-spam: cap fires per (template, visitor) over a sliding window.
+  const tplVerdict = rateLimit.checkTemplate(actionTemplateId, byEmail);
+  if (!tplVerdict.ok) throw new Error(tplVerdict.reason);
+
+  // Pump duty cycle pre-flight (the per-step _pumpOn re-checks too, but
+  // failing here means we never claim currentActionTemplateId for nothing).
+  const pumpVerdict = rateLimit.checkPumpStart();
+  if (!pumpVerdict.ok) throw new Error(pumpVerdict.reason);
+
 
   const sessData = session.load();
   const profile = sessData.sessionProfiles.find(p => p.id === s.sessionProfileId);

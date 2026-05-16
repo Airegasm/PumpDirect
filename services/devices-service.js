@@ -5,6 +5,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const localDevices = require('local-devices');
 const { createLogger } = require('../utils/logger');
+const { writeAtomicSync, ensureDirSync } = require('../utils/atomic-write');
 
 const execFileP = promisify(execFile);
 
@@ -13,14 +14,10 @@ const logger = createLogger('Devices');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DEVICES_FILE = path.join(DATA_DIR, 'devices.json');
 
-const SUPPORTED_VENDORS = ['tapo', 'kasa', 'wyze', 'govee', 'tuya', 'generic'];
-
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+const SUPPORTED_VENDORS = ['tapo', 'kasa', 'wyze', 'govee', 'tuya', 'homeassistant', 'generic'];
 
 function loadAll() {
-  ensureDataDir();
+  ensureDirSync(DATA_DIR);
   try {
     const data = JSON.parse(fs.readFileSync(DEVICES_FILE, 'utf8'));
     return Array.isArray(data.devices) ? data.devices : [];
@@ -30,8 +27,7 @@ function loadAll() {
 }
 
 function saveAll(devices) {
-  ensureDataDir();
-  fs.writeFileSync(DEVICES_FILE, JSON.stringify({ devices }, null, 2));
+  writeAtomicSync(DEVICES_FILE, JSON.stringify({ devices }, null, 2));
   return devices;
 }
 
@@ -131,7 +127,7 @@ async function scanKasa(timeoutSeconds = 3) {
   return results;
 }
 
-function add({ label, vendor, ip, mac, deviceId, sku, model, childId }) {
+function add({ label, vendor, ip, mac, deviceId, sku, model, childId, entityId }) {
   label = (label || '').trim();
   vendor = (vendor || '').trim().toLowerCase();
   if (!label) throw new Error('label required');
@@ -142,23 +138,25 @@ function add({ label, vendor, ip, mac, deviceId, sku, model, childId }) {
   sku = (sku || '').trim() || null;
   model = (model || '').trim() || null;
   childId = (childId || '').trim() || null;
+  entityId = (entityId || '').trim() || null;
 
   const need = {
-    tapo:    ['ip'],
-    kasa:    ['ip'],
-    wyze:    ['mac', 'model'],
-    govee:   ['deviceId', 'sku'],
-    tuya:    ['deviceId'],
-    generic: [],
+    tapo:          ['ip'],
+    kasa:          ['ip'],
+    wyze:          ['mac', 'model'],
+    govee:         ['deviceId', 'sku'],
+    tuya:          ['deviceId'],
+    homeassistant: ['entityId'],
+    generic:       [],
   }[vendor] || [];
-  const fields = { ip, mac, deviceId, sku, model };
+  const fields = { ip, mac, deviceId, sku, model, entityId };
   const missing = need.filter(f => !fields[f]);
   if (missing.length) throw new Error(`${vendor} needs: ${missing.join(', ')}`);
 
   const devices = loadAll();
-  // dedupe key: (ip + childId) for Kasa strips, otherwise the natural identifier
   const dupe = devices.find(d => {
     if (vendor === 'kasa') return d.ip === ip && (d.childId || null) === childId;
+    if (vendor === 'homeassistant' && entityId && d.entityId === entityId) return true;
     if (ip && d.ip === ip && !d.childId && !childId) return true;
     if (mac && d.mac === mac) return true;
     if (deviceId && d.deviceId === deviceId) return true;
@@ -170,7 +168,7 @@ function add({ label, vendor, ip, mac, deviceId, sku, model, childId }) {
   const dev = {
     id: randomUUID(),
     label, vendor,
-    ip, mac, deviceId, sku, model, childId,
+    ip, mac, deviceId, sku, model, childId, entityId,
     isPrimary: isFirst,
     calibration: null,
     addedAt: new Date().toISOString(),

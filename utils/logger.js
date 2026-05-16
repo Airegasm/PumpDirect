@@ -1,103 +1,68 @@
-/**
- * Logging Utility for SwellDreams Backend
- * Provides leveled logging with prefix support
- */
+const { EventEmitter } = require('events');
 
-const LOG_LEVELS = {
-  ERROR: 0,
-  WARN: 1,
-  INFO: 2,
-  DEBUG: 3,
-  TRACE: 4
-};
-
-// Get current log level from environment, default to INFO
+const LOG_LEVELS = { ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3, TRACE: 4 };
 const currentLevel = LOG_LEVELS[process.env.LOG_LEVEL?.toUpperCase()] ?? LOG_LEVELS.INFO;
 
-/**
- * Create a logger instance with a specific prefix
- * @param {string} prefix - Logger prefix (e.g., 'Server', 'LLM', 'DeviceService')
- * @returns {Object} Logger instance with level methods
- */
+const MAX_BUFFER = 1000;
+const ringBuffer = [];
+const logEmitter = new EventEmitter();
+logEmitter.setMaxListeners(50);
+
+function formatArg(a) {
+  if (a == null) return String(a);
+  if (a instanceof Error) return a.stack || a.message;
+  if (typeof a === 'string') return a;
+  try { return JSON.stringify(a); } catch { return String(a); }
+}
+
+function record(level, prefix, args) {
+  const entry = {
+    ts: Date.now(),
+    level,
+    prefix,
+    msg: args.map(formatArg).join(' '),
+  };
+  ringBuffer.push(entry);
+  if (ringBuffer.length > MAX_BUFFER) ringBuffer.shift();
+  try { logEmitter.emit('log', entry); } catch {}
+  return entry;
+}
+
 function createLogger(prefix) {
-  const formatMessage = (level, args) => {
-    const timestamp = new Date().toISOString();
-    return [`[${timestamp}] [${prefix}]`, ...args];
+  const fmt = (level, args) => {
+    const entry = record(level, prefix, args);
+    const stamp = new Date(entry.ts).toISOString();
+    return [`[${stamp}] [${prefix}]`, ...args];
   };
-
   return {
-    error: (...args) => {
-      if (LOG_LEVELS.ERROR <= currentLevel) {
-        console.error(...formatMessage('ERROR', args));
-      }
-    },
-
-    warn: (...args) => {
-      if (LOG_LEVELS.WARN <= currentLevel) {
-        console.warn(...formatMessage('WARN', args));
-      }
-    },
-
-    info: (...args) => {
-      if (LOG_LEVELS.INFO <= currentLevel) {
-        console.log(...formatMessage('INFO', args));
-      }
-    },
-
-    debug: (...args) => {
-      if (LOG_LEVELS.DEBUG <= currentLevel) {
-        console.log(...formatMessage('DEBUG', args));
-      }
-    },
-
-    trace: (...args) => {
-      if (LOG_LEVELS.TRACE <= currentLevel) {
-        console.log(...formatMessage('TRACE', args));
-      }
-    },
-
-    // Log regardless of level (for critical startup/shutdown messages)
-    always: (...args) => {
-      console.log(...formatMessage('ALWAYS', args));
-    }
+    error: (...args) => { if (LOG_LEVELS.ERROR <= currentLevel) console.error(...fmt('ERROR', args)); },
+    warn:  (...args) => { if (LOG_LEVELS.WARN  <= currentLevel) console.warn (...fmt('WARN',  args)); },
+    info:  (...args) => { if (LOG_LEVELS.INFO  <= currentLevel) console.log  (...fmt('INFO',  args)); },
+    debug: (...args) => { if (LOG_LEVELS.DEBUG <= currentLevel) console.log  (...fmt('DEBUG', args)); },
+    trace: (...args) => { if (LOG_LEVELS.TRACE <= currentLevel) console.log  (...fmt('TRACE', args)); },
+    always:(...args) => { console.log(...fmt('ALWAYS', args)); },
   };
 }
 
-/**
- * Sanitize sensitive data for logging
- * @param {*} data - Data to sanitize
- * @param {number} maxLength - Maximum string length to show
- * @returns {string} Sanitized representation
- */
-function sanitizeForLog(data, maxLength = 100) {
-  if (data === null || data === undefined) {
-    return '(empty)';
-  }
-
-  const str = typeof data === 'string' ? data : JSON.stringify(data);
-
-  if (str.length <= maxLength) {
-    return `[${str.length} chars]`;
-  }
-
-  return `[${str.length} chars - starts: "${str.substring(0, 50)}..."]`;
+function snapshot(limit = MAX_BUFFER, levels = null) {
+  const all = levels ? ringBuffer.filter(e => levels.has(e.level)) : ringBuffer;
+  return all.slice(-limit);
 }
 
-/**
- * Create a child logger with additional prefix
- * @param {Object} parentLogger - Parent logger instance
- * @param {string} childPrefix - Additional prefix
- * @returns {Object} Child logger instance
- */
-function createChildLogger(parentLogger, childPrefix) {
-  // Extract parent prefix from the logger's closure
-  // This is a simplified version - just create a new logger with combined prefix
-  return createLogger(`${childPrefix}`);
+function subscribe(handler) {
+  logEmitter.on('log', handler);
+  return () => logEmitter.off('log', handler);
+}
+
+function recordExternal(level, prefix, message) {
+  return record(level, prefix, [message]);
 }
 
 module.exports = {
   LOG_LEVELS,
   createLogger,
-  sanitizeForLog,
-  createChildLogger
+  snapshot,
+  subscribe,
+  recordExternal,
+  MAX_BUFFER,
 };

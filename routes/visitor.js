@@ -1289,6 +1289,7 @@ function renderVisitorPage(req) {
         const r = await fetch('/api/visitor/chat', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
         if (!r.ok) { const d = await r.json(); alert(d.error || 'failed'); }
       }
+      let wsBackoff = 0;
       function _sendVisibility() {
         if (wsSig && wsSig.readyState === 1) {
           wsSig.send(JSON.stringify({ type: 'visibility', hidden: !!document.hidden }));
@@ -1299,6 +1300,7 @@ function renderVisitorPage(req) {
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new WebSocket(proto + '://' + location.host + '/ws/visitor');
         wsSig = ws;
+        ws.addEventListener('open', () => { wsBackoff = 0; });
         if (window.__rtc) {
           window.__rtc.init({
             sendSig: (obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); },
@@ -1377,7 +1379,12 @@ function renderVisitorPage(req) {
             if (m.type === 'peer-joined' && myBroadcastStream) setTimeout(broadcastTrackState, 800);
           }
         };
-        ws.onclose = () => { wsSig = null; setTimeout(connect, 1500); };
+        ws.onclose = () => {
+          wsSig = null;
+          const delay = Math.min(30000, 500 * Math.pow(2, wsBackoff)) + Math.floor(Math.random() * 500);
+          wsBackoff = Math.min(wsBackoff + 1, 6);
+          setTimeout(connect, delay);
+        };
       }
       connect();
     </script>

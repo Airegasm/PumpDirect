@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const { createLogger } = require('../utils/logger');
+const { writeAtomicSync, ensureDirSync } = require('../utils/atomic-write');
 
 const logger = createLogger('Templates');
 
@@ -38,12 +39,9 @@ const SEED = {
 // pick one — rotates through 10 distinct hues so up to 10 sections look distinct.
 const WHEEL_PALETTE = ['#e74c3c', '#f39c12', '#f1c40f', '#27ae60', '#16a085', '#3498db', '#2980b9', '#7b3fd6', '#9b59b6', '#e84393'];
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 function load() {
-  ensureDataDir();
+  ensureDirSync(DATA_DIR);
   let data = null;
   try {
     data = JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf8'));
@@ -51,7 +49,6 @@ function load() {
     data = JSON.parse(JSON.stringify(SEED));
     save(data);
   }
-  // ensure factory profile always exists
   if (!data.templateProfiles?.some(p => p.id === FACTORY_PROFILE_ID)) {
     data.templateProfiles = [JSON.parse(JSON.stringify(SEED.templateProfiles[0])), ...(data.templateProfiles || [])];
     save(data);
@@ -61,8 +58,7 @@ function load() {
 }
 
 function save(data) {
-  ensureDataDir();
-  fs.writeFileSync(TEMPLATES_FILE, JSON.stringify(data, null, 2));
+  writeAtomicSync(TEMPLATES_FILE, JSON.stringify(data, null, 2));
   return data;
 }
 

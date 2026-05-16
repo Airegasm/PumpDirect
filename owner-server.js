@@ -4,14 +4,20 @@ const path = require('path');
 const WebSocket = require('ws');
 const { createLogger } = require('./utils/logger');
 const { ownerLayout, escape } = require('./views/layout');
+const { csrfMiddleware } = require('./utils/csrf');
 const config = require('./config');
 const { bus } = require('./services/event-bus');
 const chat = require('./services/chat-service');
 const session = require('./services/session-service');
 const signaling = require('./services/signaling-service');
 const { TOS_VERSION } = require('./views/tos');
+const systemRoute = require('./routes/system');
 
 const logger = createLogger('Owner');
+
+let httpServer = null;
+let ownerWss = null;
+let systemWss = null;
 
 function pill(state, label) {
   const cls = state === 'ok' ? 'ok' : state === 'bad' ? 'bad' : 'warn';
@@ -23,14 +29,26 @@ function start() {
   const PORT = parseInt(process.env.OWNER_PORT || '3001', 10);
   const HOST = '127.0.0.1';
 
-  app.use(express.json({ limit: '1mb' }));
-  app.use(express.urlencoded({ extended: false }));
+  app.use(express.json({ limit: '2mb' }));
+  // Note: express.urlencoded is intentionally NOT used. It would enable
+  // CORS-simple cross-origin POSTs that bypass the JSON content-type
+  // preflight, expanding the CSRF surface beyond what the Origin check
+  // and X-CSRF-Token guard can cover with confidence.
 
   app.use((req, res, next) => {
     const peer = req.socket.remoteAddress || '';
     if (peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1') return next();
     res.status(403).type('text').send('owner GUI is loopback-only');
   });
+
+  // CSRF guard on every /api/* mutation. Mounted before any routes so the
+  // Origin / Referer check + double-submit-cookie token validation runs on
+  // every request that could mutate state.
+  const allowedOrigins = new Set([
+    `http://127.0.0.1:${PORT}`,
+    `http://localhost:${PORT}`,
+  ]);
+  app.use(csrfMiddleware({ allowedOrigins }));
 
   // TOS gate — every route except the TOS page + accept API requires acceptance.
   app.use(require('./routes/tos'));
@@ -60,9 +78,25 @@ function start() {
   // Satellite endpoints — localhost-only, used when this instance acts
   // as the Target for someone else's Dual-Target session.
   app.use(require('./routes/satellite'));
+  // System tab — live log streaming, also localhost-only.
+  app.use(systemRoute.router);
 
-  const server = http.createServer(app);
-  const wss = new WebSocket.Server({ server, path: '/ws/owner' });
+  httpServer = http.createServer(app);
+  ownerWss = new WebSocket.Server({ noServer: true });
+  systemWss = new WebSocket.Server({ noServer: true });
+
+  httpServer.on('upgrade', (req, socket, head) => {
+    const peer = req.socket.remoteAddress || '';
+    const loopback = peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
+    if (!loopback) { socket.destroy(); return; }
+    if (req.url === '/ws/owner') {
+      ownerWss.handleUpgrade(req, socket, head, ws => ownerWss.emit('connection', ws, req));
+    } else if (req.url === '/ws/system') {
+      systemWss.handleUpgrade(req, socket, head, ws => systemWss.emit('connection', ws, req));
+    } else {
+      socket.destroy();
+    }
+  });
 
   // Reload-grace: defer presence clear when the last owner-tab WS closes so a
   // refresh / nav between tabs doesn't flicker the Host row on visitor screens.
@@ -88,12 +122,7 @@ function start() {
     return signaling.allPeers(myEmail).map(p => ({ ...p, nickname: nicknameFor(p.email) }));
   }
 
-  wss.on('connection', (ws, req) => {
-    const peer = req.socket.remoteAddress || '';
-    if (peer !== '127.0.0.1' && peer !== '::1' && peer !== '::ffff:127.0.0.1') {
-      ws.close(1008, 'loopback only');
-      return;
-    }
+  ownerWss.on('connection', (ws, req) => {
     const cfg = config.load();
     const ownerEmail = cfg.cloudflare?.ownerEmail || 'owner@local';
 
@@ -158,12 +187,27 @@ function start() {
         }, REJOIN_GRACE_MS);
       }
     });
-    ws.on('error', () => {});
+    ws.on('error', (err) => { logger.warn('owner ws error', err.message); });
   });
 
-  server.listen(PORT, HOST, () => {
-    logger.info(`owner server on http://${HOST}:${PORT} (loopback only) + ws on /ws/owner`);
+  systemRoute.attachWebSocket(systemWss);
+
+  httpServer.listen(PORT, HOST, () => {
+    logger.info(`owner server on http://${HOST}:${PORT} (loopback only) + ws on /ws/owner, /ws/system`);
   });
 }
 
-module.exports = { start };
+async function shutdown() {
+  if (!httpServer) return;
+  logger.always('owner server shutting down');
+  return new Promise(resolve => {
+    try {
+      ownerWss?.clients.forEach(ws => { try { ws.close(1001, 'shutdown'); } catch {} });
+      systemWss?.clients.forEach(ws => { try { ws.close(1001, 'shutdown'); } catch {} });
+    } catch {}
+    httpServer.close(() => resolve());
+    setTimeout(() => resolve(), 1500);
+  });
+}
+
+module.exports = { start, shutdown };
