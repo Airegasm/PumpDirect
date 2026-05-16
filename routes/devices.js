@@ -19,6 +19,9 @@ function vendorIdHelp(vendor) {
     tapo: 'IP',
     kasa: 'IP',
     'kasa-klap': 'IP',
+    shelly: 'IP',
+    esphome: 'IP',
+    tasmota: 'IP',
     wyze: 'MAC + Model',
     govee: 'Device ID + SKU',
     tuya: 'Device ID',
@@ -26,55 +29,84 @@ function vendorIdHelp(vendor) {
   }[vendor] || 'IP';
 }
 
-function renderVendorCredentials() {
+// One collapsible <details> for a credentialed vendor — used by the bottom
+// "Other devices" section (Tapo, Kasa 1.1.x+, Wyze, Govee, Tuya).
+function renderCredsDetails(key) {
   const cfg = config.load();
-  const sections = Object.entries(control.VENDOR_INFO)
-    .filter(([key]) => key !== 'homeassistant')  // HA has its own card below
-    .map(([key, info]) => {
-    const stored = (cfg.vendors && cfg.vendors[key]) || {};
-    const complete = control.credsComplete(key);
-    if (info.credFields.length === 0) {
-      if (key === 'kasa') {
-        return `<details><summary>${escape(info.name)} ${pill('ok', 'no credentials needed (local)')}</summary>
-          <div style="padding:12px">
-            <p class="muted">Kasa uses TP-Link's local UDP broadcast protocol (port 9999) — no account or API key required.</p>
-            <p><button onclick="dvScanKasa()">Scan for Kasa devices</button></p>
-            <div id="kasa-scan-results"></div>
-          </div></details>`;
-      }
-      return `<details><summary>${escape(info.name)} ${pill('ok', 'no credentials needed (local)')}</summary>
-        <p class="muted">No account or API key required.</p></details>`;
-    }
-    const fields = info.credFields.map(f => {
-      const isSecret = /password|secret|key|token/i.test(f);
-      const display = isSecret && stored[f] ? '••••••••' : (stored[f] || '');
-      return `<label style="display:block;margin:8px 0">
-        <span class="muted" style="display:inline-block;width:130px">${escape(f)}</span>
-        <input type="${isSecret ? 'password' : 'text'}" data-vendor="${key}" data-field="${f}" value="${escape(display)}" style="width:50%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
-      </label>`;
-    }).join('');
-    return `<details>
-      <summary>${escape(info.name)} ${complete ? pill('ok', 'credentials saved') : pill('warn', 'needs credentials')}</summary>
-      <div style="padding:12px">
-        ${fields}
-        <p><button onclick="dvSaveCreds('${key}')">Save ${escape(info.name)} credentials</button></p>
-      </div>
-    </details>`;
+  const info = control.VENDOR_INFO[key];
+  if (!info) return '';
+  const stored = (cfg.vendors && cfg.vendors[key]) || {};
+  const complete = control.credsComplete(key);
+  const fields = info.credFields.map(f => {
+    const isSecret = /password|secret|key|token/i.test(f);
+    const display = isSecret && stored[f] ? '••••••••' : (stored[f] || '');
+    return `<label style="display:block;margin:8px 0">
+      <span class="muted" style="display:inline-block;width:130px">${escape(f)}</span>
+      <input type="${isSecret ? 'password' : 'text'}" data-vendor="${key}" data-field="${f}" value="${escape(display)}" style="width:50%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
+    </label>`;
   }).join('');
-  return `
-    <div class="card">
-      <h3>Vendor Credentials</h3>
-      <p class="muted">Fill in only the vendors you use. Stored in <code>config.json</code> on this machine; never sent to visitors.</p>
-      ${sections}
-    </div>`;
+  return `<details>
+    <summary>${escape(info.name)} ${complete ? pill('ok', 'credentials saved') : pill('warn', 'needs credentials')}</summary>
+    <div style="padding:12px">
+      ${fields}
+      <p><button onclick="dvSaveCreds('${key}')">Save ${escape(info.name)} credentials</button></p>
+    </div>
+  </details>`;
+}
+
+// Collapsible brand subsections for the top "Local-network outlets" section.
+function renderKauf() {
+  return `<details>
+    <summary>KAUF ${pill('ok', 'recommended')}</summary>
+    <div style="padding:12px">
+      <p class="muted"><strong>✅ The main recommended local outlet.</strong> KAUF plugs ship with ESPHome — fully local, no account, no cloud, no flashing.</p>
+      <p class="muted">Add it below with the <strong>ESPHome</strong> vendor (or use Scan above). The ESPHome switch entity defaults to <code>relay</code>, which is correct for KAUF plugs — leave the Entity ID blank.</p>
+      <p>🔗 Buy: <a href="https://kaufha.com/plf12/" target="_blank" rel="noopener">kaufha.com/plf12</a></p>
+    </div>
+  </details>`;
+}
+
+function renderShelly() {
+  return `<details>
+    <summary>Shelly ${pill('ok', 'local · no account')}</summary>
+    <div style="padding:12px">
+      <p class="muted">Shelly plugs control over a local HTTP API — no account, no cloud. Add below with the <strong>Shelly</strong> vendor, or use Scan above.</p>
+      <p style="color:#f0c674">⚠️ Shelly plugs are currently and periodically out of stock — check availability before relying on them.</p>
+      <p>🔗 Buy: <a href="https://us.shelly.com/collections/smart-plugs" target="_blank" rel="noopener">us.shelly.com/collections/smart-plugs</a></p>
+    </div>
+  </details>`;
+}
+
+function renderTindie() {
+  return `<details>
+    <summary>Tindie (Athom) ${pill('ok', 'local · pre-flashed')}</summary>
+    <div style="padding:12px">
+      <p class="muted">Athom sells plugs pre-flashed with Tasmota or ESPHome — fully local. Add below with the <strong>Tasmota</strong> vendor (or <strong>ESPHome</strong> for the ESPHome variant). Add Tasmota plugs by IP — the Scan above only finds Shelly &amp; ESPHome.</p>
+      <p style="color:#f0c674">⚠️ Ships from Shenzhen — expect long shipping times.</p>
+      <p>🔗 Buy: <a href="https://www.tindie.com/stores/athom/" target="_blank" rel="noopener">tindie.com/stores/athom</a></p>
+    </div>
+  </details>`;
+}
+
+function renderKasaLegacy() {
+  return `<details>
+    <summary>Kasa Legacy ${pill('ok', 'local · no account')}</summary>
+    <div style="padding:12px">
+      <p class="muted">Older TP-Link Kasa plugs (e.g. the <strong>HS103</strong>) controlled over the local port-9999 protocol — no account, no cloud. Add them below with the <strong>TP-Link Kasa</strong> vendor.</p>
+      <p style="color:#f0c674"><strong>⚠️ You MUST disable firmware auto-updates in the Kasa app for this to keep working.</strong> A firmware update to 1.1.x or newer removes the legacy local protocol and forces you onto the Kasa 1.1.x+ (KLAP) method instead — which requires your TP-Link account.</p>
+      <p>Kasa uses local UDP broadcast discovery: <button onclick="dvScanKasa()">Scan for Kasa devices</button></p>
+      <div id="kasa-scan-results"></div>
+    </div>
+  </details>`;
 }
 
 function renderHomeAssistant() {
   const cfg = config.load();
   const ha_ = cfg.vendors?.homeassistant || {};
-  return `
-    <div class="card">
-      <h3>Home Assistant <span class="muted" style="font-size:0.9rem;font-weight:normal">— optional integration</span></h3>
+  const configured = !!(ha_.baseUrl && ha_.token);
+  return `<details>
+    <summary>Home Assistant ${pill(configured ? 'ok' : 'warn', configured ? 'configured' : 'optional integration')}</summary>
+    <div style="padding:12px">
       <p class="muted">Connect a running Home Assistant install to control any HA-supported device (Zigbee, Z-Wave, Matter, Shelly, MQTT, …) as if it were a native vendor. Once connected, add it below with the <strong>Home Assistant</strong> vendor and an entity ID like <code>switch.your_entity</code> (or any other domain with <code>turn_on</code> / <code>turn_off</code>).</p>
       <p>
         <label class="muted" style="display:block;margin:6px 0">Base URL</label>
@@ -92,7 +124,8 @@ function renderHomeAssistant() {
         <button onclick="haTest()">Test connection</button>
         <span id="ha-status" class="muted" style="margin-left:12px;font-size:0.95rem"></span>
       </p>
-    </div>`;
+    </div>
+  </details>`;
 }
 
 function renderAddForm() {
@@ -114,7 +147,7 @@ function renderAddForm() {
           <input id="dv-model" type="text" placeholder="Model (Wyze, e.g. WLPP1)" style="width:25%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
           <input id="dv-deviceId" type="text" placeholder="Device ID (Govee/Tuya)" style="width:35%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
           <input id="dv-sku" type="text" placeholder="SKU (Govee, e.g. H7141)" style="width:20%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
-          <input id="dv-entityId" type="text" placeholder="Entity ID (HA, e.g. switch.pump)" style="width:35%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
+          <input id="dv-entityId" type="text" placeholder="Entity ID — HA: switch.pump · ESPHome: relay (default)" style="width:35%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px;display:none">
         </p>
       </div>
       <p>
@@ -173,9 +206,31 @@ router.get('/devices', (_req, res) => {
   const body = `
     <h2>Device Discovery</h2>
 
-    ${renderVendorCredentials()}
+    <div class="card" style="border-color:#f0c674">
+      <p style="margin:0">⚠️ <strong>Cloud outlets are being phased out.</strong> PumpDirect is moving to local-network-only smart outlets. Cloud-connected outlets (Wyze, Govee, Tuya) will be gradually deprecated: their manufacturers keep changing their cloud APIs and we have to keep chasing those changes; rapid on/off cycling risks rate-limiting or an outright ban from the vendor's servers; and every command pays an unnecessary internet round-trip of delay. The local outlets listed at the top have none of these problems.</p>
+    </div>
 
-    ${renderHomeAssistant()}
+    <div class="card">
+      <h3>Local-network outlets <span class="muted" style="font-size:0.9rem;font-weight:normal">— recommended</span></h3>
+      <p class="muted">Local-only plugs: no account, no cloud, no rate limits. Click Scan to auto-find Shelly &amp; ESPHome plugs on your network, or open a brand below to add one by IP.</p>
+      <p><button onclick="dvScanLocal()">Scan for local outlets</button> <span id="dv-local-scan-status" class="muted" style="font-size:0.95rem"></span></p>
+      <div id="dv-local-results"></div>
+      ${renderKauf()}
+      ${renderShelly()}
+      ${renderTindie()}
+      ${renderKasaLegacy()}
+    </div>
+
+    <div class="card">
+      <h3>Other devices</h3>
+      <p class="muted">Existing integrations, including the cloud outlets being phased out. Fill in credentials only for the vendors you use — stored in <code>config.json</code> on this machine, never sent to visitors.</p>
+      ${renderCredsDetails('tapo')}
+      ${renderCredsDetails('kasa-klap')}
+      ${renderCredsDetails('wyze')}
+      ${renderCredsDetails('govee')}
+      ${renderCredsDetails('tuya')}
+      ${renderHomeAssistant()}
+    </div>
 
     <div class="card">
       <h3>LAN scan</h3>
@@ -206,6 +261,9 @@ router.get('/devices', (_req, res) => {
         tapo:          ['ip'],
         kasa:          ['ip'],
         'kasa-klap':   ['ip'],
+        shelly:        ['ip'],
+        esphome:       ['ip', 'entityId'],
+        tasmota:       ['ip'],
         wyze:          ['mac', 'model'],
         govee:         ['deviceId', 'sku'],
         tuya:          ['deviceId'],
@@ -330,6 +388,32 @@ router.get('/devices', (_req, res) => {
           dvVendorChanged();
         }
         document.getElementById('dv-label').focus();
+      }
+      async function dvScanLocal() {
+        const status = document.getElementById('dv-local-scan-status');
+        status.textContent = 'scanning (~4s)…';
+        const r = await fetch('/api/devices/scan/local', { method: 'POST' });
+        const d = await r.json();
+        status.textContent = '';
+        if (!r.ok || d.error) return flash(d.error || 'scan failed', 'bad');
+        const items = d.results || [];
+        const box = document.getElementById('dv-local-results');
+        if (!items.length) {
+          box.innerHTML = '<p class="muted">No Shelly or ESPHome plugs found. Make sure they\\'re powered and on this network — or add by IP below.</p>';
+          return;
+        }
+        box.innerHTML = '<ul style="list-style:none;padding:0">' + items.map(i =>
+          '<li style="padding:6px 0;border-bottom:1px solid #2a2f3a"><code>' + esc(i.ip) + '</code> ' +
+          '<span class="muted">' + esc(i.name) + ' · ' + esc(i.vendor) + '</span> ' +
+          '<button style="float:right" onclick="dvUseLocal(\\'' + esc(i.ip) + '\\', \\'' + esc(i.vendor) + '\\')">Use this</button></li>'
+        ).join('') + '</ul>';
+      }
+      function dvUseLocal(ip, vendor) {
+        document.getElementById('dv-vendor').value = vendor;
+        dvVendorChanged();
+        document.getElementById('dv-ip').value = ip;
+        document.getElementById('dv-label').focus();
+        window.scrollTo({ top: document.getElementById('dv-label').getBoundingClientRect().top + window.scrollY - 100, behavior: 'smooth' });
       }
       async function dvAdd() {
         const payload = {
@@ -461,6 +545,16 @@ router.post('/api/devices/scan', async (_req, res) => {
     const hinted = results.map(r => ({ ...r, vendorHint: control.hintVendorFromMac(r.mac) }));
     res.json({ results: hinted });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/api/devices/scan/local', async (_req, res) => {
+  try {
+    const results = await devices.scanLocal();
+    res.json({ results });
+  } catch (e) {
+    logger.error('local scan failed', e.message);
     res.status(500).json({ error: e.message });
   }
 });

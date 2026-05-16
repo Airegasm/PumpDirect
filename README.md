@@ -1,6 +1,6 @@
 # PumpDirect
 
-**v1.0 beta**
+**v1.1 beta**
 
 Self-hosted session controller for smart-plug-attached pumps, designed for invited remote guests.
 Each operator runs their own instance on their own hardware — there is no central server.
@@ -69,18 +69,27 @@ There's a clear separation between:
 
 ## Supported smart outlets
 
-PumpDirect drives the pump through a smart outlet. **For pump use, a local-network outlet is strongly recommended** — see the rate-limit warning below.
+PumpDirect drives the pump through a smart outlet, picked on the **Devices** tab.
 
-**Local (LAN-controlled — fast, no cloud round-trip):**
+**Cloud outlets are being phased out.** PumpDirect is moving toward local-network-only outlets, and the cloud-connected vendors (Wyze, Govee, Tuya) will be **gradually deprecated**. Their manufacturers keep changing their cloud APIs and pushing third-party tools out of support; rapid pump on/off cycling risks rate-limiting or an outright ban from the vendor's servers; and every command pays an unnecessary internet round-trip of delay. New installs should use a local outlet — see the rate-limit warning below.
 
-| Vendor | Notes |
-|---|---|
-| **TP-Link Kasa** | No account needed — discovered via local UDP broadcast. The simplest option. |
-| **TP-Link Kasa 1.1.x+ (KLAP)** | Newer Kasa firmware — needs your TP-Link account for the local handshake, but control still happens on the LAN. |
-| **TP-Link Tapo** | Local control; needs your Tapo account credentials. |
-| **Generic** | Any outlet reachable directly by IP. |
+### Local-network outlets — recommended
 
-**Cloud-controlled (every command round-trips through the vendor's API):**
+No account, no cloud, no rate limits. Listed in recommended order:
+
+| Outlet | Add as | Notes & where to buy |
+|---|---|---|
+| **KAUF** | ESPHome | ✅ **The main recommended outlet.** Ships with ESPHome — fully local, no account, no flashing. The ESPHome switch entity defaults to `relay` (correct for KAUF). Buy: [kaufha.com/plf12](https://kaufha.com/plf12/) |
+| **Shelly** | Shelly | Local HTTP control, no account. ⚠️ Currently and periodically out of stock — check availability before relying on it. Buy: [us.shelly.com/collections/smart-plugs](https://us.shelly.com/collections/smart-plugs) |
+| **Athom (Tindie)** | Tasmota *(or ESPHome)* | Plugs pre-flashed with Tasmota or ESPHome — fully local. ⚠️ Ships from Shenzhen — expect long shipping times. Buy: [tindie.com/stores/athom](https://www.tindie.com/stores/athom/) |
+| **TP-Link Kasa (Legacy)** | TP-Link Kasa | Older Kasa plugs (e.g. the **HS103**), local UDP discovery. ⚠️ **Disable firmware auto-updates in the Kasa app** — a firmware update to 1.1.x+ removes the legacy local protocol and forces the Kasa 1.1.x+ (KLAP) method instead. |
+| **TP-Link Kasa 1.1.x+** | TP-Link Kasa 1.1.x+ | Newer Kasa firmware (KLAP) — local control, but needs your TP-Link account for the authenticated handshake. |
+| **TP-Link Tapo** | TP-Link Tapo | Local control; needs your Tapo account credentials. |
+| **Generic** | Generic | Any outlet reachable directly by IP. |
+
+### Cloud-controlled — being phased out
+
+Every command round-trips through the vendor's API:
 
 | Vendor | Notes |
 |---|---|

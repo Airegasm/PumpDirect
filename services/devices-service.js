@@ -14,7 +14,7 @@ const logger = createLogger('Devices');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const DEVICES_FILE = path.join(DATA_DIR, 'devices.json');
 
-const SUPPORTED_VENDORS = ['tapo', 'kasa', 'kasa-klap', 'wyze', 'govee', 'tuya', 'homeassistant', 'generic'];
+const SUPPORTED_VENDORS = ['tapo', 'kasa', 'kasa-klap', 'shelly', 'esphome', 'tasmota', 'wyze', 'govee', 'tuya', 'homeassistant', 'generic'];
 
 function loadAll() {
   ensureDirSync(DATA_DIR);
@@ -127,6 +127,49 @@ async function scanKasa(timeoutSeconds = 3) {
   return results;
 }
 
+// mDNS discovery of local-only smart plugs (Shelly + ESPHome). Browses for a
+// few seconds, then returns one entry per discovered IP. Tasmota is omitted —
+// its mDNS advertising is unreliable, so Tasmota plugs are added by IP.
+async function scanLocal(timeoutMs = 4000) {
+  let Bonjour;
+  try {
+    ({ Bonjour } = require('bonjour-service'));
+  } catch {
+    logger.warn('bonjour-service not installed — local scan unavailable');
+    return [];
+  }
+  return new Promise((resolve) => {
+    const found = new Map();
+    let bonjour;
+    try {
+      bonjour = new Bonjour();
+    } catch (e) {
+      logger.warn(`mDNS scan failed to start: ${e.message}`);
+      return resolve([]);
+    }
+    const collect = (vendor) => (service) => {
+      const ip = (service.addresses || []).find(a => /^\d+\.\d+\.\d+\.\d+$/.test(a));
+      if (ip && !found.has(ip)) {
+        found.set(ip, { ip, vendor, name: service.name || service.host || ip });
+      }
+    };
+    const browsers = [];
+    try {
+      browsers.push(bonjour.find({ type: 'shelly' }, collect('shelly')));
+      browsers.push(bonjour.find({ type: 'esphomelib' }, collect('esphome')));
+    } catch (e) {
+      logger.warn(`mDNS browse failed: ${e.message}`);
+    }
+    setTimeout(() => {
+      try {
+        for (const b of browsers) { if (b && b.stop) b.stop(); }
+        bonjour.destroy();
+      } catch {}
+      resolve([...found.values()]);
+    }, timeoutMs);
+  });
+}
+
 function add({ label, vendor, ip, mac, deviceId, sku, model, childId, entityId }) {
   label = (label || '').trim();
   vendor = (vendor || '').trim().toLowerCase();
@@ -144,6 +187,9 @@ function add({ label, vendor, ip, mac, deviceId, sku, model, childId, entityId }
     tapo:          ['ip'],
     kasa:          ['ip'],
     'kasa-klap':   ['ip'],
+    shelly:        ['ip'],
+    esphome:       ['ip'],
+    tasmota:       ['ip'],
     wyze:          ['mac', 'model'],
     govee:         ['deviceId', 'sku'],
     tuya:          ['deviceId'],
@@ -237,6 +283,7 @@ module.exports = {
   loadAll,
   scanLan,
   scanKasa,
+  scanLocal,
   add,
   update,
   remove,

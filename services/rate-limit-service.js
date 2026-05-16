@@ -22,7 +22,7 @@ const { createLogger } = require('../utils/logger');
 const log = createLogger('RateLimit');
 
 const CLOUD_VENDORS = new Set(['govee', 'tuya', 'wyze', 'homeassistant']);
-const LAN_VENDORS   = new Set(['kasa', 'tapo', 'generic']);
+const LAN_VENDORS   = new Set(['kasa', 'kasa-klap', 'tapo', 'generic', 'shelly', 'esphome', 'tasmota']);
 
 const DEFAULTS = {
   cloud:    { tokens: 1, refillMs: 2000 },          // 1 op / 2s per device

@@ -46,6 +46,9 @@ const DEFAULTS = {
     govee: { apiKey: '' },
     tuya:  { accessId: '', accessSecret: '', region: 'us' },
     homeassistant: { baseUrl: '', token: '' },
+    shelly: {},
+    esphome: {},
+    tasmota: {},
   },
   rateLimits: {
     // null here means "use code defaults" — see services/rate-limit-service.js

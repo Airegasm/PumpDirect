@@ -6,6 +6,9 @@ const wyze = require('./wyze-service');
 const govee = require('./govee-service');
 const tuya = require('./tuya-service');
 const ha = require('./homeassistant-service');
+const shelly = require('./shelly-service');
+const esphome = require('./esphome-service');
+const tasmota = require('./tasmota-service');
 const rateLimit = require('./rate-limit-service');
 const { createLogger } = require('../utils/logger');
 
@@ -19,6 +22,9 @@ const VENDOR_INFO = {
   govee:         { name: 'Govee',         credFields: ['apiKey'],                                idFields: ['deviceId', 'sku'] },
   tuya:          { name: 'Tuya',          credFields: ['accessId', 'accessSecret', 'region'],   idFields: ['deviceId'] },
   homeassistant: { name: 'Home Assistant',credFields: ['baseUrl', 'token'],                      idFields: ['entityId'] },
+  shelly:        { name: 'Shelly',        credFields: [],                                        idFields: ['ip'] },
+  esphome:       { name: 'ESPHome (KAUF)',credFields: [],                                        idFields: ['ip'] },
+  tasmota:       { name: 'Tasmota (Athom)',credFields: [],                                       idFields: ['ip'] },
 };
 
 // MAC OUI prefixes for vendor hinting. Not exhaustive — meant for "you scanned and
@@ -111,6 +117,9 @@ async function turnOn(device) {
     case 'govee':         return govee.turnOn(device.deviceId, device.sku);
     case 'tuya':          return tuya.turnOn(device.deviceId);
     case 'homeassistant': return ha.turnOn(device.entityId);
+    case 'shelly':        return shelly.turnOn(device.ip);
+    case 'esphome':       return esphome.turnOn(device.ip, device.entityId);
+    case 'tasmota':       return tasmota.turnOn(device.ip);
     default: throw new Error(`unsupported vendor: ${device.vendor}`);
   }
 }
@@ -128,6 +137,9 @@ async function turnOff(device) {
     case 'govee':         return govee.turnOff(device.deviceId, device.sku);
     case 'tuya':          return tuya.turnOff(device.deviceId);
     case 'homeassistant': return ha.turnOff(device.entityId);
+    case 'shelly':        return shelly.turnOff(device.ip);
+    case 'esphome':       return esphome.turnOff(device.ip, device.entityId);
+    case 'tasmota':       return tasmota.turnOff(device.ip);
     default: throw new Error(`unsupported vendor: ${device.vendor}`);
   }
 }
@@ -143,6 +155,9 @@ async function getState(device) {
     case 'govee':         return govee.getPowerState(device.deviceId, device.sku);
     case 'tuya':          return tuya.getPowerState(device.deviceId);
     case 'homeassistant': return ha.getPowerState(device.entityId);
+    case 'shelly':        return shelly.getPowerState(device.ip);
+    case 'esphome':       return esphome.getPowerState(device.ip, device.entityId);
+    case 'tasmota':       return tasmota.getPowerState(device.ip);
     default: return null;
   }
 }
