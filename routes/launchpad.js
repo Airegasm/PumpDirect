@@ -77,6 +77,14 @@ router.get('/', (req, res) => {
     .map(p => `<option value="${escape(p.id)}" ${p.id === profile.templateProfileId ? 'selected' : ''}>${escape(p.name)}</option>`)
     .join('');
 
+  // Trigger-template options for the Launchpad dashboard dropdown (assignable
+  // without diving into Settings). Empty value = no trigger template attached.
+  const triggerTemplatesList = triggersSvc.listTemplates();
+  const triggerTemplateOptions = '<option value=""' + (!profile.triggerTemplateId ? ' selected' : '') + '>(none)</option>'
+    + triggerTemplatesList
+      .map(t => `<option value="${escape(t.id)}" ${t.id === profile.triggerTemplateId ? 'selected' : ''}>${escape(t.name)}</option>`)
+      .join('');
+
   // Owner is implicitly the Host — exclude from the manageable participants list
   // and from the "add from accounts" dropdown so they can't be added as a guest.
   const ownerEmailLp = cfg.cloudflare?.ownerEmail || '';
@@ -132,6 +140,21 @@ router.get('/', (req, res) => {
   const ownerNameForTitle = ownerDisplayName || (cfg.cloudflare?.ownerEmail?.split('@')[0]) || 'owner';
 
   const body = `
+    <script>
+      // Persist the active session-profile selection across tab navigation.
+      // Without this, switching to Pump Templates / Triggers and back drops
+      // back to the factory default because the URL no longer carries
+      // ?profile= and no session is active to remember it server-side.
+      (function() {
+        try {
+          const params = new URLSearchParams(location.search);
+          if (!params.has('profile')) {
+            const saved = localStorage.getItem('pd-last-profile');
+            if (saved) location.replace(location.pathname + '?profile=' + encodeURIComponent(saved));
+          }
+        } catch {}
+      })();
+    </script>
     <h2>Launchpad <span class="muted" style="font-size:1rem">— <span id="lp-owner-name">${escape(ownerNameForTitle)}</span></span></h2>
     <script>document.title = 'PumpDirect — ' + ${JSON.stringify(ownerNameForTitle)};</script>
 
@@ -147,7 +170,16 @@ router.get('/', (req, res) => {
           ? '<span class="pill warn">factory — cannot rename/delete</span>'
           : `<button onclick="lpRenameProfile()">Rename</button> <button onclick="lpDeleteProfile()">Delete</button>`}
       </p>
-      <p class="muted">Template profile: <strong>${escape(templateProfile?.name || '?')}</strong> · Trigger profile: <strong>${escape((profile.triggerTemplateId && (triggersSvc.listTemplates().find(t => t.id === profile.triggerTemplateId)?.name)) || '(none)')}</strong></p>
+      <p style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:6px">
+          <strong>Pump template:</strong>
+          <select id="lp-tpl-select" onchange="lpSetPumpTemplate(this.value)" style="min-width:200px">${templateOptions}</select>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px">
+          <strong>Trigger template:</strong>
+          <select id="lp-trig-select" onchange="lpSetTriggerTemplate(this.value)" style="min-width:200px">${triggerTemplateOptions}</select>
+        </label>
+      </p>
     </div>`}
 
     <div id="session-stage" data-mode="${escape(profile.mode || 'single-target')}">
@@ -385,6 +417,10 @@ router.get('/', (req, res) => {
       window.__textOverlayTarget = () => document.getElementById('local-tile');
       const PROFILE_ID = ${JSON.stringify(profile.id)};
       const PROFILE_IS_FACTORY = ${JSON.stringify(!!profile.isFactory)};
+      // Persist the actual rendered profile id so a stale ?profile= or a
+      // deleted profile in localStorage gets corrected to what the server
+      // landed on. Tab nav reads this back via the redirect script above.
+      try { localStorage.setItem('pd-last-profile', PROFILE_ID); } catch {}
       const TEMPLATE_OPTIONS = ${JSON.stringify(templates.templateProfiles.map(p => ({ id: p.id, name: p.name })))};
       const ACTIONS_INFO = ${JSON.stringify(Object.fromEntries(templates.actionTemplates.map(a => [a.id, { name: a.name, description: a.description || '' }])))};
       const MINIGAMES_INFO = ${JSON.stringify(Object.fromEntries(minigames.list().map(m => [m.id, { name: m.name, kind: m.kind, color: m.color, description: m.description || '' }])))};
@@ -703,6 +739,26 @@ router.get('/', (req, res) => {
         const r = await fetch('/api/launchpad/session/custom-end', { method: 'POST' });
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+      }
+      async function lpSetPumpTemplate(id) {
+        const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID, {
+          method: 'PATCH', headers: {'content-type':'application/json'},
+          body: JSON.stringify({ templateProfileId: id }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('pump template updated', 'ok');
+        setTimeout(() => location.reload(), 300);
+      }
+      async function lpSetTriggerTemplate(id) {
+        const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID, {
+          method: 'PATCH', headers: {'content-type':'application/json'},
+          body: JSON.stringify({ triggerTemplateId: id || null }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('trigger template updated', 'ok');
+        setTimeout(() => location.reload(), 300);
       }
       async function lpConfirmStart() {
         const r = await fetch('/api/launchpad/session/accept-start', { method: 'POST' });
