@@ -1226,6 +1226,10 @@ function renderVisitorPage(req) {
 
       function applyState(s) {
         window.__lastVisitorState = s;
+        // Also expose under the shared __lastState name so helpers that work
+        // on both host + visitor (e.g. __chatNameColorFor) find current state
+        // without each one needing to know which page it's on.
+        window.__lastState = s;
         applyStandby(s);
         renderParticipants(s);
         renderMilestonePane(s);
@@ -1425,7 +1429,24 @@ function renderVisitorPage(req) {
           wsSig.send(JSON.stringify({ type: 'visibility', hidden: !!document.hidden }));
         }
       }
+      // Explicit "I'm here" override — used when the user interacts with the
+      // page even though document.hidden may briefly read true (mobile keyboard
+      // popping up, URL bar focus, etc. flicker the visibility flag). Override
+      // wins regardless of document.hidden so an actively-typing visitor never
+      // shows as AFK to others in the session.
+      function _sendActive() {
+        if (wsSig && wsSig.readyState === 1) {
+          wsSig.send(JSON.stringify({ type: 'visibility', hidden: false }));
+        }
+      }
       document.addEventListener('visibilitychange', _sendVisibility);
+      // Any interaction with the chat row counts as "still here" - covers iOS
+      // Safari's hidden-flag flicker when the soft keyboard opens.
+      (function () {
+        const i = document.getElementById('chat-input');
+        if (!i) return;
+        ['focus', 'input', 'keydown'].forEach(ev => i.addEventListener(ev, _sendActive));
+      })();
       function connect() {
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new WebSocket(proto + '://' + location.host + '/ws/visitor');

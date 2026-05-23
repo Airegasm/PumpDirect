@@ -162,7 +162,10 @@ function start() {
       } else if (msg && msg.type === 'track-state') {
         signaling.broadcast({ type: 'track-state', email: ownerEmail, videoMuted: !!msg.videoMuted, audioMuted: !!msg.audioMuted }, ownerEmail);
       } else if (msg && msg.type === 'visibility') {
-        signaling.setPresence(ownerEmail, msg.hidden ? 'afk' : 'connected');
+        // Intentionally ignored for the host. The host represents the session
+        // itself; their presence light stays green while any owner tab WS is
+        // open. Last-tab close still clears presence via the close handler
+        // below.
       }
     });
 
