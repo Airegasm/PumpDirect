@@ -141,6 +141,13 @@ router.get('/', (req, res) => {
   const ownerNameForTitle = ownerDisplayName || (cfg.cloudflare?.ownerEmail?.split('@')[0]) || 'owner';
 
   const body = `
+    <style>
+      /* Launchpad goes edge-to-edge - the 3-column grid is meant to fill the
+         viewport, not float inside a 1400px-capped, padded container like the
+         other pages do. Overrides views/layout.js main {max-width:1400; padding:22px 28px}.
+         Top/bottom padding stays so tabs/header don't clip; sides go to zero. */
+      main { max-width: none !important; padding-left: 0 !important; padding-right: 0 !important; }
+    </style>
     <script>
       // Persist the active session-profile selection across tab navigation.
       // Without this, switching to Pump Templates / Triggers and back drops
