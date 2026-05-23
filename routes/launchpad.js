@@ -406,8 +406,10 @@ router.get('/', (req, res) => {
             : '<p class="muted" style="font-size:0.95rem">No participants yet.</p>'}
         </div>
         ${ineligible.length ? '' : '<p class="muted" style="font-size:0.85rem;margin-top:12px">All accounts already added. Manage on Users tab.</p>'}
-        <p class="muted" style="font-size:0.75rem;margin-top:12px">C = connect · A = action control · V = video broadcast · Ch = chat</p>
-        <p class="muted" style="font-size:0.75rem;margin-top:4px"><span class="presence-dot" style="display:inline-block;vertical-align:middle"></span> invited &nbsp;<span class="presence-dot online" style="display:inline-block;vertical-align:middle"></span> in session &nbsp;<span class="presence-dot afk" style="display:inline-block;vertical-align:middle"></span> afk</p>
+        <div class="p-legend" style="padding-top:12px;border-top:1px solid var(--border);margin-top:12px">
+          <p class="muted" style="font-size:0.75rem">C = connect · A = action control · V = video broadcast · Ch = chat</p>
+          <p class="muted" style="font-size:0.75rem"><span class="presence-dot" style="display:inline-block;vertical-align:middle"></span> invited &nbsp;<span class="presence-dot online" style="display:inline-block;vertical-align:middle"></span> in session &nbsp;<span class="presence-dot afk" style="display:inline-block;vertical-align:middle"></span> afk</p>
+        </div>
       </div>
     </div>
 

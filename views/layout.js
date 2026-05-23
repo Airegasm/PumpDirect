@@ -213,7 +213,14 @@ function ownerLayout({ title, active, body }) {
   .chat-pane .chat-log { flex: 1; min-height: 320px; max-height: 60vh; overflow-y: auto; background:var(--bg-3); border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px; }
   .chat-pane .chat-input-row { margin-top: 10px; display:flex; gap:8px; }
   .chat-pane .chat-input-row input { flex:1; }
-  .participants-pane .p-list { display: flex; flex-direction: column; gap: 4px; max-height: 56vh; overflow-y: auto; }
+  /* Flex-column the whole pane so the legend can pin to the bottom via
+     .p-legend { margin-top: auto } regardless of how many participants
+     are in the list. */
+  .participants-pane { display: flex; flex-direction: column; }
+  .participants-pane .p-list { display: flex; flex-direction: column; gap: 4px; max-height: 56vh; overflow-y: auto; flex: 0 1 auto; }
+  .participants-pane .p-legend { margin-top: auto; }
+  .participants-pane .p-legend p { margin: 0; }
+  .participants-pane .p-legend p + p { margin-top: 4px; }
   .participants-pane .p-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; font-size: 0.92rem; }
   .participants-pane .p-flags { margin-left: auto; display: flex; gap: 2px; font-size: 0.75rem; }
   .participants-pane .p-flags label { display: inline-flex; align-items: center; gap: 1px; }
