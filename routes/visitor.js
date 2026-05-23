@@ -156,7 +156,12 @@ function renderVisitorPage(req) {
     .milestone-pane .milestone-announcement:empty { display: none; }
     .milestone-pane .action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
     .cam-grid { display: flex; justify-content: center; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; width: 100%; }
-    .cam-slot { flex: 1 1 0; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+    /* Slot flex-grow scales with the published cam's aspect ratio so all
+       tiles in the row render at the same HEIGHT regardless of aspect. A
+       16:9 host cam paired with a 1:1 controller cam splits the row
+       ~64% / 36%, both ending up the same height instead of the host
+       overhanging the square visitor below. Mirror of the host's lp-grid fix. */
+    .cam-slot { flex: var(--cam-aspect, 1) 1 0%; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
     .cam-slot:empty { display: none; }
     /* Host (owner) is the dominant tile. Controller slot — including the visitor's
        own webcam preview — is sized noticeably smaller. */
@@ -858,7 +863,12 @@ function renderVisitorPage(req) {
         v.onloadedmetadata = () => {
           // Remote streams: owner can be any aspect, controllers are forced 1:1 at the source.
           if (v.videoWidth > 0 && v.videoHeight > 0) {
-            tile.style.setProperty('--cam-aspect', (v.videoWidth / v.videoHeight).toFixed(4));
+            const ar = (v.videoWidth / v.videoHeight).toFixed(4);
+            tile.style.setProperty('--cam-aspect', ar);
+            // Also propagate to the .cam-slot so the new aspect-proportional
+            // flex-grow widens landscape tiles enough to keep all heights even.
+            const slot = tile.closest('.cam-slot');
+            if (slot) slot.style.setProperty('--cam-aspect', ar);
           }
         };
         const ps = __peerTrackState.get(email);

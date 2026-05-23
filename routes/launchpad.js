@@ -384,7 +384,10 @@ router.get('/', (req, res) => {
         </div>
       </div>
       <div class="card participants-pane">
-        <h3 style="margin:0 0 12px">Participants <span class="muted" style="font-size:0.85rem;font-weight:normal">(${profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).length})</span></h3>
+        <h3 style="margin:0 0 12px;display:flex;align-items:center;gap:8px">
+          <span>Participants <span class="muted" style="font-size:0.85rem;font-weight:normal">(${profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).length})</span></span>
+          <button onclick="lpOpenAddParticipantModal()" title="${ineligible.length ? 'Add participant from accounts' : 'All accounts already added'}" ${ineligible.length ? '' : 'disabled'} style="margin-left:auto;background:#2a6df4;color:#fff;border:0;border-radius:6px;width:28px;height:28px;padding:0;font-size:1.1rem;line-height:1;cursor:pointer">+</button>
+        </h3>
         <div class="p-list">
           ${profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).length
             ? profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).map(p => `
@@ -402,12 +405,7 @@ router.get('/', (req, res) => {
               </div>`).join('')
             : '<p class="muted" style="font-size:0.95rem">No participants yet.</p>'}
         </div>
-        ${ineligible.length ? `
-          <p style="margin-top:14px">
-            <select id="lp-add-pick" style="width:100%;margin-bottom:6px">${addParticipantOptions}</select>
-            <button onclick="lpAddParticipant()" style="width:100%">Add from accounts</button>
-          </p>
-        ` : '<p class="muted" style="font-size:0.85rem;margin-top:12px">All accounts already added. Manage on Users tab.</p>'}
+        ${ineligible.length ? '' : '<p class="muted" style="font-size:0.85rem;margin-top:12px">All accounts already added. Manage on Users tab.</p>'}
         <p class="muted" style="font-size:0.75rem;margin-top:12px">C = connect · A = action control · V = video broadcast · Ch = chat</p>
         <p class="muted" style="font-size:0.75rem;margin-top:4px"><span class="presence-dot" style="display:inline-block;vertical-align:middle"></span> invited &nbsp;<span class="presence-dot online" style="display:inline-block;vertical-align:middle"></span> in session &nbsp;<span class="presence-dot afk" style="display:inline-block;vertical-align:middle"></span> afk</p>
       </div>
@@ -1358,12 +1356,30 @@ router.get('/', (req, res) => {
       connectWs();
 
       // ---- participants ----
-      async function lpAddParticipant() {
-        const email = document.getElementById('lp-add-pick').value;
-        const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/participants', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }) });
-        const d = await r.json();
-        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
-        location.reload();
+      // The "Add from accounts" dropdown is no longer rendered inline at the
+      // bottom of the participants pane; the + button next to the title opens
+      // this modal instead. Server-side option list is baked into the HTML
+      // attribute below to avoid an extra fetch.
+      const __ADD_PARTICIPANT_OPTIONS = ${JSON.stringify(ineligible.map(e => ({ email: e, nickname: cfg.accounts.find(a => a.email === e)?.nickname || e.split('@')[0] })))};
+      function lpOpenAddParticipantModal() {
+        if (!__ADD_PARTICIPANT_OPTIONS.length) {
+          flash('All accounts are already in this session. Add more on the Users tab.', 'warn');
+          return;
+        }
+        const opts = __ADD_PARTICIPANT_OPTIONS
+          .map(o => '<option value="' + escapeHtml(o.email) + '">' + escapeHtml(o.nickname + ' — ' + o.email) + '</option>')
+          .join('');
+        modalOpen('Add participant', '<p><label>Pick an account to add to this session:</label></p>' +
+          '<p><select id="m-add-participant" style="width:100%;font-size:1rem;padding:8px">' + opts + '</select></p>',
+          async () => {
+            const email = document.getElementById('m-add-participant').value;
+            if (!email) return flash('pick an account', 'bad');
+            const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/participants', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }) });
+            const d = await r.json();
+            if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+            modalClose();
+            location.reload();
+          });
       }
       async function lpRemoveParticipant(email) {
         const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/participants/' + encodeURIComponent(email), { method: 'DELETE' });
