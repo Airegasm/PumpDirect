@@ -165,8 +165,8 @@ function renderVisitorPage(req) {
     .cam-tile { width: 100%; aspect-ratio: var(--cam-aspect, 1); background:var(--bg-3); border:1px solid var(--border); border-radius:14px; overflow:hidden; position:relative; }
     .cam-tile.local-cam-placeholder { display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; cursor: default; }
     .cam-tile.local-cam-placeholder .placeholder-btn { background: var(--accent); color: #fff; border: 0; padding: 12px 16px; border-radius: 10px; font-size: 0.95rem; cursor: pointer; font-family: inherit; }
-    .cam-tile .local-ctrls { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; z-index: 6; }
-    .cam-tile .local-ctrls button { background: rgba(0,0,0,0.65); color: #fff; border: 0; border-radius: 6px; padding: 6px 10px; font-size: 0.95rem; cursor: pointer; min-width: 36px; }
+    .cam-tile .local-ctrls { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 6; }
+    .cam-tile .local-ctrls button { background: rgba(0,0,0,0.65); color: #fff; border: 0; border-radius: 6px; padding: 6px 10px; font-size: 1rem; cursor: pointer; min-width: 36px; }
     .cam-tile .local-ctrls button.stop { background: rgba(161,48,48,0.85); }
     .cam-tile .local-ctrls button.muted { background: rgba(74,52,19,0.9); color: #f0c674; }
     .cam-tile video { width:100%; height:100%; object-fit:cover; }

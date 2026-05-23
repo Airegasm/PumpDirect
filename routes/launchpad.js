@@ -222,11 +222,8 @@ router.get('/', (req, res) => {
       <div class="dual-cam-stack">
         <div class="cam-pair">
           <div class="cam-slot wide" id="cam-owner-slot">
-            <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">Local cam off</div>
-            <div class="cam-buttons">
-              <button id="btn-cam" onclick="lpToggleCam()">Start camera</button>
-              <button id="btn-vid" onclick="lpToggleVideo()" disabled>Mute video</button>
-              <button id="btn-aud" onclick="lpToggleAudio()" disabled>Mute audio</button>
+            <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">
+              <button class="placeholder-cam-btn" onclick="lpToggleCam()">📹 Start camera</button>
             </div>
           </div>
           <div class="gauge-float gauge-host">
@@ -281,64 +278,77 @@ router.get('/', (req, res) => {
       <div id="trigger-fx-stage"></div>
       <div id="action-flash-stage"></div>
     ` : `
-      <!-- ====== SINGLE-TARGET LAYOUT (unchanged) ====== -->
-      <div class="top-row">
-        <div class="card gauge-card">
-          <h3 style="margin:0 0 2px;font-size:1.1rem;text-align:center">Inflation Capacity</h3>
-          <p class="muted" style="margin:0 0 8px;font-size:0.82rem;text-align:center;line-height:1.35">Real, calibrated and calculated display of <strong>${escape(ownerNameForTitle)}</strong>'s current fullness.</p>
-          ${gauge(state.capacity)}
-          <p style="margin:6px 0 0">
-            <button onclick="lpEditCapacity()" ${state.active ? '' : 'disabled'} style="background:#2a2f3a;padding:4px 10px;font-size:0.85rem">✎ Set capacity</button>
-          </p>
-          <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status">
-            Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
-          </p>
-          <p class="cycle-status" id="cycle-status"></p>
-          <p style="margin-top:10px">
-            ${state.active
-              ? `<button onclick="lpStop()" style="background:#7a3a3a">Stop</button>
-                 <button onclick="lpEstop()" style="background:#a13030;font-weight:700">E-STOP</button>
-                 <button onclick="lpTogglePause()" style="background:${state.paused ? '#2a6df4' : '#7a8597'};min-width:140px">${state.paused ? 'Exit Standby' : 'Enter Standby'}</button>`
-              : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>Start Session</button>`}
-          </p>
-          ${state.active && state.introPending && profile.introButton?.enabled && profile.introButton?.target ? `
-            <p id="lp-intro-row" style="margin-top:8px">
-              <button onclick="lpIntro()" style="background:#2a8a6d;color:#fff;font-weight:700;min-width:180px">${escape(profile.introButton.text || 'Start Intro')}</button>
-            </p>` : ''}
-          ${state.active && profile.customEndButton?.enabled && profile.customEndButton?.target ? `
-            <p style="margin-top:8px">
-              <button onclick="lpCustomEnd()" style="background:#7b3fd6;color:#fff;font-weight:700;min-width:180px">${escape(profile.customEndButton.text || 'Custom End')}</button>
-            </p>` : ''}
-          ${state.active && state.introPending ? `
-            <p id="lp-intro-lock-note" class="muted" style="margin-top:6px;font-size:0.82rem;text-align:center;line-height:1.3">Pump action panel locked until intro completes.</p>` : ''}
-          ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin-top:6px">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
-        </div>
-        <div class="card milestone-pane">
-          <p class="milestone-welcome">${escape(profile.welcomeMessage || '(no welcome message)')}</p>
-          <p class="milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
-          <p class="milestone-announcement">${activeMilestone ? escape(activeMilestone.announcement || '') : ''}</p>
-          <p class="muted" id="milestone-meta" style="font-size:0.9rem;margin:0 0 14px">
-            ${state.active
-              ? (activeMilestone ? `${activeMilestone.capacityMin}–${activeMilestone.capacityMax}% · milestone announcement live` : 'Welcome message — replaced when first milestone is reached')
-              : 'Welcome message (visitors see this when no session is running)'}
-            · <a href="#" onclick="lpEditWelcome();return false" style="color:#9aa4b2">edit welcome</a>
-          </p>
-          <div class="action-grid">${actionButtons}</div>
-        </div>
+      <!-- ====== SINGLE-TARGET LAYOUT — 3-COLUMN ====== -->
+      <!-- Top card: session name / welcome / current milestone announcement only -->
+      <div class="card milestone-pane" id="lp-top-card">
+        <p class="milestone-welcome">${escape(profile.welcomeMessage || '(no welcome message)')}</p>
+        <p class="milestone-announcement">${activeMilestone ? escape(activeMilestone.announcement || '') : ''}</p>
+        <p class="muted" id="milestone-meta" style="font-size:0.9rem;margin:0">
+          ${state.active
+            ? (activeMilestone ? `${activeMilestone.capacityMin}–${activeMilestone.capacityMax}% · milestone announcement live` : 'Welcome message — replaced when first milestone is reached')
+            : 'Welcome message (visitors see this when no session is running)'}
+          · <a href="#" onclick="lpEditWelcome();return false" style="color:#9aa4b2">edit welcome</a>
+        </p>
       </div>
 
-      <div class="cam-grid">
-        <div class="cam-slot" id="cam-controller-slot"></div>
-        <div class="cam-slot" id="cam-owner-slot">
-          <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">Local cam off</div>
-          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
-            <button id="btn-cam" onclick="lpToggleCam()">Start camera</button>
-            <button id="btn-vid" onclick="lpToggleVideo()" disabled>Mute video</button>
-            <button id="btn-aud" onclick="lpToggleAudio()" disabled>Mute audio</button>
+      <div class="lp-grid">
+        <!-- LEFT: session controls (stacked) then gauge cluster -->
+        <div class="card lp-col-left">
+          <div class="session-controls" id="lp-session-controls">
+            ${state.active
+              ? `<button onclick="lpTogglePause()" style="background:${state.paused ? '#2a6df4' : '#7a8597'}">${state.paused ? '▶ Exit Standby' : '⏸ Enter Standby'}</button>
+                 <button onclick="lpStop()" style="background:#7a3a3a">⏹ Stop Session</button>
+                 <button onclick="lpEstop()" style="background:#a13030;font-weight:700">⛔ E-STOP</button>`
+              : `<button onclick="lpStart()" ${sessionReady ? '' : 'disabled'}>▶ Start Session</button>`}
+            ${state.active && state.introPending && profile.introButton?.enabled && profile.introButton?.target ? `
+              <button id="lp-intro-row" onclick="lpIntro()" style="background:#2a8a6d;color:#fff;font-weight:700">${escape(profile.introButton.text || 'Start Intro')}</button>` : ''}
+            ${state.active && profile.customEndButton?.enabled && profile.customEndButton?.target ? `
+              <button onclick="lpCustomEnd()" style="background:#7b3fd6;color:#fff;font-weight:700">${escape(profile.customEndButton.text || 'Custom End')}</button>` : ''}
+          </div>
+          ${state.active && state.introPending ? `
+            <p id="lp-intro-lock-note" class="muted" style="margin:8px 0 0;font-size:0.82rem;text-align:center;line-height:1.3">Pump action panel locked until intro completes.</p>` : ''}
+          ${!state.active && !sessionReady ? `<p class="muted" style="font-size:0.85rem;margin:8px 0 0">${!calibratedReady ? 'Primary pump must be calibrated.' : 'Add at least one allowed user.'}</p>` : ''}
+
+          <div class="session-divider"></div>
+
+          <div class="lp-gauge-wrap">
+            <h3 style="margin:0 0 2px;font-size:1rem;text-align:center">Capacity</h3>
+            <p class="muted" style="margin:0 0 6px;font-size:0.78rem;text-align:center;line-height:1.3"><strong>${escape(ownerNameForTitle)}</strong>'s fullness</p>
+            ${gauge(state.capacity)}
+            <p style="margin:4px 0 0">
+              <button onclick="lpEditCapacity()" ${state.active ? '' : 'disabled'} style="background:#2a2f3a;padding:4px 10px;font-size:0.82rem">✎ Set capacity</button>
+            </p>
+            <p class="pump-status ${state.pumpOn ? '' : 'idle'}" id="pump-status" style="margin:6px 0 0;font-size:0.95rem;text-align:center">
+              Pump: <span class="pump-state">${state.pumpOn ? 'Running' : 'Idle'}</span><span class="pump-count" id="pump-count"></span>
+            </p>
+            <p class="cycle-status" id="cycle-status" style="margin:2px 0 0;text-align:center"></p>
           </div>
         </div>
-        <div id="trigger-fx-stage"></div>
-        <div id="action-flash-stage"></div>
+
+        <!-- CENTER: cam grid (chat-row sits below the whole lp-grid) -->
+        <div class="lp-col-center">
+          <div class="cam-grid">
+            <div class="cam-slot" id="cam-controller-slot"></div>
+            <div class="cam-slot" id="cam-owner-slot">
+              <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">
+                <button class="placeholder-cam-btn" onclick="lpToggleCam()">📹 Start camera</button>
+              </div>
+            </div>
+            <div id="trigger-fx-stage"></div>
+            <div id="action-flash-stage"></div>
+          </div>
+        </div>
+
+        <!-- RIGHT: milestone name + range + action buttons (stacked vertically) -->
+        <div class="card lp-col-right milestone-pane">
+          <p class="lp-milestone-title" id="lp-milestone-title">${activeMilestone ? escape(activeMilestone.name) : (state.active ? escape(templateProfile?.name || 'Default') : 'Idle')}</p>
+          <p class="lp-milestone-range" id="lp-milestone-range">${state.active
+            ? (activeMilestone
+                ? (activeMilestone.is100Plus ? '100%+' : `${activeMilestone.capacityMin}%–${activeMilestone.capacityMax}%`)
+                : '(no active milestone)')
+            : '(idle)'}</p>
+          <div class="action-list action-grid">${actionButtons}</div>
+        </div>
       </div>
     `}
     <div id="overlay-stage"></div>
@@ -428,6 +438,15 @@ router.get('/', (req, res) => {
       // own local cam tile — the same element that visitors see streamed.
       window.__textOverlayTarget = () => document.getElementById('local-tile');
       const PROFILE_ID = ${JSON.stringify(profile.id)};
+      // In single-target mode the layout is a 3-column grid (left sidebar /
+      // center cams+chat / right sidebar). The chat-row HTML is rendered once
+      // below the session-stage; move it into the center column so the side
+      // columns visually extend from top-of-cams down to bottom-of-chat.
+      (function () {
+        const center = document.querySelector('.lp-col-center');
+        const chat = document.querySelector('main > .chat-row');
+        if (center && chat) center.appendChild(chat);
+      })();
       const PROFILE_IS_FACTORY = ${JSON.stringify(!!profile.isFactory)};
       // Persist the actual rendered profile id so a stale ?profile= or a
       // deleted profile in localStorage gets corrected to what the server
@@ -469,11 +488,21 @@ router.get('/', (req, res) => {
         const mid = m ? m.id : (s.active ? '__no_milestone__' : '__idle__');
         if (__lastRenderedMilestoneId === mid) return;
         __lastRenderedMilestoneId = mid;
-        const titleEl = document.querySelector('.milestone-pane .milestone-title');
+        // Single-target layout splits things across the new 3-column lp-grid:
+        // milestone TITLE + range live in the right column (.lp-milestone-title /
+        // .lp-milestone-range), the welcome + announcement + meta live in the
+        // top card (.milestone-welcome / .milestone-announcement / #milestone-meta).
+        // Dual-target falls back to the legacy single .milestone-title selector.
+        const titleEl = document.getElementById('lp-milestone-title')
+          || document.querySelector('.milestone-pane .milestone-title');
+        const rangeEl = document.getElementById('lp-milestone-range');
         const wmEl = document.querySelector('.milestone-pane .milestone-welcome');
         const annEl = document.querySelector('.milestone-pane .milestone-announcement');
         const metaEl = document.getElementById('milestone-meta');
         if (titleEl) titleEl.textContent = m ? m.name : (s.active ? TPL_NAME : 'Idle');
+        if (rangeEl) rangeEl.textContent = s.active
+          ? (m ? (m.is100Plus ? '100%+' : (m.capacityMin + '%–' + m.capacityMax + '%')) : '(no active milestone)')
+          : '(idle)';
         if (wmEl) wmEl.textContent = WELCOME_MSG || '(no welcome message)';
         if (annEl) annEl.textContent = (m && m.announcement) ? m.announcement : '';
         if (metaEl) {
@@ -482,7 +511,8 @@ router.get('/', (req, res) => {
             : 'Welcome message (visitors see this when no session is running)';
           metaEl.innerHTML = _safeAttr(inner) + ' · <a href="#" onclick="lpEditWelcome();return false" style="color:#9aa4b2">edit welcome</a>';
         }
-        const grid = document.querySelector('.milestone-pane .action-grid');
+        const grid = document.querySelector('.lp-col-right .action-list')
+          || document.querySelector('.milestone-pane .action-grid');
         if (!grid) return;
         if (!s.active) { grid.innerHTML = '<p class="muted">Start a session to enable actions.</p>'; return; }
         const ids = Array.from(new Set([...((m && m.actionTemplateIds) || []), ...ALWAYS_ACTION_IDS]));
@@ -1062,9 +1092,18 @@ router.get('/', (req, res) => {
       function setLocalTileFromStream(stream) {
         const tile = document.getElementById('local-tile');
         tile.style.display = 'block';
+        // Overlay icon controls in the upper-right corner — same .rt-ctrls
+        // pattern remote tiles use, so the host's tile looks consistent with
+        // every visitor cam tile already on screen. Replaces the previous
+        // big button block that lived in a flexbox below the tile.
         tile.innerHTML =
           '<video autoplay muted playsinline></video>' +
-          '<div class="rt-label">you</div>';
+          '<div class="rt-label">you</div>' +
+          '<div class="rt-ctrls local-ctrls">' +
+            '<button class="stop" id="btn-cam" title="Stop camera" onclick="lpToggleCam()">⏻</button>' +
+            '<button id="btn-vid" title="Mute video" onclick="lpToggleVideo()">🎥</button>' +
+            '<button id="btn-aud" title="Mute audio" onclick="lpToggleAudio()">🎤</button>' +
+          '</div>';
         const v = tile.querySelector('video');
         v.srcObject = stream;
         v.onloadedmetadata = () => _setTileAspect(tile, v.videoWidth, v.videoHeight);
@@ -1073,7 +1112,9 @@ router.get('/', (req, res) => {
       function resetLocalTile() {
         const tile = document.getElementById('local-tile');
         tile.style.display = 'grid';
-        tile.innerHTML = 'Local cam off';
+        // Placeholder Start button takes the full tile so the affordance is
+        // obvious without any text-button row below.
+        tile.innerHTML = '<button class="placeholder-cam-btn" onclick="lpToggleCam()">📹 Start camera</button>';
         renderTextOverlays(window.__lastState);
       }
       async function lpStartCam() {
@@ -1122,10 +1163,11 @@ router.get('/', (req, res) => {
             localStream = rawLocal;
           }
           setLocalTileFromStream(localStream);
-          document.getElementById('btn-cam').textContent = 'Stop camera';
-          document.getElementById('btn-vid').disabled = false;
+          // setLocalTileFromStream just (re)rendered the tile - the icon
+          // buttons exist now. Just disable the mic icon if there's no audio.
           const audioTrack = localStream.getAudioTracks()[0];
-          document.getElementById('btn-aud').disabled = !audioTrack;
+          const audBtn = document.getElementById('btn-aud');
+          if (audBtn) audBtn.disabled = !audioTrack;
           applyOutgoingTrackState();   // honour standby + any pre-existing user-mute
           if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: true }));
           broadcastTrackState();
@@ -1161,10 +1203,10 @@ router.get('/', (req, res) => {
           localStream.getTracks().forEach(t => { try { t.stop(); } catch {} });
         }
         localStream = null;
+        // resetLocalTile rebuilds the tile contents - the icon buttons
+        // (btn-cam, btn-vid, btn-aud) no longer exist. lpToggleCam/Video/Audio
+        // already bail when localStream is null, so no extra cleanup needed.
         resetLocalTile();
-        document.getElementById('btn-cam').textContent = 'Start camera';
-        document.getElementById('btn-vid').disabled = true;
-        document.getElementById('btn-aud').disabled = true;
       }
       function lpToggleCam() { localStream ? lpStopCam() : lpStartCam(); }
       function lpToggleVideo() {
@@ -1173,7 +1215,12 @@ router.get('/', (req, res) => {
         t._userMuted = !t._userMuted;
         applyOutgoingTrackState();
         broadcastTrackState();
-        document.getElementById('btn-vid').textContent = t._userMuted ? 'Unmute video' : 'Mute video';
+        const btn = document.getElementById('btn-vid');
+        if (btn) {
+          btn.classList.toggle('muted', !!t._userMuted);
+          btn.textContent = t._userMuted ? '🚫' : '🎥';
+          btn.title = t._userMuted ? 'Unmute video' : 'Mute video';
+        }
       }
       function lpToggleAudio() {
         if (!localStream) return;
@@ -1181,7 +1228,12 @@ router.get('/', (req, res) => {
         t._userMuted = !t._userMuted;
         applyOutgoingTrackState();
         broadcastTrackState();
-        document.getElementById('btn-aud').textContent = t._userMuted ? 'Unmute audio' : 'Mute audio';
+        const btn = document.getElementById('btn-aud');
+        if (btn) {
+          btn.classList.toggle('muted', !!t._userMuted);
+          btn.textContent = t._userMuted ? '🔇' : '🎤';
+          btn.title = t._userMuted ? 'Unmute audio' : 'Mute audio';
+        }
       }
       function attachRemoteTile(email, stream, nickname, isOwner) {
         const label = nickname || email;

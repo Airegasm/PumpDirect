@@ -91,6 +91,32 @@ function ownerLayout({ title, active, body }) {
   .top-row { display: grid; grid-template-columns: 300px 1fr; gap: 14px; align-items: stretch; margin-bottom: 14px; }
   .top-row > .card { margin: 0; }
   .gauge-card { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  /* ====== Three-column launchpad layout ======
+     Left sidebar (session controls + gauge) | center (cams + chat) | right sidebar
+     (current milestone + action buttons). Sidebar width pins to ~280px so the
+     240px gauge fits with normal card padding; columns match each other. Collapses
+     to a single stacked column below 1100px viewport. */
+  .lp-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px; gap: 16px; align-items: start; margin-bottom: 14px; }
+  .lp-grid > .card { margin: 0; }
+  .lp-grid .lp-col-left  { display: flex; flex-direction: column; gap: 10px; }
+  .lp-grid .lp-col-right { display: flex; flex-direction: column; gap: 10px; }
+  .lp-grid .lp-col-left .session-controls { display: flex; flex-direction: column; gap: 8px; }
+  .lp-grid .lp-col-left .session-controls button { width: 100%; padding: 10px 14px; font-size: 0.95rem; }
+  .lp-grid .lp-col-left .session-divider { height: 1px; background: var(--border); margin: 4px 0; }
+  .lp-grid .lp-col-left .lp-gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .lp-grid .lp-col-right .lp-milestone-title { font-size: 1.2rem; font-weight: 700; margin: 0 0 4px; }
+  .lp-grid .lp-col-right .lp-milestone-range { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 12px; }
+  .lp-grid .lp-col-right .action-list { display: flex; flex-direction: column; gap: 6px; }
+  .lp-grid .lp-col-right .action-list .action-cell { position: relative; display: flex; }
+  .lp-grid .lp-col-right .action-list .action-cell .action-btn { flex: 1; min-height: 50px; padding: 10px 36px 10px 12px; width: 100%; font-size: 0.95rem; }
+  .lp-grid .lp-col-right .action-list .action-btn { min-height: 50px; padding: 10px 14px; font-size: 0.95rem; }
+  @media (max-width: 1100px) {
+    .lp-grid { grid-template-columns: 1fr; }
+  }
+  /* In-tile placeholder Start camera button (replaces the old text-button row) */
+  .cam-tile .placeholder-cam-btn { background:#2a6df4; color:#fff; border:0; border-radius:10px; padding:12px 20px; font-size:1rem; cursor:pointer; font-family:inherit; }
+  .cam-tile .placeholder-cam-btn:hover { background:#3b7df8; }
+  .cam-tile .local-ctrls button.muted { background:rgba(74,52,19,0.9); color:#f0c674; }
   .pump-status { font-size: 1.05rem; font-weight: 600; margin: 8px 0 0; min-height: 1.5em; color:#e8e8e8; }
   .pump-status .pump-state { color: #6ddc9b; }
   .pump-status.idle .pump-state { color: #7a8597; }
@@ -180,6 +206,9 @@ function ownerLayout({ title, active, body }) {
   .cam-tile .rt-ctrls button { background:rgba(0,0,0,0.6); border:0; color:#fff; border-radius:6px; padding:6px 10px; font-size:1rem; cursor:pointer; }
   .cam-tile.muted-video video { visibility: hidden; }
   .chat-row { display: grid; grid-template-columns: 1fr 520px; gap: 14px; }
+  /* When chat-row sits inside the narrower lp-col-center (single-target
+     launchpad layout), the participants pane stops fighting cams for width. */
+  .lp-col-center .chat-row { grid-template-columns: minmax(0, 1fr) minmax(240px, 360px); margin-top: 14px; }
   .chat-row > .card { margin: 0; display: flex; flex-direction: column; }
   .chat-pane .chat-log { flex: 1; min-height: 320px; max-height: 60vh; overflow-y: auto; background:var(--bg-3); border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px; }
   .chat-pane .chat-input-row { margin-top: 10px; display:flex; gap:8px; }
