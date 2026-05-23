@@ -78,6 +78,15 @@ function renderVisitorPage(req) {
   const chatParticipantOn = participant ? participant.canChat !== false : true;
   const chatEnabled = chatGloballyOn && chatProfileOn && chatParticipantOn;
 
+  // Host cam aspect ratio — passed to the empty cam-owner-slot so the
+  // visitor's first paint reserves the right shape, instead of defaulting to
+  // a 1:1 square that snaps narrower when the host's stream metadata arrives.
+  const _hostCamRes = cfg.owner?.camera?.resolution || { width: 1280, height: 720 };
+  const _hostCamAspect = (_hostCamRes.width === 'native' || !Number.isFinite(Number(_hostCamRes.width)) || !Number.isFinite(Number(_hostCamRes.height)))
+    ? (16 / 9)
+    : (Number(_hostCamRes.width) / Number(_hostCamRes.height));
+  const hostCamAspectStr = _hostCamAspect.toFixed(4);
+
   const minigamesList = minigames.list();
   const minigamesById = Object.fromEntries(minigamesList.map(mg => [mg.id, mg]));
 
@@ -163,10 +172,12 @@ function renderVisitorPage(req) {
        overhanging the square visitor below. Mirror of the host's lp-grid fix. */
     .cam-slot { flex: var(--cam-aspect, 1) 1 0%; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
     .cam-slot:empty { display: none; }
-    /* Host (owner) is the dominant tile. Controller slot — including the visitor's
-       own webcam preview — is sized noticeably smaller. */
-    #cam-owner-slot { flex: 2 1 0; max-width: min(85vh, 65vw); }
-    #cam-controller-slot { flex: 1 1 0; max-width: min(40vh, 30vw); }
+    /* Host owner slot keeps a wider max-width than the controller slot so the
+       split visually emphasizes the host, but the flex split itself is the
+       aspect-proportional default from .cam-slot (above) so tiles match height
+       instead of one overhanging the other. */
+    #cam-owner-slot { max-width: min(85vh, 65vw); }
+    #cam-controller-slot { max-width: min(40vh, 30vw); }
     .cam-tile { width: 100%; aspect-ratio: var(--cam-aspect, 1); background:var(--bg-3); border:1px solid var(--border); border-radius:14px; overflow:hidden; position:relative; }
     .cam-tile.local-cam-placeholder { display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; cursor: default; }
     .cam-tile.local-cam-placeholder .placeholder-btn { background: var(--accent); color: #fff; border: 0; padding: 12px 16px; border-radius: 10px; font-size: 0.95rem; cursor: pointer; font-family: inherit; }
@@ -461,7 +472,7 @@ function renderVisitorPage(req) {
         <!-- ====== DUAL-TARGET VISITOR LAYOUT ====== -->
         <div class="dual-cam-stack">
           <div class="cam-pair">
-            <div class="cam-slot wide" id="cam-owner-slot"></div>
+            <div class="cam-slot wide" id="cam-owner-slot" style="--cam-aspect:${hostCamAspectStr}"></div>
             <div class="gauge-float gauge-host">
               <div class="gauge-name">🔵 ${escapeHtml(ownerDisplayName)}</div>
               ${gauge(state.capacity)}
@@ -520,7 +531,7 @@ function renderVisitorPage(req) {
 
         <div class="cam-grid">
           <div class="cam-slot" id="cam-controller-slot"></div>
-          <div class="cam-slot" id="cam-owner-slot"></div>
+          <div class="cam-slot" id="cam-owner-slot" style="--cam-aspect:${hostCamAspectStr}"></div>
           <div id="trigger-fx-stage"></div>
           <div id="action-flash-stage"></div>
         </div>
