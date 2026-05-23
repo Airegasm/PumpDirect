@@ -51,18 +51,11 @@ function invalidate() { cache = null; cacheTime = 0; }
 function getUpdateCommands(platform, serviceInstalled) {
   const dir = PROJECT_DIR;
   if (platform === 'win32') {
-    if (serviceInstalled) {
-      return {
-        scope: 'Windows Service (NSSM)',
-        shell: 'PowerShell (run as Administrator)',
-        cmd: `Stop-Service PumpDirect\ncd "${dir}"\ngit pull\nnpm install --no-audit --no-fund\nStart-Service PumpDirect`,
-      };
-    }
     return {
-      scope: 'Windows (launcher)',
-      shell: 'cmd.exe',
-      cmd: `cd /d "${dir}"\nstart.bat`,
-      note: 'start.bat auto-pulls on launch. Close any running PumpDirect window first.',
+      scope: serviceInstalled ? 'Windows Service (NSSM)' : 'Windows',
+      shell: 'PowerShell (run as Administrator)',
+      cmd: `powershell -NoProfile -ExecutionPolicy Bypass -File "${dir}\\update.ps1"`,
+      note: 'update.ps1 finds git/npm even if not on PATH (probes Git for Windows and GitHub Desktop install paths), stops the service if running, pulls, runs npm install only if dependencies changed, then restarts the service.',
     };
   }
   if (platform === 'linux') {
