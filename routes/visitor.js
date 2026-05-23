@@ -7,6 +7,7 @@ const chat = require('../services/chat-service');
 const config = require('../config');
 const { rtcClientJs } = require('../views/rtc-client');
 const { chatCryptoJs } = require('../views/chat-crypto');
+const { camPipelineJs } = require('../views/cam-pipeline');
 const { overlayJs, overlayCss } = require('../views/overlay');
 const { createLogger } = require('../utils/logger');
 
@@ -561,6 +562,30 @@ function renderVisitorPage(req) {
       </div>
     </div>
 
+    <!-- Broadcast preview modal — shown before a visitor publishes cam/mic. -->
+    <div id="vb-preview-bg" class="help-modal-bg" onclick="vbPreviewClose(event)">
+      <div class="help-modal" style="max-width:580px" onclick="event.stopPropagation()">
+        <h3 style="margin:0 0 6px">📹 Preview before broadcasting</h3>
+        <p class="muted" style="margin:0 0 14px;font-size:0.95rem">Check the cam and mic look/sound right. Anyone in the session will see and hear you exactly like this.</p>
+        <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <label style="flex:1;min-width:220px">Camera<br><select id="vb-preview-cam" onchange="vbPreviewRestart()" style="width:100%;font-size:1rem;padding:6px"></select></label>
+          <label style="flex:1;min-width:220px">Microphone<br><select id="vb-preview-mic" onchange="vbPreviewRestart()" style="width:100%;font-size:1rem;padding:6px"></select></label>
+        </div>
+        <video id="vb-preview-video" autoplay muted playsinline style="width:100%;max-width:520px;background:#0a0c10;border:1px solid var(--border);border-radius:8px;aspect-ratio:1;object-fit:cover;display:block;margin:0 auto"></video>
+        <div style="margin-top:12px">
+          <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:4px">Mic level (say something)</div>
+          <div style="height:14px;background:#0a0c10;border:1px solid var(--border);border-radius:4px;overflow:hidden">
+            <div id="vb-preview-vu" style="height:100%;width:0;background:linear-gradient(90deg,#1a8a4d,#6ddc9b,#f0c674,#f08484);transition:width 60ms"></div>
+          </div>
+        </div>
+        <p id="vb-preview-err" style="color:#f08484;font-size:0.9rem;margin:10px 0 0;display:none"></p>
+        <p style="margin:18px 0 0;display:flex;gap:8px;justify-content:flex-end">
+          <button class="help-close" onclick="vbPreviewClose()" style="background:var(--bg-3);color:var(--text)">Cancel</button>
+          <button id="vb-preview-go" class="help-close" onclick="vbPreviewGo()" style="background:#2a6df4">Start broadcasting</button>
+        </p>
+      </div>
+    </div>
+
     <!-- Action help modal (shown when ? next to an action button is tapped). -->
     <div id="help-modal-bg" class="help-modal-bg" onclick="vHelpClose(event)">
       <div class="help-modal" onclick="event.stopPropagation()">
@@ -593,6 +618,7 @@ function renderVisitorPage(req) {
     <script>
       ${rtcClientJs({ myEmail: email })}
       ${chatCryptoJs()}
+      ${camPipelineJs()}
       ${overlayJs()}
     </script>
     <script>
@@ -893,21 +919,107 @@ function renderVisitorPage(req) {
           addLocalPlaceholder();
           return;
         }
+        // Open preview-and-confirm modal instead of going straight to publish.
+        await vbPreviewOpen();
+      }
+
+      // ---- Visitor broadcast preview modal ----
+      // Lives in its own getUserMedia stream until the user clicks "Start
+      // broadcasting", at which point the stream is handed to myBroadcastStream
+      // without a second getUserMedia (avoids re-prompting for permission).
+      let vbPreviewStream = null;
+      let vbPreviewVuStop = null;
+      const VB_CAM_KEY = 'pd-broadcast-cam';
+      const VB_MIC_KEY = 'pd-broadcast-mic';
+      async function vbPreviewOpen() {
+        const bg = document.getElementById('vb-preview-bg');
+        if (!bg) return;
+        bg.style.display = 'flex';
+        bg.style.alignItems = 'center';
+        bg.style.justifyContent = 'center';
+        document.getElementById('vb-preview-err').style.display = 'none';
+        await vbPopulateDevices();
+        await vbPreviewRestart();
+      }
+      async function vbPopulateDevices() {
         try {
-          // Controllers are locked at 1:1 — request a square frame so all viewers see the
-          // controller's tile at the same square aspect regardless of their physical camera.
+          const devs = await navigator.mediaDevices.enumerateDevices();
+          const cams = devs.filter(d => d.kind === 'videoinput');
+          const mics = devs.filter(d => d.kind === 'audioinput');
+          const camSel = document.getElementById('vb-preview-cam');
+          const micSel = document.getElementById('vb-preview-mic');
+          const savedCam = localStorage.getItem(VB_CAM_KEY);
+          const savedMic = localStorage.getItem(VB_MIC_KEY);
+          camSel.innerHTML = cams.length
+            ? cams.map((c, i) => '<option value="' + c.deviceId + '"' + (c.deviceId === savedCam || (!savedCam && i === 0) ? ' selected' : '') + '>' + (c.label || ('Camera ' + (i + 1))).replace(/[<>&"]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[ch])) + '</option>').join('')
+            : '<option value="">(no cameras detected)</option>';
+          micSel.innerHTML = mics.length
+            ? mics.map((m, i) => '<option value="' + m.deviceId + '"' + (m.deviceId === savedMic || (!savedMic && i === 0) ? ' selected' : '') + '>' + (m.label || ('Microphone ' + (i + 1))).replace(/[<>&"]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[ch])) + '</option>').join('')
+            : '<option value="">(no microphones detected)</option>';
+        } catch (e) { console.warn('enumerateDevices failed', e); }
+      }
+      async function vbPreviewRestart() {
+        vbStopPreview();
+        const errEl = document.getElementById('vb-preview-err');
+        errEl.style.display = 'none';
+        try {
+          const camId = document.getElementById('vb-preview-cam').value;
+          const micId = document.getElementById('vb-preview-mic').value;
+          // Controllers are locked at 1:1 — request a square frame so all viewers
+          // see the controller's tile at the same square aspect regardless of cam.
           const SQUARE = { width: { ideal: 640 }, height: { ideal: 640 }, aspectRatio: { ideal: 1 } };
+          const video = camId ? Object.assign({}, SQUARE, { deviceId: { exact: camId } }) : SQUARE;
+          const audio = micId ? { deviceId: { exact: micId } } : true;
           try {
-            myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: SQUARE, audio: true });
+            vbPreviewStream = await navigator.mediaDevices.getUserMedia({ video, audio });
           } catch (e1) {
-            myBroadcastStream = await navigator.mediaDevices.getUserMedia({ video: SQUARE });
+            // Fall back to video-only if the chosen mic refuses.
+            vbPreviewStream = await navigator.mediaDevices.getUserMedia({ video });
           }
-          addLocalBroadcastTile(myBroadcastStream);
-          applyMyBroadcastTrackState();  // honour current standby state
-          if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: true }));
-          broadcastTrackState();
-          if (window.__rtc) await window.__rtc.publishToAll();
-        } catch (e) { alert('Camera failed: ' + e.message); }
+          document.getElementById('vb-preview-video').srcObject = vbPreviewStream;
+          if (window.PDCam && window.PDCam.startVuMeter) {
+            vbPreviewVuStop = window.PDCam.startVuMeter(vbPreviewStream, document.getElementById('vb-preview-vu'));
+          }
+          // Labels may have been empty before permission was granted - repopulate.
+          vbPopulateDevices();
+        } catch (e) {
+          errEl.textContent = 'Preview failed: ' + e.name + ' - ' + e.message;
+          errEl.style.display = 'block';
+        }
+      }
+      function vbStopPreview() {
+        if (vbPreviewVuStop) { try { vbPreviewVuStop(); } catch {} vbPreviewVuStop = null; }
+        if (vbPreviewStream) { vbPreviewStream.getTracks().forEach(t => { try { t.stop(); } catch {} }); vbPreviewStream = null; }
+        const v = document.getElementById('vb-preview-video'); if (v) v.srcObject = null;
+      }
+      function vbPreviewClose(e) {
+        if (e && e.target !== e.currentTarget && e.currentTarget !== document.getElementById('vb-preview-bg')) {
+          // Click came from inside the modal body, not the backdrop - ignore.
+          if (e.target !== document.getElementById('vb-preview-bg')) return;
+        }
+        vbStopPreview();
+        const bg = document.getElementById('vb-preview-bg');
+        if (bg) bg.style.display = 'none';
+      }
+      async function vbPreviewGo() {
+        if (!vbPreviewStream) return;
+        const camId = document.getElementById('vb-preview-cam').value;
+        const micId = document.getElementById('vb-preview-mic').value;
+        if (camId) localStorage.setItem(VB_CAM_KEY, camId); else localStorage.removeItem(VB_CAM_KEY);
+        if (micId) localStorage.setItem(VB_MIC_KEY, micId); else localStorage.removeItem(VB_MIC_KEY);
+        // Stop the VU meter on the preview stream, then hand the live stream
+        // directly to the broadcast path - no second getUserMedia, no extra prompt.
+        if (vbPreviewVuStop) { try { vbPreviewVuStop(); } catch {} vbPreviewVuStop = null; }
+        myBroadcastStream = vbPreviewStream;
+        vbPreviewStream = null;
+        const previewVideo = document.getElementById('vb-preview-video');
+        if (previewVideo) previewVideo.srcObject = null;
+        document.getElementById('vb-preview-bg').style.display = 'none';
+        addLocalBroadcastTile(myBroadcastStream);
+        applyMyBroadcastTrackState();
+        if (wsSig?.readyState === 1) wsSig.send(JSON.stringify({ type: 'broadcast-state', broadcasting: true }));
+        broadcastTrackState();
+        if (window.__rtc) await window.__rtc.publishToAll();
       }
       function vMuteMyVideo() {
         if (!myBroadcastStream) return;

@@ -1070,13 +1070,20 @@ router.get('/', (req, res) => {
           return;
         }
         try {
-          // Honour owner's resolution choice from the Chat/Webcam tab.
-          const vc = (OWNER_CAM_RES && OWNER_CAM_RES.width !== 'native')
+          // Honour owner's resolution + device choices from the Chat/Webcam tab.
+          let vc = (OWNER_CAM_RES && OWNER_CAM_RES.width !== 'native')
             ? { width: { ideal: OWNER_CAM_RES.width }, height: { ideal: OWNER_CAM_RES.height } }
             : true;
+          const savedCamId = localStorage.getItem('pd-cam-device-id');
+          const savedMicId = localStorage.getItem('pd-host-mic-id');
+          if (savedCamId) {
+            if (vc === true) vc = { deviceId: { exact: savedCamId } };
+            else vc.deviceId = { exact: savedCamId };
+          }
+          const ac = savedMicId ? { deviceId: { exact: savedMicId } } : true;
           let rawLocal;
           try {
-            rawLocal = await navigator.mediaDevices.getUserMedia({ video: vc, audio: true });
+            rawLocal = await navigator.mediaDevices.getUserMedia({ video: vc, audio: ac });
           } catch (e1) {
             console.warn('AV failed, retrying video-only:', e1);
             rawLocal = await navigator.mediaDevices.getUserMedia({ video: vc });

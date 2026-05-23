@@ -119,6 +119,26 @@ router.get('/chat-webcam', (_req, res) => {
       </p>
     </div>
 
+    <div class="card" id="cw-mic-card">
+      <h3 style="margin:0 0 4px">Microphone test</h3>
+      <p class="muted" style="font-size:0.9rem;margin:0 0 14px">Pick the mic Launchpad will broadcast and confirm the level is reasonable. The selection here applies to your live broadcast (Launchpad → Start camera).</p>
+      <p style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label style="flex:1;min-width:260px">Microphone
+          <select id="cw-mic" onchange="cwMicChange()" style="width:100%;font-size:1rem;padding:6px">
+            <option value="">(detecting…)</option>
+          </select>
+        </label>
+        <button onclick="cwMicTest()" id="cw-mic-test-btn" style="white-space:nowrap">Start test</button>
+      </p>
+      <div style="margin-top:8px">
+        <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:4px">Mic level (say something)</div>
+        <div style="height:14px;background:#0a0c10;border:1px solid var(--border);border-radius:4px;overflow:hidden">
+          <div id="cw-mic-vu" style="height:100%;width:0;background:linear-gradient(90deg,#1a8a4d,#6ddc9b,#f0c674,#f08484);transition:width 60ms"></div>
+        </div>
+      </div>
+      <p id="cw-mic-err" class="muted" style="margin:10px 0 0;font-size:0.9rem;color:#f08484;display:none"></p>
+    </div>
+
     <canvas id="cw-canvas" width="512" height="512" style="display:none"></canvas>
 
     <div id="cw-msg" style="position:fixed;bottom:20px;right:20px;max-width:380px;z-index:1100"></div>
@@ -526,6 +546,61 @@ router.get('/chat-webcam', (_req, res) => {
         };
       }
       connectOwnerWs();
+
+      // -------- Microphone test ----------
+      const MIC_KEY = 'pd-host-mic-id';
+      let cwMicStream = null;
+      let cwMicVuStop = null;
+      async function cwPopulateMics() {
+        const sel = document.getElementById('cw-mic');
+        if (!sel || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        try {
+          const devs = await navigator.mediaDevices.enumerateDevices();
+          const mics = devs.filter(d => d.kind === 'audioinput');
+          const saved = localStorage.getItem(MIC_KEY);
+          if (!mics.length) { sel.innerHTML = '<option value="">(no microphones detected)</option>'; return; }
+          sel.innerHTML = mics.map((m, i) => {
+            const label = m.label || ('Microphone ' + (i + 1) + ' (grant mic permission to see name)');
+            const isSel = saved ? (m.deviceId === saved) : (i === 0);
+            return '<option value="' + m.deviceId + '"' + (isSel ? ' selected' : '') + '>' + label.replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])) + '</option>';
+          }).join('');
+        } catch (e) { console.warn('enumerateDevices failed', e); }
+      }
+      function cwMicChange() {
+        const v = document.getElementById('cw-mic').value;
+        if (v) localStorage.setItem(MIC_KEY, v); else localStorage.removeItem(MIC_KEY);
+        if (cwMicStream) { cwStopMicTest(); cwMicTest(); }
+        else flash('mic selection saved · used by Launchpad broadcast', 'ok');
+      }
+      function cwStopMicTest() {
+        if (cwMicVuStop) { try { cwMicVuStop(); } catch {} cwMicVuStop = null; }
+        if (cwMicStream) { cwMicStream.getTracks().forEach(t => { try { t.stop(); } catch {} }); cwMicStream = null; }
+        const btn = document.getElementById('cw-mic-test-btn');
+        if (btn) btn.textContent = 'Start test';
+        const vu = document.getElementById('cw-mic-vu');
+        if (vu) vu.style.width = '0%';
+      }
+      async function cwMicTest() {
+        const err = document.getElementById('cw-mic-err');
+        err.style.display = 'none';
+        if (cwMicStream) { cwStopMicTest(); return; }
+        try {
+          const id = document.getElementById('cw-mic').value;
+          const audio = id ? { deviceId: { exact: id } } : true;
+          cwMicStream = await navigator.mediaDevices.getUserMedia({ audio });
+          cwMicVuStop = window.PDCam.startVuMeter(cwMicStream, document.getElementById('cw-mic-vu'));
+          document.getElementById('cw-mic-test-btn').textContent = 'Stop test';
+          // Labels were probably blank until now - repopulate so user sees real names.
+          cwPopulateMics();
+        } catch (e) {
+          err.textContent = 'Mic test failed: ' + e.name + ' - ' + e.message;
+          err.style.display = 'block';
+        }
+      }
+      cwPopulateMics();
+      if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', cwPopulateMics);
+      }
     </script>
   `;
   res.type('html').send(ownerLayout({ title: 'Chat/Webcam', active: 'chatwebcam', body }));

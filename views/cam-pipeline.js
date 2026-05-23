@@ -113,10 +113,49 @@ function camPipelineJs() {
       };
     }
 
+    // VU meter helper — analyses the first audio track in a stream and
+    // updates fillEl.style.width to a 0–100% bar representing the RMS level.
+    // Returns a stop() function that tears down the AudioContext.
+    function startVuMeter(stream, fillEl) {
+      const at = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
+      if (!at) { if (fillEl) fillEl.style.width = '0%'; return function () {}; }
+      let raf = null;
+      let ctx, src, an;
+      try {
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+        src = ctx.createMediaStreamSource(stream);
+        an = ctx.createAnalyser();
+        an.fftSize = 256;
+        src.connect(an);
+      } catch (e) {
+        console.warn('VU meter init failed', e);
+        return function () {};
+      }
+      const buf = new Uint8Array(an.frequencyBinCount);
+      function loop() {
+        an.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / buf.length);
+        const pct = Math.min(100, rms * 200);
+        if (fillEl) fillEl.style.width = pct.toFixed(1) + '%';
+        raf = requestAnimationFrame(loop);
+      }
+      loop();
+      return function stop() {
+        if (raf) cancelAnimationFrame(raf);
+        try { src.disconnect(); } catch {}
+        try { ctx.close(); } catch {}
+      };
+    }
+
     window.PDCam = {
       SETTINGS_SPEC, DEFAULTS,
       isEnabled, setEnabled, get, set, resetAll,
-      startPipeline,
+      startPipeline, startVuMeter,
     };
   })();
   `;
