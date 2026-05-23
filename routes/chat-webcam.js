@@ -64,7 +64,12 @@ router.get('/chat-webcam', (_req, res) => {
 
     <div class="card">
       <h3>Cam preview &amp; resolution</h3>
-      <p>
+      <p style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">
+        <label>Camera
+          <select id="cw-device" onchange="cwChangeDevice()" style="min-width:260px">
+            <option value="">(detecting…)</option>
+          </select>
+        </label>
         <label>Resolution
           <select id="cw-res" onchange="cwSaveResolution()" style="min-width:260px">
             <option value="640x480"   ${camRes.width === 640  && camRes.height === 480  ? 'selected' : ''}>640×480 (4:3 · low)</option>
@@ -76,6 +81,7 @@ router.get('/chat-webcam', (_req, res) => {
           </select>
         </label>
       </p>
+      <p class="muted" style="font-size:0.9rem;margin:0 0 12px">Browsers hide camera labels until you grant permission once — click <strong>Start camera</strong> below and the names will fill in.</p>
       <p class="muted" style="font-size:0.95rem;margin:6px 0 12px">Visitors see whatever aspect ratio you broadcast — the UI scales tiles automatically. Controllers stay locked at 1:1 regardless. The browser may snap to the closest supported resolution.</p>
       <div style="position:relative;display:inline-block;background:#0a0c10;border:1px solid #2a2f3a;border-radius:8px;overflow:hidden;max-width:100%">
         <video id="cw-video" autoplay muted playsinline style="display:block;max-width:720px;width:100%;height:auto"></video>
@@ -104,9 +110,36 @@ router.get('/chat-webcam', (_req, res) => {
         el.innerHTML = '<div class="card" style="margin:0;border-color:' + (cls === 'bad' ? '#f08484' : cls === 'ok' ? '#6ddc9b' : '#f0c674') + '">' + msg + '</div>';
         setTimeout(() => { el.innerHTML = ''; }, 4000);
       }
+      const DEVICE_KEY = 'pd-cam-device-id';
       function _videoConstraintsFromSaved() {
-        if (SAVED_RES && SAVED_RES.width === 'native') return { video: true, audio: false };
-        return { video: { width: { ideal: SAVED_RES.width }, height: { ideal: SAVED_RES.height } }, audio: false };
+        const v = (SAVED_RES && SAVED_RES.width === 'native')
+          ? {}
+          : { width: { ideal: SAVED_RES.width }, height: { ideal: SAVED_RES.height } };
+        const id = localStorage.getItem(DEVICE_KEY);
+        if (id) v.deviceId = { exact: id };
+        return { video: Object.keys(v).length ? v : true, audio: false };
+      }
+      async function cwPopulateDevices() {
+        const sel = document.getElementById('cw-device');
+        if (!sel || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        try {
+          const all = await navigator.mediaDevices.enumerateDevices();
+          const cams = all.filter(d => d.kind === 'videoinput');
+          const saved = localStorage.getItem(DEVICE_KEY);
+          if (!cams.length) { sel.innerHTML = '<option value="">(no cameras detected)</option>'; return; }
+          sel.innerHTML = cams.map((c, i) => {
+            const label = c.label || ('Camera ' + (i + 1) + ' (grant cam permission to see name)');
+            const isSelected = saved ? (c.deviceId === saved) : (i === 0);
+            return '<option value="' + c.deviceId + '"' + (isSelected ? ' selected' : '') + '>' + label.replace(/[<>&"]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[ch])) + '</option>';
+          }).join('');
+        } catch (e) { console.warn('enumerateDevices failed', e); }
+      }
+      async function cwChangeDevice() {
+        const id = document.getElementById('cw-device').value;
+        if (id) localStorage.setItem(DEVICE_KEY, id);
+        else localStorage.removeItem(DEVICE_KEY);
+        if (stream) { cwStopCam(); await cwStartCam(); }
+        else flash('camera selection saved — press Start camera', 'ok');
       }
       async function cwStartCam() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -122,15 +155,33 @@ router.get('/chat-webcam', (_req, res) => {
             const actual = document.getElementById('cw-actual');
             if (actual && v.videoWidth) actual.textContent = 'actual: ' + v.videoWidth + '×' + v.videoHeight;
           };
+          // Labels are blank until camera permission is granted at least once
+          // for this origin. Re-populate so the dropdown shows real names.
+          cwPopulateDevices();
         } catch (e) {
           console.error('camera failed', e);
           let hint = '';
-          if (e.name === 'NotFoundError' || e.name === 'OverconstrainedError') hint = ' — no camera device detected (check OS privacy/cam access) or the chosen resolution isn\\'t supported (try Camera default)';
+          if (e.name === 'OverconstrainedError') {
+            // Most likely: the saved deviceId was unplugged. Clear and retry once.
+            const stale = !!localStorage.getItem(DEVICE_KEY);
+            if (stale) {
+              localStorage.removeItem(DEVICE_KEY);
+              flash('saved camera not found — retrying with default', 'warn');
+              return cwStartCam();
+            }
+            hint = ' — chosen resolution may not be supported (try Camera default)';
+          }
+          else if (e.name === 'NotFoundError') hint = ' — no camera device detected (check OS privacy/cam access)';
           else if (e.name === 'NotAllowedError') hint = ' — browser permission denied (click the camera icon in the address bar)';
           else if (e.name === 'NotReadableError') hint = ' — camera busy (Zoom/Meet/etc. holding it?)';
           else if (e.name === 'SecurityError') hint = ' — page must be served over https:// or http://localhost';
           flash('camera failed: ' + e.name + ': ' + e.message + hint, 'bad');
         }
+      }
+      // Initial populate (labels likely blank until first cam grant).
+      cwPopulateDevices();
+      if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', cwPopulateDevices);
       }
       function cwStopCam() {
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
