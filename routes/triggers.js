@@ -1169,12 +1169,32 @@ router.post('/api/triggers/upload-lottie', express.raw({ type: '*/*', limit: '10
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// MIME-sniff helper — check the first few bytes against known magic numbers.
+// Stops an HTML/JS polyglot from being uploaded under a "mp3" name and then
+// served as something the browser will execute when fetched.
+function _sniffSound(buf) {
+  if (!buf || buf.length < 4) return null;
+  if (buf.slice(0, 3).toString('ascii') === 'ID3') return 'mp3';                                   // ID3 tag
+  if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return 'mp3';                                   // raw MPEG audio
+  if (buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WAVE') return 'wav';
+  if (buf.slice(0, 4).toString('ascii') === 'OggS') return 'ogg';
+  if (buf.slice(4, 8).toString('ascii') === 'ftyp') return 'm4a';                                  // m4a is also ISO BMFF
+  return null;
+}
+function _sniffVideo(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf.slice(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'webm';                // EBML header (webm/mkv)
+  if (buf.slice(4, 8).toString('ascii') === 'ftyp') return 'mp4';
+  return null;
+}
+
 router.post('/api/triggers/upload-sound', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
   try {
     const raw = decodeURIComponent(String(req.headers['x-filename'] || 'upload.mp3'));
     const sanitized = _safeBasename(raw);
     if (!/\.(mp3|wav|ogg|m4a)$/i.test(sanitized)) return res.status(400).json({ error: 'sound must be .mp3 / .wav / .ogg / .m4a' });
     if (!req.body || !req.body.length) return res.status(400).json({ error: 'empty upload' });
+    if (!_sniffSound(req.body)) return res.status(400).json({ error: 'file does not look like an audio file (header magic mismatch)' });
     _ensureAssetDirs();
     const filename = _writeUnique(SOUND_DIR, sanitized);
     fs.writeFileSync(path.join(SOUND_DIR, filename), req.body);
@@ -1188,6 +1208,7 @@ router.post('/api/triggers/upload-video', express.raw({ type: '*/*', limit: '50m
     const sanitized = _safeBasename(raw);
     if (!/\.(webm|mp4)$/i.test(sanitized)) return res.status(400).json({ error: 'video must be .webm or .mp4' });
     if (!req.body || !req.body.length) return res.status(400).json({ error: 'empty upload' });
+    if (!_sniffVideo(req.body)) return res.status(400).json({ error: 'file does not look like a video file (header magic mismatch)' });
     _ensureAssetDirs();
     const filename = _writeUnique(VIDEO_DIR, sanitized);
     fs.writeFileSync(path.join(VIDEO_DIR, filename), req.body);

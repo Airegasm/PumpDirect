@@ -25,6 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const { createLogger } = require('../utils/logger');
+const { loadJsonOrSeed } = require('../utils/safe-load');
 
 const logger = createLogger('Triggers');
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -227,9 +228,9 @@ function _ensureDataDir() { if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR,
 
 function load() {
   _ensureDataDir();
-  let data;
-  try { data = JSON.parse(fs.readFileSync(TRIGGERS_FILE, 'utf8')); }
-  catch { data = JSON.parse(JSON.stringify(SEED)); save(data); }
+  // ENOENT seeds + persists. Other errors rethrow rather than silently
+  // wiping the user's triggers.
+  let data = loadJsonOrSeed(TRIGGERS_FILE, SEED, { onSeed: () => save(JSON.parse(JSON.stringify(SEED))) });
   if (!Array.isArray(data.triggerActions)) data.triggerActions = [];
   if (!Array.isArray(data.triggerActionGroups)) data.triggerActionGroups = [];
   if (!Array.isArray(data.triggerTemplates)) data.triggerTemplates = [];

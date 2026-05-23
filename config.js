@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { writeAtomicSync, repairModeSync } = require('./utils/atomic-write');
+const { loadJsonOrSeed } = require('./utils/safe-load');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 
@@ -78,18 +79,14 @@ let _cache = null;
 let _cacheMtimeMs = 0;
 
 function _read() {
-  try {
-    const stat = fs.statSync(CONFIG_PATH);
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
-    const merged = deepMerge(DEFAULTS, JSON.parse(raw));
-    _cache = merged;
-    _cacheMtimeMs = stat.mtimeMs;
-    return merged;
-  } catch {
-    _cache = JSON.parse(JSON.stringify(DEFAULTS));
-    _cacheMtimeMs = 0;
-    return _cache;
-  }
+  // ENOENT → seed from DEFAULTS. Any other error (parse failure, perm
+  // problem, etc.) rethrows from loadJsonOrSeed so we don't silently wipe
+  // a real config by deciding it "doesn't exist".
+  const parsed = loadJsonOrSeed(CONFIG_PATH, DEFAULTS);
+  const merged = deepMerge(DEFAULTS, parsed);
+  _cache = merged;
+  try { _cacheMtimeMs = fs.statSync(CONFIG_PATH).mtimeMs; } catch { _cacheMtimeMs = 0; }
+  return merged;
 }
 
 function load() {

@@ -157,11 +157,17 @@ function camPipelineJs() {
         raf = requestAnimationFrame(loop);
       }
       loop();
-      return function stop() {
-        if (raf) cancelAnimationFrame(raf);
+      function stop() {
+        if (raf) { cancelAnimationFrame(raf); raf = null; }
+        try { at.removeEventListener('ended', stop); } catch {}
         try { src.disconnect(); } catch {}
         try { ctx.close(); } catch {}
-      };
+        if (fillEl) fillEl.style.width = '0%';
+      }
+      // A yanked mic / unplugged USB cam fires 'ended' on the track; without
+      // this, the RAF loop + AudioContext kept running until page navigation.
+      try { at.addEventListener('ended', stop); } catch {}
+      return stop;
     }
 
     window.PDCam = {

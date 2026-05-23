@@ -3,6 +3,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const { createLogger } = require('../utils/logger');
 const { writeAtomicSync, ensureDirSync } = require('../utils/atomic-write');
+const { loadJsonOrSeed } = require('../utils/safe-load');
 const templates = require('./templates-service');
 const { emitState } = require('./event-bus');
 
@@ -35,13 +36,9 @@ const SEED = {
 
 function load() {
   ensureDirSync(DATA_DIR);
-  let data;
-  try {
-    data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-  } catch {
-    data = JSON.parse(JSON.stringify(SEED));
-    save(data);
-  }
+  // ENOENT seeds + persists. Other errors rethrow rather than silently
+  // wiping the user's profiles via save(SEED).
+  let data = loadJsonOrSeed(SESSIONS_FILE, SEED, { onSeed: () => save(JSON.parse(JSON.stringify(SEED))) });
   if (!data.sessionProfiles?.some(p => p.id === FACTORY_SESSION_PROFILE_ID)) {
     data.sessionProfiles = [JSON.parse(JSON.stringify(SEED.sessionProfiles[0])), ...(data.sessionProfiles || [])];
     save(data);
@@ -354,7 +351,14 @@ function setParticipantTarget(email, value, deviceLabel) {
   const next = (value === 'pending' || value === true) ? value : false;
   if (next) {
     for (const other of sessionState.participants) {
-      if (other !== p && other.canTarget) { other.canTarget = false; other.targetDeviceLabel = null; }
+      if (other !== p && other.canTarget) {
+        other.canTarget = false;
+        other.targetDeviceLabel = null;
+        // Tokens are side-banded in _targetTokens — clear them too when we
+        // demote someone, otherwise their pairing token lingers and
+        // getActiveTargetPair invariants break (T tracks one participant).
+        _targetTokens.delete(other.email);
+      }
     }
   }
   p.canTarget = next;

@@ -1357,8 +1357,17 @@ function syncLiveParticipantsFromProfile(profileId) {
   const existingByEmail = new Map(state.participants.map(p => [p.email, p]));
   const nextLive = profile.allowedParticipants.map(p => {
     const prev = existingByEmail.get(p.email);
+    // Preserve live-only fields. Before, only muted+connected were carried
+    // forward, so any C/A/V toggle while a target was paired (canTarget
+    // 'pending' / true + targetDeviceLabel) clobbered the in-flight T slot.
     return prev
-      ? { ...p, muted: prev.muted || false, connected: prev.connected || false }
+      ? {
+          ...p,
+          muted: prev.muted || false,
+          connected: prev.connected || false,
+          canTarget: prev.canTarget !== undefined ? prev.canTarget : p.canTarget,
+          targetDeviceLabel: prev.targetDeviceLabel || null,
+        }
       : { ...p, muted: false, connected: false };
   });
   session._setLive({ participants: nextLive });

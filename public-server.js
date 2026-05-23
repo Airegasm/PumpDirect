@@ -43,8 +43,12 @@ async function verifyRequest(jwt, email) {
   const cfg = config.load();
   const { teamDomain, accessAud } = cfg.cloudflare || {};
   if (!teamDomain || !accessAud) {
-    _warnJwtUnconfigured();
-    return { ok: true, mode: 'header-only', email };
+    // Hard fail. The previous behaviour was to trust the raw email header,
+    // which means anything that reaches loopback (a misconfigured tunnel, a
+    // co-resident process) could spoof any visitor. Setting up CF Access JWT
+    // verification is one click in the Network → Access policy wizard.
+    _warnJwtUnconfigured('Refusing the request until configured. Set cloudflare.teamDomain + cloudflare.accessAud.');
+    return { ok: false, reason: 'Cloudflare Access JWT verification not configured on this host' };
   }
   try {
     const payload = await verifyAccessJwt(jwt, { teamDomain, audTag: accessAud });
@@ -82,9 +86,20 @@ function start() {
   app.use(express.json({ limit: '1mb' }));
   app.use(rateLimit({ windowMs: 60_000, max: 240, standardHeaders: true, legacyHeaders: false }));
 
-  // Per-route stricter limiter for the dangerous mutation paths.
+  // Per-route stricter limiter for the dangerous mutation paths. Anything
+  // that fires a pump action (or could be used to dodge one) goes here so a
+  // single visitor can't hammer the device or saturate the action engine.
   const sensitiveLimiter = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true, legacyHeaders: false });
-  app.use('/api/visitor/fire-action', sensitiveLimiter);
+  for (const path of [
+    '/api/visitor/fire-action',
+    '/api/visitor/pump-on',
+    '/api/visitor/pump-off',
+    '/api/visitor/timed',
+    '/api/visitor/cycle',
+    '/api/visitor/minigame',     // matches /minigame/*
+    '/api/visitor/pass-control',
+    '/api/visitor/accept-start',
+  ]) app.use(path, sensitiveLimiter);
   app.use('/api/visitor/chat', rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false }));
 
   // Auth middleware. Two layers: (1) header email gives identity,

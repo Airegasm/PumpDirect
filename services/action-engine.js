@@ -207,12 +207,13 @@ function _setRepeat(rep) {
   _publish();
 }
 
-async function _runSteps(steps, primary, signal, repeatContext = null) {
+async function _runSteps(steps, primary, signal, repeatContext = null, startedDevices = null) {
   if (repeatContext) _setRepeat(repeatContext);
   for (const step of steps) {
     if (signal.aborted) return;
     if (step.type === 'on') {
       const target = _resolveStepDevice(step, primary);
+      if (startedDevices) startedDevices.set(target.id, target);
       _setStep({ type: 'on', durationMs: step.durationMs, startedAt: Date.now(), indefinite: !!step.indefinite });
       await _pumpOn(target);
       await _sleep(step.durationMs, signal);
@@ -227,12 +228,12 @@ async function _runSteps(steps, primary, signal, repeatContext = null) {
         let i = 0;
         while (!signal.aborted) {
           i++;
-          await _runSteps(step.steps, primary, signal, { iteration: i, times: '∞' });
+          await _runSteps(step.steps, primary, signal, { iteration: i, times: '∞' }, startedDevices);
         }
       } else {
         for (let i = 0; i < step.times; i++) {
           if (signal.aborted) return;
-          await _runSteps(step.steps, primary, signal, { iteration: i + 1, times: step.times });
+          await _runSteps(step.steps, primary, signal, { iteration: i + 1, times: step.times }, startedDevices);
         }
       }
       _setRepeat(null);
@@ -309,9 +310,14 @@ async function fireAction({ actionTemplateId, inline, byEmail, byNickname, silen
 
   // Run the sequence asynchronously — caller does NOT await. Long-running
   // actions (Pump On, infinite repeats, etc.) shouldn't hold the HTTP request.
+  // Track every device the chain turned on so the finally can ensure each is
+  // off — not just the primary. Non-primary devices (e.g. trigger sub-action
+  // targets) would otherwise stay on if the chain throws or is aborted.
+  const startedDevices = new Map();  // deviceId -> device object
+  startedDevices.set(primary.id, primary);
   (async () => {
     try {
-      await _runSteps(action.steps, primary, abortController.signal);
+      await _runSteps(action.steps, primary, abortController.signal, null, startedDevices);
     } catch (e) {
       if (e.name !== 'AbortError') logger.error('action run failed', e.message);
     } finally {
@@ -319,7 +325,14 @@ async function fireAction({ actionTemplateId, inline, byEmail, byNickname, silen
       _setRunning(null);
       _setStep(null);
       _setRepeat(null);
-      try { await control.turnOff(primary); } catch {}
+      // Best-effort turnOff for every device the chain touched. allSettled so
+      // one failing vendor doesn't strand the rest in an unknown state.
+      await Promise.allSettled(Array.from(startedDevices.values()).map(d =>
+        control.turnOff(d).catch(e => {
+          logger.error(`action finally: turnOff ${d.id} failed: ${e.message}`);
+          throw e;
+        })
+      ));
       _setPump(false);
       _publish();
     }

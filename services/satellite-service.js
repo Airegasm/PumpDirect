@@ -57,8 +57,17 @@ function release(token) {
 function validateToken(token) {
   if (!pairing) return false;
   if (Date.now() > pairing.expiresAt) { pairing = null; return false; }
-  if (!token || token.length !== pairing.token.length) return false;
-  try { return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(pairing.token)); } catch { return false; }
+  if (!token) return false;
+  // Pad the supplied token to the expected length so timingSafeEqual can't
+  // short-circuit on length difference and leak the token size.
+  const expected = Buffer.from(pairing.token);
+  const supplied = Buffer.alloc(expected.length);
+  Buffer.from(String(token)).copy(supplied, 0, 0, expected.length);
+  try {
+    const eq = crypto.timingSafeEqual(supplied, expected);
+    // Also enforce the actual length is what we expect.
+    return eq && String(token).length === expected.length;
+  } catch { return false; }
 }
 
 function getPairing() {
@@ -208,7 +217,11 @@ async function runStepsOnPrimary(steps, label) {
     if (e.message !== 'aborted') logger.warn(`satellite run failed: ${e.message}`);
   } finally {
     // Ensure device is off at end of chain (whether natural finish or abort).
-    try { await _pumpOffInternal(prim); } catch {}
+    // Log failures loudly — silently swallowing a turnOff failure here means
+    // the physical pump could stay on while the API claims it's off.
+    try { await _pumpOffInternal(prim); }
+    catch (e) { logger.error(`satellite: turnOff failed in finally: ${e.message}`); }
+    _stopCapacityTicker();
     if (_abortCtl && _abortCtl.signal === sig) _abortCtl = null;
     _runStatus = { busy: false, label: null, currentStep: null, startedAt: 0 };
     _emitState();
@@ -216,11 +229,22 @@ async function runStepsOnPrimary(steps, label) {
   }
 }
 
-function abortRun() {
+// Abort the in-flight chain (if any) AND explicitly turn off the primary
+// device. The chain's finally would do this too, but doing it here makes
+// the off explicit, immediate, and observable to callers who await this fn.
+// Idempotent — turning off an already-off plug is harmless on every vendor.
+async function abortRun() {
   if (_abortCtl) { try { _abortCtl.abort(); } catch {} _abortCtl = null; }
   _runStatus = { busy: false, label: null, currentStep: null, startedAt: 0 };
-  _pumpOn = false;
-  _pumpOnSince = null;
+  _stopCapacityTicker();
+  const prim = devices.primary ? devices.primary() : null;
+  if (prim) {
+    try { await _pumpOffInternal(prim); }
+    catch (e) { logger.error(`satellite: abortRun turnOff failed: ${e.message}`); }
+  } else {
+    _pumpOn = false;
+    _pumpOnSince = null;
+  }
   _emitState();
 }
 

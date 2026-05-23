@@ -100,12 +100,15 @@ function checkDevice(device) {
 const templateLog = new Map(); // key -> [timestamps]
 
 function checkTemplate(templateId, byEmail) {
-  if (!templateId) return { ok: true };
   const c = _cfg();
-  const override = c.perTemplate[templateId] || {};
+  // Inline pump-on/timed/cycle calls (no templateId) used to bypass this
+  // anti-spam window entirely. Key them under a per-email "inline" bucket so
+  // a single visitor can't hammer the bare endpoints to dodge the gate.
+  const effectiveId = templateId || `inline:${byEmail || 'anon'}`;
+  const override = (templateId && c.perTemplate[templateId]) || {};
   const fires = override.fires ?? c.template.fires;
   const windowMs = override.windowMs ?? c.template.windowMs;
-  const key = `tpl:${templateId}:${byEmail || 'anon'}`;
+  const key = `tpl:${effectiveId}:${byEmail || 'anon'}`;
   const now = Date.now();
   const fresh = (templateLog.get(key) || []).filter(t => t > now - windowMs);
   if (fresh.length >= fires) {

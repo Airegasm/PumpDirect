@@ -3,6 +3,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const { createLogger } = require('../utils/logger');
 const { writeAtomicSync, ensureDirSync } = require('../utils/atomic-write');
+const { loadJsonOrSeed } = require('../utils/safe-load');
 
 const logger = createLogger('Templates');
 
@@ -42,13 +43,9 @@ const WHEEL_PALETTE = ['#e74c3c', '#f39c12', '#f1c40f', '#27ae60', '#16a085', '#
 
 function load() {
   ensureDirSync(DATA_DIR);
-  let data = null;
-  try {
-    data = JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf8'));
-  } catch {
-    data = JSON.parse(JSON.stringify(SEED));
-    save(data);
-  }
+  // ENOENT seeds + persists. Other errors rethrow rather than silently
+  // wiping the user's action templates / wheels.
+  let data = loadJsonOrSeed(TEMPLATES_FILE, SEED, { onSeed: () => save(JSON.parse(JSON.stringify(SEED))) });
   if (!data.templateProfiles?.some(p => p.id === FACTORY_PROFILE_ID)) {
     data.templateProfiles = [JSON.parse(JSON.stringify(SEED.templateProfiles[0])), ...(data.templateProfiles || [])];
     save(data);

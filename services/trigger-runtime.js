@@ -172,16 +172,24 @@ function _firstSubActionIsDeviceOff(actionList) {
 }
 
 async function _waitForEngineIdle() {
+  // Classic check-then-wait race: if we read state, find it busy, and only
+  // THEN register the listener, a state event in between leaves us hanging
+  // forever (especially in paused sessions where no capacity tick wakes us).
+  // Register the listener FIRST, check state, and treat any emit as a wake.
+  // A 2s timeout polls as a belt-and-braces so even a missed wake recovers.
   while (true) {
+    const waiter = new Promise(resolve => {
+      const t = setTimeout(resolve, 2000);
+      bus.once('state', () => { clearTimeout(t); resolve(); });
+    });
     const s = session.getState();
     const cur = s.currentActionTemplateId;
     if (!cur) return;
     if (typeof cur === 'string' && cur.startsWith('trigger:')) return;
-    // Manual pump-on (indefinite on-step) → preempt.
     if (s.currentStep && s.currentStep.indefinite) {
       try { _lazyActionEngine().abort('trigger preempted manual pump'); } catch {}
     }
-    await new Promise(resolve => bus.once('state', resolve));
+    await waiter;
   }
 }
 
@@ -338,9 +346,14 @@ async function _runDeviceControl(step, sig) {
       targets.forEach(d => { control.turnOn(d).catch(() => {}); });
       return;
     }
+    // try/finally so an AbortError from _sleep still issues the turnOff —
+    // without this, an aborted trigger leaves every targeted plug ON.
     await Promise.all(targets.map(d => control.turnOn(d).catch(() => {})));
-    await _sleep(step.durationMs, sig);
-    await Promise.all(targets.map(d => control.turnOff(d).catch(() => {})));
+    try {
+      await _sleep(step.durationMs, sig);
+    } finally {
+      await Promise.allSettled(targets.map(d => control.turnOff(d).catch(() => {})));
+    }
     return;
   }
 
@@ -349,10 +362,15 @@ async function _runDeviceControl(step, sig) {
     for (let i = 0; i < limit; i++) {
       if (sig.aborted) break;
       await Promise.all(targets.map(d => control.turnOn(d).catch(() => {})));
-      await _sleep(step.cycleOnMs, sig);
-      await Promise.all(targets.map(d => control.turnOff(d).catch(() => {})));
+      try {
+        await _sleep(step.cycleOnMs, sig);
+      } finally {
+        await Promise.allSettled(targets.map(d => control.turnOff(d).catch(() => {})));
+      }
       if (sig.aborted) break;
-      if (i + 1 < limit) await _sleep(step.cycleOffMs, sig);
+      if (i + 1 < limit) {
+        try { await _sleep(step.cycleOffMs, sig); } catch { break; }
+      }
     }
     return;
   }

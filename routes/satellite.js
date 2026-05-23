@@ -25,22 +25,15 @@ try {
   PKG_VERSION = pkg.version || '0.0.0';
 } catch {}
 
-// Pairing-derived state for the live satellite run. Kept here (not in
-// satellite-service) because it's tied to step execution, not pairing trust.
-let runState = {
-  busy: false,
-  abortCtl: null,
-  // Cached status — emitted on /ws/satellite (step 9) so the host gets
-  // capacity / pumpOn / currentLabel without polling.
-  status: { pumpOn: false, currentLabel: null, currentStep: null, capacity: 0 },
-};
-
 function _localOnly(req, res, next) {
   // Belt-and-braces: only accept requests from the host machine itself.
+  // We REQUIRE an Origin header — a missing one is the curl/server-side-proxy
+  // bypass case, which can't be a real browser request from localhost anyway.
   const origin = req.headers.origin || '';
-  const ok = !origin
-    || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
-  if (!ok) return res.status(403).json({ error: 'satellite endpoints are localhost-only' });
+  if (!origin) return res.status(403).json({ error: 'Origin header required' });
+  if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+    return res.status(403).json({ error: 'satellite endpoints are localhost-only' });
+  }
   next();
 }
 router.use('/api/satellite', _localOnly);
@@ -54,7 +47,7 @@ router.get('/api/satellite/status', (_req, res) => {
     calibratedSeconds,
     deviceLabel: prim ? (prim.label || prim.id || 'pump') : null,
     version: PKG_VERSION,
-    busy: runState.busy,
+    busy: satellite.getRunStatus().busy,
   });
 });
 
@@ -82,11 +75,12 @@ router.post('/api/satellite/claim', (req, res) => {
   }
 });
 
-router.post('/api/satellite/release', (req, res) => {
+router.post('/api/satellite/release', async (req, res) => {
+  // Abort any in-flight chain (turns off the plug) THEN drop pairing.
+  // Previously called into a dead local runState.abortCtl that was never
+  // assigned, so release was a no-op for a running chain.
+  try { await satellite.abortRun(); } catch (e) { logger.warn('release abortRun failed: ' + e.message); }
   satellite.release(req.body?.token);
-  if (runState.abortCtl) { try { runState.abortCtl.abort(); } catch {} }
-  runState.busy = false;
-  runState.abortCtl = null;
   res.json({ ok: true });
 });
 
@@ -134,13 +128,9 @@ router.post('/api/satellite/run-action', async (req, res) => {
 router.post('/api/satellite/pump-off', async (req, res) => {
   const { token } = req.body || {};
   if (!satellite.validateToken(token)) return res.status(401).json({ error: 'bad pairing token' });
-  satellite.abortRun();
-  try {
-    const devices = require('../services/devices-service');
-    const control = require('../services/device-control');
-    const prim = devices.primary ? devices.primary() : null;
-    if (prim) await control.turnOff(prim);
-  } catch (e) { logger.warn('pump-off turnOff failed: ' + e.message); }
+  // abortRun() now itself turns off the primary device, so we no longer need
+  // the duplicate turnOff that used to follow.
+  try { await satellite.abortRun(); } catch (e) { logger.error('pump-off abort failed: ' + e.message); }
   res.json({ ok: true });
 });
 
