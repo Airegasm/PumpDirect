@@ -422,10 +422,10 @@ function renderVisitorPage(req) {
   return `<!doctype html><html lang="en" data-theme="dark"><head>
     ${themeBootstrap}
     <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-    <title>PumpDirect${profile ? ' — ' + escapeHtml(profile.name) : ''}</title><style>${css}</style>
+    <title>PumpDirect — ${escapeHtml(ownerDisplayName)}</title><style>${css}</style>
   </head><body>
     <div class="topbar">
-      <h1>PumpDirect</h1>
+      <h1>PumpDirect <span class="muted" style="font-weight:400">— Active Session — ${escapeHtml(ownerDisplayName)}</span></h1>
       <div style="display:flex;gap:10px;align-items:center">
         <span class="you">${escapeHtml(nickname)}</span>
         ${themeToggleBtn}

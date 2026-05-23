@@ -107,7 +107,11 @@ function ownerLayout({ title, active, body }) {
   .action-help-btn { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; padding: 0; border-radius: 50%; background: rgba(0,0,0,0.45); color: #fff; border: 1px solid rgba(255,255,255,0.2); font-size: 0.85rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .action-help-btn:hover { background: rgba(0,0,0,0.75); }
   .cam-grid { display: flex; justify-content: center; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; width: 100%; }
-  .cam-grid .cam-slot { flex: 1 1 0; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+  /* Slot flex-grow scales with the published cam's aspect ratio so all tiles
+     render at the same HEIGHT regardless of aspect. A 16:9 host cam (1.78)
+     paired with a 1:1 visitor cam (1.0) gets ~64% / 36% of the row, which
+     keeps the host visually dominant instead of squat next to a square. */
+  .cam-grid .cam-slot { flex: var(--cam-aspect, 1) 1 0%; min-width: 0; max-width: min(85vh, 80vw); display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
   .cam-grid .cam-slot:empty { display: none; }
   /* ====== Dual-Target mode layout ====== */
   /* Wide cam-pair stack — vertical pairs, each cam tile with a bare gauge

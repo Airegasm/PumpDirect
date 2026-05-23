@@ -1042,7 +1042,13 @@ router.get('/', (req, res) => {
       let localStream = null;
       const OWNER_CAM_RES = ${JSON.stringify(cfg.owner?.camera?.resolution || { width: 1280, height: 720 })};
       function _setTileAspect(tile, w, h) {
-        if (w > 0 && h > 0) tile.style.setProperty('--cam-aspect', (w / h).toFixed(4));
+        if (!(w > 0 && h > 0)) return;
+        const ar = (w / h).toFixed(4);
+        tile.style.setProperty('--cam-aspect', ar);
+        // Also set on the .cam-slot ancestor so flex-grow widens landscape
+        // tiles proportionally (see .cam-grid .cam-slot in views/layout.js).
+        const slot = tile.closest('.cam-slot');
+        if (slot) slot.style.setProperty('--cam-aspect', ar);
       }
       function setLocalTileFromStream(stream) {
         const tile = document.getElementById('local-tile');
