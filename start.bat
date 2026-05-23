@@ -25,11 +25,56 @@ if errorlevel 1 (
     echo Warning: python not found. Some device protocols ^(Wyze, Matter, Kasa^) will be unavailable.
 )
 
-REM Install node deps if missing
-if not exist "node_modules" (
+REM Auto-update from origin/main (if this is a git checkout and git is available).
+REM Skipped on dirty trees - users aren't expected to edit code locally.
+set NEED_DEPS_REINSTALL=
+where git >nul 2>nul
+if errorlevel 1 goto :no_update
+if not exist ".git" goto :no_update
+
+echo Checking for updates...
+git diff --quiet
+if errorlevel 1 goto :dirty_tree
+git diff --cached --quiet
+if errorlevel 1 goto :dirty_tree
+
+git fetch --quiet origin 2>nul
+if errorlevel 1 (
+    echo Warning: cannot reach git remote ^(offline?^). Launching current version.
+    goto :no_update
+)
+
+for /f %%i in ('git rev-parse HEAD') do set LOCAL_SHA=%%i
+for /f %%i in ('git rev-parse origin/main 2^>nul') do set REMOTE_SHA=%%i
+if "%LOCAL_SHA%"=="%REMOTE_SHA%" (
+    echo Already up to date.
+    goto :no_update
+)
+
+echo Updating to latest...
+git pull --ff-only --quiet origin main
+if errorlevel 1 (
+    echo Warning: update failed ^(diverged history^). Launching current version.
+    goto :no_update
+)
+echo Updated. Reinstalling dependencies...
+set NEED_DEPS_REINSTALL=1
+goto :no_update
+
+:dirty_tree
+echo Warning: local uncommitted changes - skipping auto-update.
+echo   To force update, discard local edits: git reset --hard origin/main
+
+:no_update
+
+REM Install node deps if missing OR if we just pulled an update
+if not exist "node_modules" set NEED_NODE_INSTALL=1
+if defined NEED_DEPS_REINSTALL set NEED_NODE_INSTALL=1
+if defined NEED_NODE_INSTALL (
     echo Installing Node dependencies...
     call npm install --no-audit --no-fund --loglevel=error
 )
+set NEED_NODE_INSTALL=
 
 REM Python venv (optional)
 if exist "requirements.txt" (
@@ -39,6 +84,7 @@ if exist "requirements.txt" (
             echo Creating Python venv...
             python -m venv .venv
         )
+        if defined NEED_DEPS_REINSTALL if exist ".venv\.deps-installed" del ".venv\.deps-installed"
         if not exist ".venv\.deps-installed" (
             echo Installing Python dependencies...
             call .venv\Scripts\pip install --quiet --upgrade pip

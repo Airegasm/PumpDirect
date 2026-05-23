@@ -28,8 +28,38 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "Warning: python3 not found. Some device protocols (Wyze, Matter, Kasa) will be unavailable."
 fi
 
-# Install node deps if missing
-if [ ! -d node_modules ]; then
+# Auto-update from origin/main (if this is a git checkout and git is available).
+# Skipped on dirty trees — users aren't expected to edit code locally; if they
+# have, they can recover with: git reset --hard origin/main
+NEED_DEPS_REINSTALL=""
+if [ -d .git ] && command -v git >/dev/null 2>&1; then
+  echo "Checking for updates..."
+  if git diff --quiet && git diff --cached --quiet; then
+    if git fetch --quiet origin 2>/dev/null; then
+      LOCAL_SHA=$(git rev-parse HEAD)
+      REMOTE_SHA=$(git rev-parse origin/main 2>/dev/null || echo "$LOCAL_SHA")
+      if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+        echo "Updating to latest..."
+        if git pull --ff-only --quiet origin main; then
+          echo "✓ Updated. Reinstalling dependencies..."
+          NEED_DEPS_REINSTALL=1
+        else
+          echo "⚠ Update failed (diverged history). Launching current version."
+        fi
+      else
+        echo "Already up to date."
+      fi
+    else
+      echo "⚠ Cannot reach git remote (offline?). Launching current version."
+    fi
+  else
+    echo "⚠ Local uncommitted changes — skipping auto-update."
+    echo "  To force update, discard local edits: git reset --hard origin/main"
+  fi
+fi
+
+# Install node deps if missing OR if we just pulled an update
+if [ ! -d node_modules ] || [ -n "$NEED_DEPS_REINSTALL" ]; then
   echo "Installing Node dependencies..."
   npm install --no-audit --no-fund --loglevel=error
 fi

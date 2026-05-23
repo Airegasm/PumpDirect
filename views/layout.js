@@ -248,7 +248,7 @@ function ownerLayout({ title, active, body }) {
 </head>
 <body>
 <div class="topbar">
-  <h1>PumpDirect <span class="muted">— owner console</span></h1>
+  <h1>PumpDirect <span class="muted">— host console</span></h1>
   <div style="display:flex;gap:12px;align-items:center">
     <a id="session-indicator" href="/" class="session-pill idle" title="jump to Launchpad">○ idle</a>
     <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()" title="toggle light/dark">🌙</button>

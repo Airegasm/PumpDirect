@@ -31,7 +31,7 @@ router.get('/chat-webcam', (_req, res) => {
     </div>
 
     <div class="card">
-      <h3>Owner display name</h3>
+      <h3>Your display name</h3>
       <p>
         <input id="cw-name" type="text" value="${escape(owner.displayName || '')}" placeholder="e.g. Airegasm" style="width:60%" onblur="cwSaveName(true)" onkeydown="if(event.key==='Enter') cwSaveName(true)">
         <button onclick="cwSaveName()">Save</button>

@@ -170,6 +170,8 @@ SystemCallArchitectures=native
 
 **Windows:** generates `install-service.ps1` / `uninstall-service.ps1`. Installer downloads NSSM (~340 KB) into `bin/`, registers PumpDirect as a Windows Service, and adds a Windows Defender Firewall rule pinning the listener to `127.0.0.1`.
 
+> **Updating when the OS-hardened service is installed.** The launcher scripts (`start.sh` / `start.bat`) auto-pull the latest code on every run. The systemd / Windows Service runs `node server.js` directly and does **not** auto-update. To take updates: stop the service (`sudo systemctl stop pumpdirect` / `Stop-Service PumpDirect`), run the launcher once to pull + reinstall deps, then restart the service. The launcher will exit when you Ctrl+C; the service then resumes on next boot or via `Start-Service` / `systemctl start`.
+
 ## Mini Games
 
 Controller-pressable buttons that pre-compute a result server-side, broadcast it to every viewer, and run a synchronized animation before the resulting pump fires:
