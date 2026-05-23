@@ -45,4 +45,49 @@ async function checkForUpdates() {
 
 function invalidate() { cache = null; cacheTime = 0; }
 
-module.exports = { checkForUpdates, invalidate };
+// Platform-aware copy/paste-able update commands. Branches on whether the
+// OS-hardened service is installed (NSSM on Windows, systemd on Linux) since
+// the launchers can't bind the same ports the service holds.
+function getUpdateCommands(platform, serviceInstalled) {
+  const dir = PROJECT_DIR;
+  if (platform === 'win32') {
+    if (serviceInstalled) {
+      return {
+        scope: 'Windows Service (NSSM)',
+        shell: 'PowerShell (run as Administrator)',
+        cmd: `Stop-Service PumpDirect\ncd "${dir}"\ngit pull\nnpm install --no-audit --no-fund\nStart-Service PumpDirect`,
+      };
+    }
+    return {
+      scope: 'Windows (launcher)',
+      shell: 'cmd.exe',
+      cmd: `cd /d "${dir}"\nstart.bat`,
+      note: 'start.bat auto-pulls on launch. Close any running PumpDirect window first.',
+    };
+  }
+  if (platform === 'linux') {
+    if (serviceInstalled) {
+      return {
+        scope: 'systemd service',
+        shell: 'terminal (sudo password)',
+        cmd: `sudo systemctl stop pumpdirect && cd "${dir}" && git pull && npm install --no-audit --no-fund && sudo systemctl start pumpdirect`,
+      };
+    }
+  }
+  if (platform === 'darwin' || platform === 'linux') {
+    return {
+      scope: platform === 'darwin' ? 'macOS (launcher)' : 'Linux (launcher)',
+      shell: 'terminal',
+      cmd: `cd "${dir}" && ./start.sh`,
+      note: 'start.sh auto-pulls on launch. Stop any running PumpDirect first.',
+    };
+  }
+  return {
+    scope: platform || 'unknown',
+    shell: 'terminal',
+    cmd: `cd "${dir}" && git pull && npm install --no-audit --no-fund`,
+    note: 'Restart PumpDirect after running.',
+  };
+}
+
+module.exports = { checkForUpdates, invalidate, getUpdateCommands };

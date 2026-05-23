@@ -10,7 +10,10 @@ const router = express.Router();
 router.get('/tos', async (_req, res) => {
   let updateInfo = null;
   try { updateInfo = await updateCheck.checkForUpdates(); } catch (e) { logger.error('update check failed', e.message); }
-  res.type('html').send(renderTosPage({ updateInfo }));
+  const cfg = config.load();
+  const serviceInstalled = !!cfg.hardening?.installed;
+  const commands = updateCheck.getUpdateCommands(process.platform, serviceInstalled);
+  res.type('html').send(renderTosPage({ updateInfo, commands }));
 });
 
 router.post('/api/owner/tos/accept', (req, res) => {
@@ -28,7 +31,9 @@ router.post('/api/owner/tos/accept', (req, res) => {
 router.get('/api/owner/update-check', async (_req, res) => {
   try {
     const info = await updateCheck.checkForUpdates();
-    res.json({ ok: true, info });
+    const serviceInstalled = !!config.load().hardening?.installed;
+    const commands = updateCheck.getUpdateCommands(process.platform, serviceInstalled);
+    res.json({ ok: true, info, platform: process.platform, serviceInstalled, commands });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -36,7 +41,9 @@ router.post('/api/owner/update-check/refresh', async (_req, res) => {
   updateCheck.invalidate();
   try {
     const info = await updateCheck.checkForUpdates();
-    res.json({ ok: true, info });
+    const serviceInstalled = !!config.load().hardening?.installed;
+    const commands = updateCheck.getUpdateCommands(process.platform, serviceInstalled);
+    res.json({ ok: true, info, platform: process.platform, serviceInstalled, commands });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

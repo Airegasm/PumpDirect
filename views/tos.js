@@ -57,8 +57,8 @@ function tosBody() {
 `;
 }
 
-function renderTosPage({ updateInfo }) {
-  const updateBlock = renderUpdateBlock(updateInfo);
+function renderTosPage({ updateInfo, commands }) {
+  const updateBlock = renderUpdateBlock(updateInfo, commands);
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -84,6 +84,11 @@ function renderTosPage({ updateInfo }) {
   .update .label { color: #7a8597; font-size: 0.9rem; }
   .update strong { color: #f0c674; }
   .update code { background: #0a0c10; padding: 2px 8px; border-radius: 4px; font-size: 0.9rem; }
+  .update-commands { margin-top: 12px; padding: 12px 14px; background: #0a0c10; border: 1px solid #2a2f3a; border-radius: 6px; }
+  .update-commands .scope { color: #9aa4b2; font-size: 0.85rem; margin-bottom: 6px; }
+  .update-commands pre { margin: 0; padding: 10px; background: #161922; border-radius: 4px; font-size: 0.9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: #e8e8e8; }
+  .update-commands .copy-btn { margin-top: 8px; background: #2a6df4; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font-size: 0.85rem; cursor: pointer; }
+  .update-commands .note { color: #7a8597; font-size: 0.85rem; margin-top: 8px; font-style: italic; }
 </style></head>
 <body>
 <div class="tos-wrap">
@@ -120,21 +125,35 @@ function renderTosPage({ updateInfo }) {
 </body></html>`;
 }
 
-function renderUpdateBlock(info) {
+function renderUpdateBlock(info, commands) {
   if (!info) return '';
   if (!info.isGitRepo) {
     return `<div class="update"><span class="label">Version:</span> <span>not running from a git checkout — manual update only.</span></div>`;
   }
   if (info.behind > 0) {
     return `<div class="update behind">
-      <span><strong>Update available</strong> — you are ${info.behind} commit${info.behind === 1 ? '' : 's'} behind <code>origin/main</code>.</span>
-      <span class="label">current: <code>${info.currentSha}</code></span>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;width:100%">
+        <span><strong>Update available</strong> — you are ${info.behind} commit${info.behind === 1 ? '' : 's'} behind <code>origin/main</code>.</span>
+        <span class="label" style="margin-left:auto">current: <code>${escapeText(info.currentSha || '')}</code></span>
+      </div>
+      ${commands ? renderCommandsBlock(commands) : ''}
     </div>`;
   }
   if (info.error) {
     return `<div class="update error"><span class="label">Update check failed:</span> <code>${escapeText(info.error)}</code> · current: <code>${escapeText(info.currentSha || '')}</code></div>`;
   }
   return `<div class="update"><span class="label">Up to date</span> · <code>${escapeText(info.currentSha || '')}</code></div>`;
+}
+
+function renderCommandsBlock(commands) {
+  if (!commands || !commands.cmd) return '';
+  const cmdId = 'update-cmd-' + Math.random().toString(36).slice(2, 8);
+  return `<div class="update-commands" style="width:100%">
+    <div class="scope">To update — <strong>${escapeText(commands.scope)}</strong> · run in <em>${escapeText(commands.shell)}</em>:</div>
+    <pre id="${cmdId}">${escapeText(commands.cmd)}</pre>
+    <button class="copy-btn" onclick="(function(b){navigator.clipboard.writeText(document.getElementById('${cmdId}').textContent).then(()=>{b.textContent='✓ Copied';setTimeout(()=>{b.textContent='Copy';},1500);});})(this)">Copy</button>
+    ${commands.note ? `<div class="note">${escapeText(commands.note)}</div>` : ''}
+  </div>`;
 }
 
 function escapeText(s) {

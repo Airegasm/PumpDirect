@@ -251,9 +251,19 @@ function ownerLayout({ title, active, body }) {
   <h1>PumpDirect <span class="muted">— host console</span></h1>
   <div style="display:flex;gap:12px;align-items:center">
     <a id="session-indicator" href="/" class="session-pill idle" title="jump to Launchpad">○ idle</a>
+    <button id="update-pill" onclick="showUpdateModal()" title="An update is available — click for the commands" style="display:none;background:#4a3413;color:#f0c674;border:1px solid #f0c674;border-radius:6px;padding:8px 14px;font-size:0.9rem;cursor:pointer">↗ Update available</button>
     <button onclick="hostRestart()" title="Restart the backend. Under the OS-hardened service or NSSM, the supervisor will bring it back. Under start.sh/start.bat the launcher will exit." style="background:#2a2f3a;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:6px;padding:8px 14px;font-size:0.9rem;cursor:pointer">↻ Restart</button>
     <button onclick="hostExit()" title="Shut down the backend. systemd stays down. Windows Service (NSSM default) may auto-restart — use Stop-Service PumpDirect from admin PowerShell to truly stop." style="background:#4a1b1b;color:#f0c674;border:1px solid #4a1b1b;border-radius:6px;padding:8px 14px;font-size:0.9rem;cursor:pointer">⏻ Exit</button>
     <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()" title="toggle light/dark">🌙</button>
+  </div>
+</div>
+<div id="update-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:10000;align-items:center;justify-content:center;padding:24px" onclick="if(event.target===this)closeUpdateModal()">
+  <div style="background:#161922;border:1px solid #2a2f3a;border-radius:12px;padding:28px 32px;max-width:680px;width:100%;max-height:90vh;overflow:auto">
+    <h2 style="margin:0 0 12px;font-size:1.4rem;color:#f0c674">↗ Update available</h2>
+    <p id="update-modal-summary" style="margin:0 0 16px;color:#9aa4b2"></p>
+    <div id="update-modal-cmd-wrap" style="margin-bottom:16px"></div>
+    <p style="margin:0 0 18px;color:#7a8597;font-size:0.9rem">Updates are pulled from GitHub. The launcher scripts (start.sh / start.bat) also auto-pull on every run — these commands are for users running the OS-hardened service (which doesn't run the launcher).</p>
+    <p style="margin:0;text-align:right"><button onclick="closeUpdateModal()" style="background:#2a2f3a;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:6px;padding:8px 18px;font-size:0.95rem;cursor:pointer">Close</button></p>
   </div>
 </div>
 <div class="tabs">${tabs}</div>
@@ -287,6 +297,53 @@ async function hostRestart() {
     }, 1000);
   } catch (e) { alert('Restart request failed: ' + e.message); }
 }
+let __updateState = null;
+async function checkForUpdates() {
+  try {
+    const r = await fetch('/api/owner/update-check', { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    __updateState = d;
+    const pill = document.getElementById('update-pill');
+    if (pill && d.info && d.info.behind > 0) pill.style.display = '';
+    else if (pill) pill.style.display = 'none';
+  } catch {}
+}
+function escUpd(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function showUpdateModal() {
+  const bg = document.getElementById('update-modal-bg');
+  const sum = document.getElementById('update-modal-summary');
+  const wrap = document.getElementById('update-modal-cmd-wrap');
+  if (!__updateState || !__updateState.info) return;
+  const info = __updateState.info;
+  const cmd = __updateState.commands;
+  sum.innerHTML = 'You are <strong>' + info.behind + ' commit' + (info.behind === 1 ? '' : 's') + '</strong> behind <code>origin/main</code>. Current: <code>' + escUpd(info.currentSha || '') + '</code>';
+  if (cmd && cmd.cmd) {
+    wrap.innerHTML =
+      '<div style="padding:14px;background:#0a0c10;border:1px solid #2a2f3a;border-radius:8px">' +
+      '<div style="color:#9aa4b2;font-size:0.9rem;margin-bottom:8px">' +
+      '<strong>' + escUpd(cmd.scope) + '</strong> — run in <em>' + escUpd(cmd.shell) + '</em>:' +
+      '</div>' +
+      '<pre id="upd-cmd-pre" style="margin:0;padding:12px;background:#161922;border-radius:6px;font-size:0.9rem;line-height:1.55;white-space:pre-wrap;word-break:break-all;color:#e8e8e8">' + escUpd(cmd.cmd) + '</pre>' +
+      '<p style="margin:10px 0 0"><button id="upd-copy-btn" onclick="copyUpdateCmd()" style="background:#2a6df4;color:#fff;border:0;border-radius:6px;padding:8px 16px;font-size:0.9rem;cursor:pointer">Copy</button></p>' +
+      (cmd.note ? '<p style="margin:10px 0 0;color:#7a8597;font-size:0.85rem;font-style:italic">' + escUpd(cmd.note) + '</p>' : '') +
+      '</div>';
+  } else {
+    wrap.innerHTML = '<p style="color:#9aa4b2">Run <code>git pull && npm install</code> from the project directory and restart PumpDirect.</p>';
+  }
+  bg.style.display = 'flex';
+}
+function closeUpdateModal() { document.getElementById('update-modal-bg').style.display = 'none'; }
+function copyUpdateCmd() {
+  const pre = document.getElementById('upd-cmd-pre');
+  const btn = document.getElementById('upd-copy-btn');
+  if (!pre) return;
+  navigator.clipboard.writeText(pre.textContent).then(() => {
+    if (btn) { btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }
+  });
+}
+checkForUpdates();
+setInterval(checkForUpdates, 60 * 60 * 1000); // hourly client-side; backend caches 1h too.
 async function hostExit() {
   if (!confirm('Shut down the PumpDirect server?\\n\\nNote: if you installed the OS-hardened Windows Service, NSSM may auto-restart it. To truly stop on Windows, use:\\n  Stop-Service PumpDirect\\nin an admin PowerShell window.\\n\\nContinue?')) return;
   try {
