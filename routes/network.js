@@ -195,6 +195,17 @@ router.get('/network', async (_req, res) => {
         <input id="cf-tunnel-name" type="text" value="${escape(cf_.tunnelName || 'pumpdirect')}" style="width:30%;padding:6px;background:#0a0c10;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:4px">
         <button ${!s.loggedIn ? 'disabled' : ''} onclick="cfCreateTunnel()">${cf_.tunnelId ? 'Re-create / reuse' : 'Create'}</button>
       </p>
+      <details style="margin-top:8px">
+        <summary>Windows alternative — create the tunnel manually on the Cloudflare dashboard</summary>
+        <ol style="margin:10px 0 0 22px;padding:0;font-size:0.95rem;line-height:1.7">
+          <li>If step 2/3/4 fail on Windows, complete steps 1–3 as normal, then come here.</li>
+          <li>Open <a href="https://one.dash.cloudflare.com/" target="_blank">one.dash.cloudflare.com</a> → <strong>Networks</strong> → <strong>Tunnels</strong> (older UI: Network → Connectors) → <strong>Create a tunnel</strong>.</li>
+          <li>Pick <strong>Cloudflared</strong>, give the tunnel a name (e.g. <code>pumpdirect</code>), save it, and copy the name.</li>
+          <li>The next page (<em>Install and run a connector</em>) shows a Windows install command. Open <strong>Command Prompt as Administrator</strong> and paste/run it. The page shows a spinner that turns green once the connector reports in — if it never goes green, re-run the same command in an elevated Command Prompt.</li>
+          <li>Back here: type the same tunnel name into the textbox above and click <strong>Re-create / reuse</strong>. PumpDirect finds the existing tunnel by name and links to it.</li>
+          <li>Continue with steps 5 and 6 as normal.</li>
+        </ol>
+      </details>
     `)}
 
     ${step(5, 'Public hostname', !!cf_.hostname, `
