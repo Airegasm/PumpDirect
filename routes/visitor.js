@@ -72,7 +72,10 @@ function renderVisitorPage(req) {
   const dualMode = (state.mode === 'dual-target');
   const allowVisCtrl = dualMode ? !!state.allowVisitorControllersInDual : true;
   const hasActionAuthority = (canControl && allowVisCtrl) || (dualMode && isTargetUser);
-  const chatEnabled = !!(profile && profile.settings?.chatroomEnabled);
+  const chatGloballyOn = cfg.chat?.enabled !== false;
+  const chatProfileOn = !!(profile && profile.settings?.chatroomEnabled);
+  const chatParticipantOn = participant ? participant.canChat !== false : true;
+  const chatEnabled = chatGloballyOn && chatProfileOn && chatParticipantOn;
 
   const minigamesList = minigames.list();
   const minigamesById = Object.fromEntries(minigamesList.map(mg => [mg.id, mg]));
@@ -1399,12 +1402,14 @@ router.get('/', (req, res) => {
 router.post('/api/visitor/chat', (req, res) => {
   const email = req.user?.email;
   if (!email) return res.status(401).json({ error: 'unauthenticated' });
+  if (config.load().chat?.enabled === false) return res.status(403).json({ error: 'chat is disabled' });
   const profile = activeProfile();
   if (!profile?.settings?.chatroomEnabled) return res.status(403).json({ error: 'chat is disabled in this session' });
   const participant = findParticipant(email);
   if (session.getState().active && (!participant || participant.canConnect === false)) {
     return res.status(403).json({ error: 'not in this session' });
   }
+  if (participant && participant.canChat === false) return res.status(403).json({ error: 'chat is disabled for you' });
   if (participant?.muted) return res.status(403).json({ error: 'you are muted' });
   const account = findAccount(email);
   const nickname = account?.nickname || email.split('@')[0];

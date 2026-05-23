@@ -369,6 +369,7 @@ router.get('/', (req, res) => {
                   <label title="can connect"><input type="checkbox" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canConnect',this.checked)">C</label>
                   <label title="can control"><input type="checkbox" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canControl',this.checked)">A</label>
                   <label title="can broadcast cam"${profile.mode === 'dual-target' ? ' style="opacity:0.5"' : ''}><input type="checkbox" ${p.canBroadcast ? 'checked' : ''}${profile.mode === 'dual-target' ? ' disabled' : ''} onchange="lpSetFlag('${escape(p.email)}','canBroadcast',this.checked)">V</label>
+                  <label title="can chat (requires master chat enable)"><input type="checkbox" ${p.canChat !== false ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canChat',this.checked)">Ch</label>
                   ${profile.mode === 'dual-target' ? `<label title="Target — operates their own pump (only one at a time; their PumpDirect must be running)" data-tflag="${escape(p.email)}"><input type="checkbox" ${p.canTarget ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canTarget',this.checked)">T<span class="t-badge" data-tbadge="${escape(p.email)}" style="display:none;margin-left:2px;font-size:0.65rem"></span></label>` : ''}
                   <button title="remove" onclick="lpRemoveParticipant('${escape(p.email)}')" style="background:#4a1b1b;padding:2px 8px;font-size:0.85rem">×</button>
                 </span>
@@ -381,7 +382,7 @@ router.get('/', (req, res) => {
             <button onclick="lpAddParticipant()" style="width:100%">Add from accounts</button>
           </p>
         ` : '<p class="muted" style="font-size:0.85rem;margin-top:12px">All accounts already added. Manage on Users tab.</p>'}
-        <p class="muted" style="font-size:0.75rem;margin-top:12px">C = connect · A = action control · V = video broadcast</p>
+        <p class="muted" style="font-size:0.75rem;margin-top:12px">C = connect · A = action control · V = video broadcast · Ch = chat</p>
         <p class="muted" style="font-size:0.75rem;margin-top:4px"><span class="presence-dot" style="display:inline-block;vertical-align:middle"></span> invited &nbsp;<span class="presence-dot online" style="display:inline-block;vertical-align:middle"></span> in session &nbsp;<span class="presence-dot afk" style="display:inline-block;vertical-align:middle"></span> afk</p>
       </div>
     </div>
@@ -1329,7 +1330,7 @@ router.post('/api/launchpad/profiles/:id/participants', (req, res) => {
     const email = (req.body?.email || '').trim().toLowerCase();
     if (!email) throw new Error('email required');
     if (profile.allowedParticipants.some(p => p.email === email)) throw new Error('already added');
-    const next = [...profile.allowedParticipants, { email, canConnect: true, canControl: false }];
+    const next = [...profile.allowedParticipants, { email, canConnect: true, canControl: false, canChat: true }];
     session.updateProfile(req.params.id, { allowedParticipants: next });
     syncLiveParticipantsFromProfile(req.params.id);
     res.json({ ok: true });

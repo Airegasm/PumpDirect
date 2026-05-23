@@ -175,7 +175,7 @@ function ownerLayout({ title, active, body }) {
   .cam-tile .rt-ctrls { position:absolute; top:10px; right:10px; display:flex; gap:6px; }
   .cam-tile .rt-ctrls button { background:rgba(0,0,0,0.6); border:0; color:#fff; border-radius:6px; padding:6px 10px; font-size:1rem; cursor:pointer; }
   .cam-tile.muted-video video { visibility: hidden; }
-  .chat-row { display: grid; grid-template-columns: 1fr 260px; gap: 14px; }
+  .chat-row { display: grid; grid-template-columns: 1fr 520px; gap: 14px; }
   .chat-row > .card { margin: 0; display: flex; flex-direction: column; }
   .chat-pane .chat-log { flex: 1; min-height: 320px; max-height: 60vh; overflow-y: auto; background:var(--bg-3); border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:8px; }
   .chat-pane .chat-input-row { margin-top: 10px; display:flex; gap:8px; }

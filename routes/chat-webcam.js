@@ -14,9 +14,21 @@ router.get('/chat-webcam', (_req, res) => {
   const owner = cfg.owner || {};
   const cam = owner.camera || { mode: 'off', resolution: { width: 1280, height: 720 }, snapshotEveryPct: 5 };
   const camRes = cam.resolution || { width: 1280, height: 720 };
+  const chatGlobalOn = cfg.chat?.enabled !== false;
 
   const body = `
     <h2>Chat / Webcam</h2>
+
+    <div class="card">
+      <h3>Chat</h3>
+      <p>
+        <label style="font-size:1.05rem"><input id="cw-chat-enable" type="checkbox" ${chatGlobalOn ? 'checked' : ''}> <strong>Enable chat for visitors</strong></label>
+      </p>
+      <p class="muted" style="font-size:0.95rem;margin:0">
+        Master switch. When off, all connected visitors lose chat — the input box is hidden and any send attempt is rejected.
+        <strong>You (the host) can always chat regardless.</strong> Per-participant overrides live in the Launchpad participant list (Ch column); revoked users stay revoked even if you flip this back on.
+      </p>
+    </div>
 
     <div class="card">
       <h3>Owner display name</h3>
@@ -191,6 +203,11 @@ router.get('/chat-webcam', (_req, res) => {
       // Mode + threshold change handlers
       document.querySelectorAll('input[name="cw-mode"]').forEach(r => r.addEventListener('change', e => cwSaveMode(e.target.value)));
       document.getElementById('cw-thresh').addEventListener('change', e => cwSaveThresh(e.target.value));
+      document.getElementById('cw-chat-enable').addEventListener('change', async e => {
+        const r = await fetch('/api/owner/chat', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ enabled: e.target.checked }) });
+        if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
+        else flash(e.target.checked ? 'chat enabled for visitors' : 'chat disabled for visitors', 'ok');
+      });
       document.getElementById('cw-allow-ctrl-cam').addEventListener('change', async e => {
         const r = await fetch('/api/owner/camera', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ allowControllerBroadcast: e.target.checked }) });
         if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
@@ -252,6 +269,16 @@ router.patch('/api/owner/camera', (req, res) => {
     config.save({ owner: { camera: next } });
     emitState(session.getState());
     res.json({ camera: next });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+router.patch('/api/owner/chat', (req, res) => {
+  try {
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) required' });
+    const next = config.save({ chat: { enabled } });
+    emitState(session.getState());
+    res.json({ chat: next.chat });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 

@@ -38,6 +38,12 @@ const DEFAULTS = {
       allowControllerBroadcast: false,                 // controllers (canControl visitors) may publish their cam too
     },
   },
+  chat: {
+    // Global master switch (Chat/Webcam → top). When false, ALL visitor chat
+    // is blocked regardless of per-profile chatroomEnabled or per-participant
+    // canChat. Host chat (loopback via /api/launchpad/chat) is unaffected.
+    enabled: true,
+  },
   vendors: {
     tapo:  { email: '', password: '' },
     kasa:  {},

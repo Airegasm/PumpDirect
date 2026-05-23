@@ -257,7 +257,7 @@ function startSession(profileId) {
     let canTarget = false;
     if (wantsT && !claimedTarget) { canTarget = 'pending'; claimedTarget = true; }
     return {
-      canConnect: true, canControl: false, canBroadcast: false, ...p,
+      canConnect: true, canControl: false, canBroadcast: false, canChat: true, ...p,
       muted: false, connected: false,
       // canTarget: false | 'pending' | true — only meaningful in dual-target mode.
       // 'pending' on start means the host pre-set T; handshake will follow
@@ -323,6 +323,7 @@ function updateParticipantFlags(email, patch) {
   if (typeof patch.canConnect === 'boolean') p.canConnect = patch.canConnect;
   if (typeof patch.canControl === 'boolean') p.canControl = patch.canControl;
   if (typeof patch.canBroadcast === 'boolean') p.canBroadcast = patch.canBroadcast;
+  if (typeof patch.canChat === 'boolean') p.canChat = patch.canChat;
   if (typeof patch.muted === 'boolean') p.muted = patch.muted;
   emitState(getState());
   return getState();
