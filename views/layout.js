@@ -221,6 +221,17 @@ function ownerLayout({ title, active, body }) {
   .participants-pane .p-legend { margin-top: auto; }
   .participants-pane .p-legend p { margin: 0; }
   .participants-pane .p-legend p + p { margin-top: 4px; }
+  /* Per-participant permission icons (🔧 control / 🎥 cam / 💬 chat / 🎯 target).
+     Sit between the nickname and the action buttons. Empty when no perms set. */
+  .participants-pane .p-perm-icons { display: inline-flex; gap: 4px; font-size: 0.95rem; margin-left: 6px; }
+  .participants-pane .p-perm-icons span { line-height: 1; }
+  /* Permissions context menu, opened by the hamburger button next to ×.
+     Positioned with fixed + JS-computed coords so it floats above the chat
+     card and doesn't get clipped by the participants pane's overflow. */
+  .perms-menu { position: fixed; z-index: 1500; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px; min-width: 200px; box-shadow: 0 6px 20px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 4px; }
+  .perms-menu label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 0.95rem; border-radius: 4px; cursor: pointer; }
+  .perms-menu label:hover { background: var(--bg-3); }
+  .perms-menu label input { transform: scale(1); margin: 0; }
   .participants-pane .p-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background:var(--bg-3); border:1px solid var(--border); border-radius:6px; font-size: 0.92rem; }
   .participants-pane .p-flags { margin-left: auto; display: flex; gap: 2px; font-size: 0.75rem; }
   .participants-pane .p-flags label { display: inline-flex; align-items: center; gap: 1px; }

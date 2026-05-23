@@ -390,24 +390,29 @@ router.get('/', (req, res) => {
         </h3>
         <div class="p-list">
           ${profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).length
-            ? profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).map(p => `
+            ? profile.allowedParticipants.filter(p => p.email !== ownerEmailLp).map(p => {
+                const nick = cfg.accounts.find(a => a.email === p.email)?.nickname || p.email.split('@')[0];
+                const icons =
+                  (p.canControl ? '<span title="action control">🔧</span>' : '') +
+                  (p.canBroadcast ? '<span title="video broadcast">🎥</span>' : '') +
+                  (p.canChat !== false ? '<span title="chat">💬</span>' : '') +
+                  (p.canTarget ? '<span title="target (dual mode)">🎯</span>' : '');
+                return `
               <div class="p-item" data-email="${escape(p.email)}">
                 <span class="presence-dot"></span>
-                <span>${escape(cfg.accounts.find(a => a.email === p.email)?.nickname || p.email.split('@')[0])}</span>
-                <span class="p-flags">
-                  <label title="can connect"><input type="checkbox" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canConnect',this.checked)">C</label>
-                  <label title="can control"><input type="checkbox" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canControl',this.checked)">A</label>
-                  <label title="can broadcast cam"${profile.mode === 'dual-target' ? ' style="opacity:0.5"' : ''}><input type="checkbox" ${p.canBroadcast ? 'checked' : ''}${profile.mode === 'dual-target' ? ' disabled' : ''} onchange="lpSetFlag('${escape(p.email)}','canBroadcast',this.checked)">V</label>
-                  <label title="can chat (requires master chat enable)"><input type="checkbox" ${p.canChat !== false ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canChat',this.checked)">Ch</label>
-                  ${profile.mode === 'dual-target' ? `<label title="Target — operates their own pump (only one at a time; their PumpDirect must be running)" data-tflag="${escape(p.email)}"><input type="checkbox" ${p.canTarget ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canTarget',this.checked)">T<span class="t-badge" data-tbadge="${escape(p.email)}" style="display:none;margin-left:2px;font-size:0.65rem"></span></label>` : ''}
+                <span class="p-name">${escape(nick)}</span>
+                <span class="p-perm-icons" data-perm-icons="${escape(p.email)}">${icons}</span>
+                <span class="p-flags" style="margin-left:auto">
+                  <button title="permissions" onclick="lpOpenPermsMenu('${escape(p.email)}', this)" style="background:#2a2f3a;padding:2px 10px;font-size:1rem;line-height:1">≡</button>
                   <button title="remove" onclick="lpRemoveParticipant('${escape(p.email)}')" style="background:#4a1b1b;padding:2px 8px;font-size:0.85rem">×</button>
                 </span>
-              </div>`).join('')
+              </div>`;
+              }).join('')
             : '<p class="muted" style="font-size:0.95rem">No participants yet.</p>'}
         </div>
         ${ineligible.length ? '' : '<p class="muted" style="font-size:0.85rem;margin-top:12px">All accounts already added. Manage on Users tab.</p>'}
         <div class="p-legend" style="padding-top:12px;border-top:1px solid var(--border);margin-top:12px">
-          <p class="muted" style="font-size:0.75rem">C = connect · A = action control · V = video broadcast · Ch = chat</p>
+          <p class="muted" style="font-size:0.75rem">🔧 action control · 🎥 video broadcast · 💬 chat${profile.mode === 'dual-target' ? ' · 🎯 target' : ''}</p>
           <p class="muted" style="font-size:0.75rem"><span class="presence-dot" style="display:inline-block;vertical-align:middle"></span> invited &nbsp;<span class="presence-dot online" style="display:inline-block;vertical-align:middle"></span> in session &nbsp;<span class="presence-dot afk" style="display:inline-block;vertical-align:middle"></span> afk</p>
         </div>
       </div>
@@ -1083,14 +1088,25 @@ router.get('/', (req, res) => {
         document.querySelectorAll('.misc-action-btn').forEach(b => { b.disabled = !!running || introGate; });
         document.querySelectorAll('.minigame-btn').forEach(b => { b.disabled = !!running || introGate; });
         // Presence: paint the dot + italicize AFK names in the participant list.
-        const presenceByEmail = Object.fromEntries((s.participants || []).map(p => [p.email, p.presence || null]));
+        // Also refresh the permission-icon strip so a permission change from
+        // the hamburger menu lights up the icon immediately on every browser.
+        const byEmail = Object.fromEntries((s.participants || []).map(p => [p.email, p]));
+        const isDual = (s.mode === 'dual-target');
         document.querySelectorAll('.participants-pane .p-item[data-email]').forEach(item => {
-          const presence = presenceByEmail[item.dataset.email] || null;
+          const p = byEmail[item.dataset.email] || {};
           const dot = item.querySelector('.presence-dot');
           if (dot) dot.classList.remove('online', 'afk');
           item.classList.remove('afk');
-          if (presence === 'connected' && dot) dot.classList.add('online');
-          if (presence === 'afk') { if (dot) dot.classList.add('afk'); item.classList.add('afk'); }
+          if (p.presence === 'connected' && dot) dot.classList.add('online');
+          if (p.presence === 'afk') { if (dot) dot.classList.add('afk'); item.classList.add('afk'); }
+          const icons = item.querySelector('.p-perm-icons');
+          if (icons) {
+            icons.innerHTML =
+              (p.canControl ? '<span title="action control">🔧</span>' : '') +
+              (p.canBroadcast ? '<span title="video broadcast">🎥</span>' : '') +
+              (p.canChat !== false ? '<span title="chat">💬</span>' : '') +
+              (p.canTarget && isDual ? '<span title="target (dual mode)">🎯</span>' : '');
+          }
         });
       }
       // ---- Webcam (local publish) ----
@@ -1358,6 +1374,43 @@ router.get('/', (req, res) => {
       connectWs();
 
       // ---- participants ----
+      // Permissions context menu (opened by the ≡ hamburger on each row). Lists
+      // the toggleable per-participant flags as checkboxes and pipes them
+      // through the existing lpSetFlag → PATCH endpoint. canConnect is gone
+      // from the UI entirely - being on the list means you can connect.
+      function lpOpenPermsMenu(email, anchorBtn) {
+        document.querySelectorAll('.perms-menu').forEach(m => m.remove());
+        const s = window.__lastState || {};
+        const p = (s.participants || []).find(x => x.email === email) || {};
+        const isDual = (s.mode === 'dual-target');
+        const menu = document.createElement('div');
+        menu.className = 'perms-menu';
+        const safeEmail = email.replace(/'/g, "\\\\'");
+        menu.innerHTML =
+          '<label><input type="checkbox" ' + (p.canControl ? 'checked' : '') +
+            ' onchange="lpSetFlag(\\'' + safeEmail + '\\',\\'canControl\\',this.checked)"> 🔧 Action control</label>' +
+          '<label' + (isDual ? ' style="opacity:0.5"' : '') + '><input type="checkbox" ' + (p.canBroadcast ? 'checked' : '') +
+            (isDual ? ' disabled title="disabled in dual-target mode"' : '') +
+            ' onchange="lpSetFlag(\\'' + safeEmail + '\\',\\'canBroadcast\\',this.checked)"> 🎥 Video broadcast</label>' +
+          '<label><input type="checkbox" ' + (p.canChat !== false ? 'checked' : '') +
+            ' onchange="lpSetFlag(\\'' + safeEmail + '\\',\\'canChat\\',this.checked)"> 💬 Chat</label>' +
+          (isDual ? '<label><input type="checkbox" ' + (p.canTarget ? 'checked' : '') +
+            ' onchange="lpSetFlag(\\'' + safeEmail + '\\',\\'canTarget\\',this.checked)"> 🎯 Target (dual mode)</label>' : '');
+        const rect = anchorBtn.getBoundingClientRect();
+        menu.style.top = (rect.bottom + 4) + 'px';
+        menu.style.right = (window.innerWidth - rect.right) + 'px';
+        document.body.appendChild(menu);
+        // Defer the close-on-outside-click so the originating click doesn't
+        // immediately tear it back down.
+        setTimeout(() => {
+          const off = (e) => {
+            if (menu.contains(e.target) || e.target === anchorBtn) return;
+            menu.remove();
+            document.removeEventListener('mousedown', off);
+          };
+          document.addEventListener('mousedown', off);
+        }, 0);
+      }
       // The "Add from accounts" dropdown is no longer rendered inline at the
       // bottom of the participants pane; the + button next to the title opens
       // this modal instead. Server-side option list is baked into the HTML
