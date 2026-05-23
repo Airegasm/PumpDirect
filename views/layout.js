@@ -96,7 +96,7 @@ function ownerLayout({ title, active, body }) {
      (current milestone + action buttons). Sidebar width pins to ~280px so the
      240px gauge fits with normal card padding; columns match each other. Collapses
      to a single stacked column below 1100px viewport. */
-  .lp-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px; gap: 16px; align-items: start; margin-bottom: 14px; }
+  .lp-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px; gap: 16px; align-items: stretch; margin-bottom: 14px; }
   .lp-grid > .card { margin: 0; }
   .lp-grid .lp-col-left  { display: flex; flex-direction: column; gap: 10px; }
   .lp-grid .lp-col-right { display: flex; flex-direction: column; gap: 10px; }
