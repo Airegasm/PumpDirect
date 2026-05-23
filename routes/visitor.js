@@ -378,6 +378,15 @@ function renderVisitorPage(req) {
   }).join('');
   const hasAnyV = visibleActionIds.length || visibleMinigameIds.length;
   const introNote = '<p id="v-intro-lock-note" class="muted" style="color:#f0c674;font-size:0.95rem;margin:0 0 8px;display:' + (introGatedV ? 'block' : 'none') + '">Host is presenting an intro — pump controls unlock when it finishes.</p>';
+
+  // Owner identity — used by both the A/B toggle (host nick) and the
+  // participants pane below. Declared up here so the dual-mode toggle can
+  // read it without hitting the let/const temporal dead zone.
+  const ownerEmailCfg = cfg.cloudflare?.ownerEmail || '';
+  const ownerDisplayName = (cfg.owner?.displayName || '').trim()
+    || (cfg.accounts || []).find(a => a.email === ownerEmailCfg)?.nickname
+    || (ownerEmailCfg ? ownerEmailCfg.split('@')[0] : 'owner');
+
   // A/B toggle (dual mode + has action authority). Nicknames come from accounts.
   const abTargetNick = (() => {
     if (!dualMode) return '';
@@ -403,12 +412,7 @@ function renderVisitorPage(req) {
   // Participant list — client-rendered from live state so presence (connected / AFK)
   // can update without a reload. Owner-as-Host is always shown; everyone else only
   // shows up while their WS is open (connected or AFK).
-  const ownerEmailCfg = cfg.cloudflare?.ownerEmail || '';
-  // Visitors see the owner's public-facing display name. Fall back to the account
-  // nickname, then the email prefix, then a generic label only as last resort.
-  const ownerDisplayName = (cfg.owner?.displayName || '').trim()
-    || (cfg.accounts || []).find(a => a.email === ownerEmailCfg)?.nickname
-    || (ownerEmailCfg ? ownerEmailCfg.split('@')[0] : 'owner');
+  // ownerEmailCfg + ownerDisplayName were declared above so the A/B toggle could use them.
   const ownerNick = ownerDisplayName;
   const nicknamesByEmail = Object.fromEntries((cfg.accounts || []).map(a => [a.email, a.nickname || a.email.split('@')[0]]));
   // Owner entry in the lookup map uses the public display name, matching what
