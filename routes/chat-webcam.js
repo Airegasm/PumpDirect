@@ -4,6 +4,7 @@ const chat = require('../services/chat-service');
 const session = require('../services/session-service');
 const { emitState } = require('../services/event-bus');
 const { ownerLayout, escape } = require('../views/layout');
+const { camPipelineJs } = require('../views/cam-pipeline');
 const { createLogger } = require('../utils/logger');
 
 const logger = createLogger('ChatWebcam');
@@ -95,13 +96,26 @@ router.get('/chat-webcam', (_req, res) => {
     </div>
 
     <div class="card" id="cw-controls-card">
-      <h3 style="margin:0 0 6px">Camera adjustments</h3>
-      <p class="muted" style="font-size:0.9rem;margin:0 0 14px">Sliders only appear for controls your camera actually exposes. Most laptop webcams show 3–5; USB cameras (Logitech, EMEET, OBSBOT) typically expose far more. All changes apply at the camera and are visible to your viewers.</p>
+      <h3 style="margin:0 0 4px">Camera adjustments — <span style="color:#6ddc9b">Native (hardware)</span></h3>
+      <p class="muted" style="font-size:0.9rem;margin:0 0 14px">Sliders below only appear for controls your camera actually exposes via the browser. Most laptop / fixed-lens webcams (including Elgato Facecam) only show brightness / contrast / saturation / white balance / exposure. Hardware PTZ cameras add zoom/pan/tilt. All changes apply at the camera and are visible to viewers with zero CPU cost.</p>
       <div id="cw-controls-empty" class="muted" style="font-size:0.95rem">Press <strong>Start camera</strong> to detect available controls.</div>
       <div id="cw-controls" style="display:none;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px"></div>
       <p id="cw-controls-actions" style="display:none;margin:14px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button onclick="cwResetControls()" style="background:#2a2f3a;color:#e8e8e8">Reset all to defaults</button>
-        <span class="muted" style="font-size:0.85rem">Saved per-browser. Re-applied automatically next time you start this camera.</span>
+        <button onclick="cwResetControls()" style="background:#2a2f3a;color:#e8e8e8">Reset hardware controls</button>
+        <span class="muted" style="font-size:0.85rem">Saved per-camera, per-browser.</span>
+      </p>
+    </div>
+
+    <div class="card" id="cw-software-card">
+      <h3 style="margin:0 0 4px">Camera adjustments — <span style="color:#f0c674">Software (PumpDirect canvas pipeline)</span></h3>
+      <p class="muted" style="font-size:0.9rem;margin:0 0 14px">Works on <strong>any camera</strong>. We capture each frame, transform it on a canvas, and re-publish the result. Adds ~5–15% CPU at 720p30 on modern hardware. <strong>Off by default</strong> — only turns on when you tick the box below. Settings apply to both your preview here and the live broadcast on Launchpad.</p>
+      <p style="margin:0 0 12px">
+        <label style="font-size:1.05rem"><input id="cw-sw-enabled" type="checkbox"> <strong>Enable software pipeline</strong></label>
+      </p>
+      <div id="cw-sw-controls" style="display:none;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px"></div>
+      <p id="cw-sw-actions" style="display:none;margin:14px 0 0;align-items:center;gap:8px;flex-wrap:wrap">
+        <button onclick="cwResetSoftwareControls()" style="background:#2a2f3a;color:#e8e8e8">Reset software controls</button>
+        <span class="muted" style="font-size:0.85rem">Stop + Start camera if it doesn't take effect immediately.</span>
       </p>
     </div>
 
@@ -109,11 +123,14 @@ router.get('/chat-webcam', (_req, res) => {
 
     <div id="cw-msg" style="position:fixed;bottom:20px;right:20px;max-width:380px;z-index:1100"></div>
 
+    <script>${camPipelineJs()}</script>
     <script>
       const SAVED_RES = ${JSON.stringify(camRes)};
       const SAVED_MODE = ${JSON.stringify(cam.mode)};
       const SAVED_THRESH = ${JSON.stringify(cam.snapshotEveryPct)};
-      let videoEl = null, stream = null;
+      let videoEl = null, stream = null;       // What's shown in the preview (post-pipeline if enabled).
+      let rawStream = null;                    // The raw getUserMedia stream — kept so we can rebuild pipeline.
+      let pipeline = null;                     // { stream, stop } from PDCam.startPipeline when active.
       let lastSnapCapacity = -Infinity;
 
       function flash(msg, cls) {
@@ -158,7 +175,15 @@ router.get('/chat-webcam', (_req, res) => {
           return;
         }
         try {
-          stream = await navigator.mediaDevices.getUserMedia(_videoConstraintsFromSaved());
+          rawStream = await navigator.mediaDevices.getUserMedia(_videoConstraintsFromSaved());
+          // If the software pipeline is enabled, wrap the raw stream. Preview
+          // and (eventually) the broadcast both see the processed output.
+          if (window.PDCam && window.PDCam.isEnabled()) {
+            pipeline = window.PDCam.startPipeline(rawStream);
+            stream = pipeline.stream;
+          } else {
+            stream = rawStream;
+          }
           const v = document.getElementById('cw-video');
           v.srcObject = stream;
           videoEl = v;
@@ -325,8 +350,74 @@ router.get('/chat-webcam', (_req, res) => {
         await cwStartCam();
         flash('camera controls reset', 'ok');
       }
+
+      // -------- Software pipeline UI (Phase 2) --------
+      // Friendly labels and units for the keys defined in views/cam-pipeline.js.
+      // Bool-like keys (mirror) get checkboxes; rest are sliders with a numeric readout.
+      const SW_META = {
+        zoom:       { label: 'Digital zoom',      unit: '×',   fmt: v => v.toFixed(2) + '×' },
+        panX:       { label: 'Pan X',             unit: '',    fmt: v => v.toFixed(2) },
+        panY:       { label: 'Pan Y',             unit: '',    fmt: v => v.toFixed(2) },
+        hue:        { label: 'Hue rotate',        unit: '°',   fmt: v => v.toFixed(0) + '°' },
+        brightness: { label: 'Brightness (sw)',   unit: '',    fmt: v => v.toFixed(2) },
+        contrast:   { label: 'Contrast (sw)',     unit: '',    fmt: v => v.toFixed(2) },
+        saturate:   { label: 'Saturation (sw)',   unit: '',    fmt: v => v.toFixed(2) },
+        mirror:     { label: 'Mirror horizontally', bool: true },
+      };
+      function cwBuildSoftwareUI() {
+        if (!window.PDCam) return;
+        const wrap = document.getElementById('cw-sw-controls');
+        const actions = document.getElementById('cw-sw-actions');
+        const tickbox = document.getElementById('cw-sw-enabled');
+        tickbox.checked = window.PDCam.isEnabled();
+        tickbox.onchange = async () => {
+          window.PDCam.setEnabled(tickbox.checked);
+          wrap.style.display = tickbox.checked ? 'grid' : 'none';
+          actions.style.display = tickbox.checked ? 'flex' : 'none';
+          if (rawStream) {
+            // Restart so the pipeline gets attached/detached cleanly.
+            cwStopCam();
+            await cwStartCam();
+          }
+        };
+        const rows = window.PDCam.SETTINGS_SPEC.map(([key, def, min, max, step]) => {
+          const meta = SW_META[key] || { label: key };
+          const cur = window.PDCam.get(key);
+          if (meta.bool) {
+            return '<div><label style="display:block;font-size:0.95rem"><input type="checkbox"' + (cur ? ' checked' : '') + ' onchange="cwSetSoftware(\\'' + key + '\\', this.checked ? 1 : 0)"> ' + meta.label + '</label></div>';
+          }
+          return (
+            '<div>' +
+            '<label style="display:flex;justify-content:space-between;font-size:0.95rem;margin-bottom:4px"><span>' + meta.label + '</span><span class="muted" id="cw-sw-val-' + key + '">' + meta.fmt(cur) + '</span></label>' +
+            '<input type="range" min="' + min + '" max="' + max + '" step="' + step + '" value="' + cur + '" style="width:100%" oninput="cwSetSoftware(\\'' + key + '\\', Number(this.value))">' +
+            '</div>'
+          );
+        });
+        wrap.innerHTML = rows.join('');
+        wrap.style.display = tickbox.checked ? 'grid' : 'none';
+        actions.style.display = tickbox.checked ? 'flex' : 'none';
+      }
+      function cwSetSoftware(key, val) {
+        if (!window.PDCam) return;
+        window.PDCam.set(key, val);
+        const span = document.getElementById('cw-sw-val-' + key);
+        const meta = SW_META[key];
+        if (span && meta && meta.fmt) span.textContent = meta.fmt(val);
+      }
+      async function cwResetSoftwareControls() {
+        window.PDCam.resetAll();
+        cwBuildSoftwareUI();
+        if (rawStream && pipeline) {
+          // Pipeline reads localStorage each frame; reset will be picked up next frame.
+          flash('software adjustments reset', 'ok');
+        }
+      }
+      cwBuildSoftwareUI();
       function cwStopCam() {
-        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        if (pipeline) { try { pipeline.stop(); } catch {} pipeline = null; }
+        if (rawStream) { rawStream.getTracks().forEach(t => { try { t.stop(); } catch {} }); rawStream = null; }
+        if (stream && stream !== rawStream) { try { stream.getTracks().forEach(t => t.stop()); } catch {} }
+        stream = null;
         const v = document.getElementById('cw-video');
         v.srcObject = null;
         const actual = document.getElementById('cw-actual');

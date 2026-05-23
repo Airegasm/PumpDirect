@@ -10,6 +10,7 @@ const config = require('../config');
 const { ownerLayout, escape } = require('../views/layout');
 const { rtcClientJs } = require('../views/rtc-client');
 const { chatCryptoJs } = require('../views/chat-crypto');
+const { camPipelineJs } = require('../views/cam-pipeline');
 const { overlayJs, overlayCss } = require('../views/overlay');
 const { createLogger } = require('../utils/logger');
 
@@ -406,6 +407,7 @@ router.get('/', (req, res) => {
     <script>
       ${rtcClientJs({ myEmail: cfg.cloudflare?.ownerEmail || 'owner@local' })}
       ${chatCryptoJs()}
+      ${camPipelineJs()}
       ${overlayJs()}
     </script>
     <script>
@@ -1072,12 +1074,30 @@ router.get('/', (req, res) => {
           const vc = (OWNER_CAM_RES && OWNER_CAM_RES.width !== 'native')
             ? { width: { ideal: OWNER_CAM_RES.width }, height: { ideal: OWNER_CAM_RES.height } }
             : true;
+          let rawLocal;
           try {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: vc, audio: true });
+            rawLocal = await navigator.mediaDevices.getUserMedia({ video: vc, audio: true });
           } catch (e1) {
             console.warn('AV failed, retrying video-only:', e1);
-            localStream = await navigator.mediaDevices.getUserMedia({ video: vc });
+            rawLocal = await navigator.mediaDevices.getUserMedia({ video: vc });
             flash('Mic unavailable — broadcasting video only', 'warn');
+          }
+          // If the host enabled the software pipeline on Chat/Webcam, route
+          // the raw cam through canvas processing before publishing. The raw
+          // stream is stashed on the processed stream so lpStopCam can clean both up.
+          if (window.PDCam && window.PDCam.isEnabled()) {
+            try {
+              const wrapped = window.PDCam.startPipeline(rawLocal);
+              wrapped.stream.__pdRaw = rawLocal;
+              wrapped.stream.__pdPipeline = wrapped;
+              localStream = wrapped.stream;
+              flash('software camera pipeline active', 'ok');
+            } catch (e) {
+              console.error('cam pipeline failed, falling back to raw:', e);
+              localStream = rawLocal;
+            }
+          } else {
+            localStream = rawLocal;
           }
           setLocalTileFromStream(localStream);
           document.getElementById('btn-cam').textContent = 'Stop camera';
@@ -1111,7 +1131,13 @@ router.get('/', (req, res) => {
         if (window.__rtc && window.__rtc.unpublish) {
           try { await window.__rtc.unpublish(); } catch {}
         }
-        if (localStream) localStream.getTracks().forEach(t => t.stop());
+        if (localStream) {
+          // If we wrapped through the canvas pipeline, stop the pipeline first
+          // (cancels rAF + ends canvas tracks), then stop the raw cam tracks.
+          if (localStream.__pdPipeline) { try { localStream.__pdPipeline.stop(); } catch {} }
+          if (localStream.__pdRaw) { try { localStream.__pdRaw.getTracks().forEach(t => t.stop()); } catch {} }
+          localStream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+        }
         localStream = null;
         resetLocalTile();
         document.getElementById('btn-cam').textContent = 'Start camera';
