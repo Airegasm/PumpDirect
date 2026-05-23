@@ -123,10 +123,22 @@ function camPipelineJs() {
       let ctx, src, an;
       try {
         ctx = new (window.AudioContext || window.webkitAudioContext)();
+        // Chrome/Safari start the AudioContext suspended when it's created
+        // outside a synchronous user-gesture callback (awaiting getUserMedia
+        // breaks the gesture chain). resume() is allowed once a gesture has
+        // happened earlier in the same tab, which is always true here.
+        if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
         src = ctx.createMediaStreamSource(stream);
         an = ctx.createAnalyser();
         an.fftSize = 256;
+        // Some browsers require the analyser to be connected to the
+        // destination for the source to actually produce samples. Route
+        // through a gain node at 0 so we don't echo the mic to the speakers.
+        const sink = ctx.createGain();
+        sink.gain.value = 0;
         src.connect(an);
+        an.connect(sink);
+        sink.connect(ctx.destination);
       } catch (e) {
         console.warn('VU meter init failed', e);
         return function () {};
