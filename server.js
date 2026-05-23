@@ -2,8 +2,10 @@
 // and routes stray console.error/console.warn into the in-process log
 // ring buffer so the System tab can surface them.
 
+const fs = require('fs');
 const path = require('path');
-const { createLogger, recordExternal } = require('./utils/logger');
+const logger_module = require('./utils/logger');
+const { createLogger, recordExternal } = logger_module;
 const { repairModeSync, repairTreeSync } = require('./utils/atomic-write');
 const config = require('./config');
 
@@ -23,8 +25,15 @@ function _stringify(args) {
 }
 const _origError = console.error.bind(console);
 const _origWarn  = console.warn.bind(console);
+const _origLog   = console.log.bind(console);
+const _origInfo  = console.info.bind(console);
 console.error = (...args) => { try { recordExternal('ERROR', 'console', _stringify(args)); } catch {} _origError(...args); };
 console.warn  = (...args) => { try { recordExternal('WARN',  'console', _stringify(args)); } catch {} _origWarn (...args); };
+// Tuya / Govee vendor services log via raw console.log + console.info;
+// capture both so the System tab sees their normal operational chatter, not
+// just their failures.
+console.log   = (...args) => { try { recordExternal('INFO',  'console', _stringify(args)); } catch {} _origLog  (...args); };
+console.info  = (...args) => { try { recordExternal('INFO',  'console', _stringify(args)); } catch {} _origInfo (...args); };
 
 // ---- repair file permissions on startup ------------------------------------
 // Earlier versions wrote config.json + data/* with the process umask (usually
@@ -67,11 +76,30 @@ async function shutdown(reason) {
 process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
+// Dump the in-memory log ring buffer to data/last-crash.log so post-mortems
+// survive a restart. Truncates and rewrites each time so we don't accrete an
+// unbounded file - the ring is at most 1000 lines anyway.
+function _dumpCrashLog(reason, err) {
+  try {
+    const snap = logger_module.snapshot ? logger_module.snapshot() : [];
+    const lines = snap.map(e => {
+      const ts = new Date(e.ts).toISOString();
+      return `${ts} ${e.level.padEnd(5)} [${e.tag || 'app'}] ${e.msg}`;
+    });
+    lines.push(`---`);
+    lines.push(`${new Date().toISOString()} CRASH [${reason}] ${err?.stack || err?.message || err}`);
+    const out = path.join(__dirname, 'data', 'last-crash.log');
+    fs.writeFileSync(out, lines.join('\n') + '\n', { mode: 0o600 });
+  } catch {}
+}
+
 process.on('unhandledRejection', (err) => {
   logger.error('unhandledRejection:', err?.stack || err?.message || err);
+  _dumpCrashLog('unhandledRejection', err);
 });
 process.on('uncaughtException', (err) => {
   logger.error('uncaughtException:', err?.stack || err?.message || err);
+  _dumpCrashLog('uncaughtException', err);
   // Don't exit on uncaught — the safety shutdown would force the pump off,
   // but losing the whole process on a recoverable error is worse than the
   // alternative (the action engine guards every command). Log loudly and

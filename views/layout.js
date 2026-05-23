@@ -383,28 +383,4 @@ async function hostExit() {
 </html>`;
 }
 
-function splash({ user }) {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>PumpDirect</title>
-<style>
-  :root { font-size: 20px; }
-  body { font-family: system-ui, sans-serif; background: #0f1115; color: #e8e8e8; margin: 0; display: grid; place-items: center; min-height: 100vh; font-size: 1rem; line-height: 1.5; }
-  .splash { text-align: center; padding: 60px; }
-  h1 { font-size: 3rem; margin: 0 0 20px; }
-  p { color: #9aa4b2; font-size: 1.1rem; }
-</style>
-</head>
-<body>
-<div class="splash">
-  <h1>Welcome to PumpDirect</h1>
-  <p>Signed in as <strong>${escape(user)}</strong></p>
-  <p class="muted">Visitor experience coming soon.</p>
-</div>
-</body>
-</html>`;
-}
-
-module.exports = { ownerLayout, splash, escape };
+module.exports = { ownerLayout, escape };

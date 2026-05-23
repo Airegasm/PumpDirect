@@ -41,6 +41,12 @@ function start() {
     res.status(403).type('text').send('owner GUI is loopback-only');
   });
 
+  // Liveness probe — answers without auth so a supervisor / cron / monit
+  // script can tell "process running and event loop responsive" apart from
+  // "process gone / wedged". Also handy for local launch scripts polling
+  // until the server is up.
+  app.get('/healthz', (_req, res) => res.json({ ok: true, ts: Date.now() }));
+
   // CSRF guard on every /api/* mutation. Mounted before any routes so the
   // Origin / Referer check + double-submit-cookie token validation runs on
   // every request that could mutate state.
