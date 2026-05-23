@@ -139,6 +139,15 @@ router.get('/', (req, res) => {
   const sessionReady = calibratedReady && allAllowedEmails.length > 0;
   const ownerDisplayName = cfg.owner?.displayName || '';
   const ownerNameForTitle = ownerDisplayName || (cfg.cloudflare?.ownerEmail?.split('@')[0]) || 'owner';
+  // Offline cam placeholder sizing: render the empty host cam slot at the
+  // configured camera's actual aspect ratio (16:9 for 1280x720, etc.) so it
+  // doesn't appear as a big 1:1 square that snaps narrower when the stream
+  // lands. Falls back to 16:9 for 'native'/non-numeric values.
+  const _camRes = cfg.owner?.camera?.resolution || { width: 1280, height: 720 };
+  const _camAspect = (_camRes.width === 'native' || !Number.isFinite(Number(_camRes.width)) || !Number.isFinite(Number(_camRes.height)))
+    ? (16 / 9)
+    : (Number(_camRes.width) / Number(_camRes.height));
+  const ownerCamAspectStr = _camAspect.toFixed(4);
 
   const body = `
     <style>
@@ -336,8 +345,8 @@ router.get('/', (req, res) => {
         <div class="lp-col-center">
           <div class="cam-grid">
             <div class="cam-slot" id="cam-controller-slot"></div>
-            <div class="cam-slot" id="cam-owner-slot">
-              <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">
+            <div class="cam-slot" id="cam-owner-slot" style="--cam-aspect:${ownerCamAspectStr}">
+              <div id="local-tile" class="cam-tile" style="--cam-aspect:${ownerCamAspectStr};display:grid;place-items:center;color:#7a8597;font-size:0.95rem">
                 <button class="placeholder-cam-btn" onclick="lpToggleCam()">📹 Start camera</button>
               </div>
             </div>
