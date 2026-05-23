@@ -63,16 +63,32 @@ router.get('/chat-webcam', (_req, res) => {
       </p>
     </div>
 
-    <div class="card">
-      <h3>Cam preview &amp; resolution</h3>
-      <p style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">
+    <style>
+      .cw-cam-card { }
+      .cw-cam-body { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+      .cw-cam-body .cw-preview { min-width: 0; }
+      .cw-cam-body .cw-preview .video-frame { position:relative;display:block;background:#0a0c10;border:1px solid #2a2f3a;border-radius:8px;overflow:hidden;width:100%; }
+      .cw-cam-body .cw-preview video { display:block;width:100%;height:auto; }
+      .cw-cam-body .cw-adjust-col { min-width: 0; max-height: 78vh; overflow-y: auto; padding-right: 6px; }
+      .cw-cam-body .cw-adjust-section + .cw-adjust-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+      .cw-cam-body .cw-adjust-section h4 { margin: 0 0 4px; font-size: 1rem; }
+      .cw-cam-body .cw-adjust-section .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+      @media (max-width: 1100px) {
+        .cw-cam-body { grid-template-columns: 1fr; }
+        .cw-cam-body .cw-adjust-col { max-height: none; padding-right: 0; }
+      }
+    </style>
+
+    <div class="card cw-cam-card">
+      <h3 style="margin:0 0 10px">Camera preview &amp; adjustments</h3>
+      <p style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin:0 0 6px">
         <label>Camera
-          <select id="cw-device" onchange="cwChangeDevice()" style="min-width:260px">
+          <select id="cw-device" onchange="cwChangeDevice()" style="min-width:240px">
             <option value="">(detecting…)</option>
           </select>
         </label>
         <label>Resolution
-          <select id="cw-res" onchange="cwSaveResolution()" style="min-width:260px">
+          <select id="cw-res" onchange="cwSaveResolution()" style="min-width:220px">
             <option value="640x480"   ${camRes.width === 640  && camRes.height === 480  ? 'selected' : ''}>640×480 (4:3 · low)</option>
             <option value="960x540"   ${camRes.width === 960  && camRes.height === 540  ? 'selected' : ''}>960×540 (16:9 · qHD)</option>
             <option value="1280x720"  ${camRes.width === 1280 && camRes.height === 720  ? 'selected' : ''}>1280×720 (16:9 · 720p)</option>
@@ -82,41 +98,45 @@ router.get('/chat-webcam', (_req, res) => {
           </select>
         </label>
       </p>
-      <p class="muted" style="font-size:0.9rem;margin:0 0 12px">Browsers hide camera labels until you grant permission once — click <strong>Start camera</strong> below and the names will fill in.</p>
-      <p class="muted" style="font-size:0.95rem;margin:6px 0 12px">Visitors see whatever aspect ratio you broadcast — the UI scales tiles automatically. Controllers stay locked at 1:1 regardless. The browser may snap to the closest supported resolution.</p>
-      <div style="position:relative;display:inline-block;background:#0a0c10;border:1px solid #2a2f3a;border-radius:8px;overflow:hidden;max-width:100%">
-        <video id="cw-video" autoplay muted playsinline style="display:block;max-width:720px;width:100%;height:auto"></video>
+      <p class="muted" style="font-size:0.9rem;margin:0 0 14px">Browsers hide camera labels until you grant permission once — click <strong>Start camera</strong> and the names will fill in. Visitors see whatever aspect ratio you broadcast; the browser may snap to the closest supported resolution.</p>
+
+      <div class="cw-cam-body">
+        <div class="cw-preview">
+          <div class="video-frame">
+            <video id="cw-video" autoplay muted playsinline></video>
+          </div>
+          <p style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button onclick="cwStartCam()">Start camera</button>
+            <button onclick="cwStopCam()">Stop camera</button>
+            <button onclick="cwSendTestSnap()">Send test snapshot</button>
+            <span id="cw-actual" class="muted" style="font-size:0.9rem"></span>
+          </p>
+        </div>
+
+        <div class="cw-adjust-col">
+          <div class="cw-adjust-section" id="cw-controls-card">
+            <h4>Native (hardware) <span style="color:#6ddc9b;font-weight:normal;font-size:0.85rem">— camera capabilities</span></h4>
+            <p class="muted" style="font-size:0.85rem;margin:0 0 10px">Only the controls your camera actually exposes via the browser. Zero CPU cost; visible to viewers.</p>
+            <div id="cw-controls-empty" class="muted" style="font-size:0.9rem">Press <strong>Start camera</strong> to detect available controls.</div>
+            <div id="cw-controls" class="grid" style="display:none"></div>
+            <p id="cw-controls-actions" style="display:none;margin:10px 0 0;gap:8px;align-items:center;flex-wrap:wrap">
+              <button onclick="cwResetControls()" style="background:#2a2f3a;color:#e8e8e8">Reset hardware controls</button>
+            </p>
+          </div>
+
+          <div class="cw-adjust-section" id="cw-software-card">
+            <h4>Software (canvas pipeline) <span style="color:#f0c674;font-weight:normal;font-size:0.85rem">— PumpDirect digital zoom / pan / filters</span></h4>
+            <p class="muted" style="font-size:0.85rem;margin:0 0 10px">Works on any camera. Adds ~5–15% CPU at 720p30. <strong>Off by default</strong>; applies to preview AND Launchpad broadcast.</p>
+            <p style="margin:0 0 10px">
+              <label><input id="cw-sw-enabled" type="checkbox"> <strong>Enable software pipeline</strong></label>
+            </p>
+            <div id="cw-sw-controls" class="grid" style="display:none"></div>
+            <p id="cw-sw-actions" style="display:none;margin:10px 0 0;align-items:center;gap:8px;flex-wrap:wrap">
+              <button onclick="cwResetSoftwareControls()" style="background:#2a2f3a;color:#e8e8e8">Reset software controls</button>
+            </p>
+          </div>
+        </div>
       </div>
-      <p style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button onclick="cwStartCam()">Start camera</button>
-        <button onclick="cwStopCam()">Stop camera</button>
-        <button onclick="cwSendTestSnap()">Send test snapshot</button>
-        <span id="cw-actual" class="muted" style="font-size:0.9rem"></span>
-      </p>
-    </div>
-
-    <div class="card" id="cw-controls-card">
-      <h3 style="margin:0 0 4px">Camera adjustments — <span style="color:#6ddc9b">Native (hardware)</span></h3>
-      <p class="muted" style="font-size:0.9rem;margin:0 0 14px">Sliders below only appear for controls your camera actually exposes via the browser. Most laptop / fixed-lens webcams (including Elgato Facecam) only show brightness / contrast / saturation / white balance / exposure. Hardware PTZ cameras add zoom/pan/tilt. All changes apply at the camera and are visible to viewers with zero CPU cost.</p>
-      <div id="cw-controls-empty" class="muted" style="font-size:0.95rem">Press <strong>Start camera</strong> to detect available controls.</div>
-      <div id="cw-controls" style="display:none;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px"></div>
-      <p id="cw-controls-actions" style="display:none;margin:14px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button onclick="cwResetControls()" style="background:#2a2f3a;color:#e8e8e8">Reset hardware controls</button>
-        <span class="muted" style="font-size:0.85rem">Saved per-camera, per-browser.</span>
-      </p>
-    </div>
-
-    <div class="card" id="cw-software-card">
-      <h3 style="margin:0 0 4px">Camera adjustments — <span style="color:#f0c674">Software (PumpDirect canvas pipeline)</span></h3>
-      <p class="muted" style="font-size:0.9rem;margin:0 0 14px">Works on <strong>any camera</strong>. We capture each frame, transform it on a canvas, and re-publish the result. Adds ~5–15% CPU at 720p30 on modern hardware. <strong>Off by default</strong> — only turns on when you tick the box below. Settings apply to both your preview here and the live broadcast on Launchpad.</p>
-      <p style="margin:0 0 12px">
-        <label style="font-size:1.05rem"><input id="cw-sw-enabled" type="checkbox"> <strong>Enable software pipeline</strong></label>
-      </p>
-      <div id="cw-sw-controls" style="display:none;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px"></div>
-      <p id="cw-sw-actions" style="display:none;margin:14px 0 0;align-items:center;gap:8px;flex-wrap:wrap">
-        <button onclick="cwResetSoftwareControls()" style="background:#2a2f3a;color:#e8e8e8">Reset software controls</button>
-        <span class="muted" style="font-size:0.85rem">Stop + Start camera if it doesn't take effect immediately.</span>
-      </p>
     </div>
 
     <div class="card" id="cw-mic-card">
