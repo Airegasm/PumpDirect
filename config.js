@@ -43,6 +43,13 @@ const DEFAULTS = {
     // is blocked regardless of per-profile chatroomEnabled or per-participant
     // canChat. Host chat (loopback via /api/launchpad/chat) is unaffected.
     enabled: true,
+    // Name colors per role - the chat UI on host and visitor sides reads
+    // these to color the strong-tag wrapping each speaker's nickname.
+    nameColors: {
+      host:       '#6ddc9b', // green
+      controller: '#6db4ff', // blue
+      voyeur:     '#f08484', // red/coral
+    },
   },
   vendors: {
     tapo:  { email: '', password: '' },

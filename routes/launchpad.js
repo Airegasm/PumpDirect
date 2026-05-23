@@ -366,7 +366,6 @@ router.get('/', (req, res) => {
                 <span class="presence-dot"></span>
                 <span>${escape(cfg.accounts.find(a => a.email === p.email)?.nickname || p.email.split('@')[0])}</span>
                 <span class="p-flags">
-                  <button title="make sole controller (revokes others)" onclick="lpMakeSoleController('${escape(p.email)}')" style="background:${p.canControl ? '#6ddc9b' : '#2a6df4'};color:${p.canControl ? '#0f1115' : '#fff'};padding:2px 8px;font-size:0.85rem">▶</button>
                   <label title="can connect"><input type="checkbox" ${p.canConnect ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canConnect',this.checked)">C</label>
                   <label title="can control"><input type="checkbox" ${p.canControl ? 'checked' : ''} onchange="lpSetFlag('${escape(p.email)}','canControl',this.checked)">A</label>
                   <label title="can broadcast cam"${profile.mode === 'dual-target' ? ' style="opacity:0.5"' : ''}><input type="checkbox" ${p.canBroadcast ? 'checked' : ''}${profile.mode === 'dual-target' ? ' disabled' : ''} onchange="lpSetFlag('${escape(p.email)}','canBroadcast',this.checked)">V</label>
@@ -415,6 +414,16 @@ router.get('/', (req, res) => {
       // Globals consumed by views/overlay.js for Spin-button visibility + the
       // POST endpoint when the trigger user confirms the spin.
       window.__MY_EMAIL = ${JSON.stringify(cfg.cloudflare?.ownerEmail || 'owner@local')};
+      window.__OWNER_EMAIL = ${JSON.stringify(cfg.cloudflare?.ownerEmail || 'owner@local')};
+      window.__CHAT_COLORS = ${JSON.stringify(Object.assign({ host: '#6ddc9b', controller: '#6db4ff', voyeur: '#f08484' }, cfg.chat?.nameColors || {}))};
+      function __chatNameColorFor(fromEmail) {
+        const c = window.__CHAT_COLORS;
+        if (fromEmail === window.__OWNER_EMAIL) return c.host;
+        const s = window.__lastState || {};
+        const p = (s.participants || []).find(x => x.email === fromEmail);
+        if (p && p.canControl) return c.controller;
+        return c.voyeur;
+      }
       // Where the text-overlay stage gets hung. On Launchpad it's the owner's
       // own local cam tile — the same element that visitors see streamed.
       window.__textOverlayTarget = () => document.getElementById('local-tile');
@@ -875,10 +884,10 @@ router.get('/', (req, res) => {
         if (m.type === 'system') {
           row.innerHTML = '<span class="muted" style="font-style:italic;font-size:0.95rem">' + escapeHtml(text) + ' <span style="opacity:0.6">· ' + time + '</span></span>';
         } else if (m.type === 'image' && imageDataUrl) {
-          row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' +
+          row.innerHTML = '<strong style="color:' + __chatNameColorFor(m.fromEmail) + '">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' +
             '<img src="' + imageDataUrl + '" alt="snapshot" style="max-width:100%;width:320px;height:auto;border-radius:8px;display:block;margin-top:6px">';
         } else {
-          row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' + escapeHtml(text);
+          row.innerHTML = '<strong style="color:' + __chatNameColorFor(m.fromEmail) + '">' + escapeHtml(m.fromNickname) + '</strong> <span class="muted" style="font-size:0.8rem">' + time + '</span><br>' + escapeHtml(text);
         }
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;
@@ -1311,13 +1320,6 @@ router.get('/', (req, res) => {
             flash('capacity set to ' + v.toFixed(0) + '%', 'ok');
           });
       }
-      async function lpMakeSoleController(email) {
-        const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/sole-controller', { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ email }) });
-        const d = await r.json();
-        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
-        flash('controller reassigned', 'ok');
-        setTimeout(() => location.reload(), 400);
-      }
     </script>
   `;
   res.type('html').send(ownerLayout({ title: 'Launchpad', active: 'launchpad', body }));
@@ -1432,21 +1434,6 @@ router.patch('/api/launchpad/profiles/:id/participants/:email', (req, res) => {
       require('../services/event-bus').emitState(session.getState());
     }
     res.json({ ok: true });
-  } catch (e) { res.status(400).json({ error: e.message }); }
-});
-
-router.post('/api/launchpad/profiles/:id/sole-controller', (req, res) => {
-  try {
-    const target = (req.body?.email || '').trim().toLowerCase();
-    if (!target) throw new Error('email required');
-    const profile = session.getProfile(req.params.id);
-    if (!profile.allowedParticipants.some(p => p.email === target)) {
-      throw new Error('email not in this profile\'s participants');
-    }
-    const next = profile.allowedParticipants.map(p => ({ ...p, canControl: p.email === target }));
-    session.updateProfile(req.params.id, { allowedParticipants: next });
-    syncLiveParticipantsFromProfile(req.params.id);
-    res.json({ ok: true, controller: target });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 

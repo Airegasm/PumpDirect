@@ -631,6 +631,16 @@ function renderVisitorPage(req) {
       const CHAT_ENABLED = ${JSON.stringify(chatEnabled)};
       const NICKNAME = ${JSON.stringify(nickname)};
       const MY_EMAIL = ${JSON.stringify(email)};
+      window.__OWNER_EMAIL = ${JSON.stringify(ownerEmailCfg)};
+      window.__CHAT_COLORS = ${JSON.stringify(Object.assign({ host: '#6ddc9b', controller: '#6db4ff', voyeur: '#f08484' }, cfg.chat?.nameColors || {}))};
+      function __chatNameColorFor(fromEmail) {
+        const c = window.__CHAT_COLORS;
+        if (fromEmail === window.__OWNER_EMAIL) return c.host;
+        const s = window.__lastState || {};
+        const p = (s.participants || []).find(x => x.email === fromEmail);
+        if (p && p.canControl) return c.controller;
+        return c.voyeur;
+      }
       // Globals consumed by views/overlay.js for Spin-button visibility + the
       // POST endpoint when the trigger visitor confirms the spin.
       window.__MY_EMAIL = MY_EMAIL;
@@ -1320,10 +1330,10 @@ function renderVisitorPage(req) {
         if (m.type === 'system') {
           row.innerHTML = escapeHtml(text) + ' <span style="opacity:0.6">· ' + time + '</span>';
         } else if (m.type === 'image' && imageDataUrl) {
-          row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' +
+          row.innerHTML = '<strong style="color:' + __chatNameColorFor(m.fromEmail) + '">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' +
             '<img src="' + imageDataUrl + '" alt="snapshot" style="max-width:100%;width:280px;height:auto;border-radius:8px;display:block;margin-top:6px">';
         } else {
-          row.innerHTML = '<strong style="color:#6ddc9b">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' + escapeHtml(text);
+          row.innerHTML = '<strong style="color:' + __chatNameColorFor(m.fromEmail) + '">' + escapeHtml(m.fromNickname) + '</strong> <span style="opacity:0.6;font-size:0.85rem">' + time + '</span><br>' + escapeHtml(text);
         }
         log.appendChild(row);
         log.scrollTop = log.scrollHeight;

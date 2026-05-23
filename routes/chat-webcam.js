@@ -16,20 +16,13 @@ router.get('/chat-webcam', (_req, res) => {
   const cam = owner.camera || { mode: 'off', resolution: { width: 1280, height: 720 }, snapshotEveryPct: 5 };
   const camRes = cam.resolution || { width: 1280, height: 720 };
   const chatGlobalOn = cfg.chat?.enabled !== false;
+  const chatColors = Object.assign(
+    { host: '#6ddc9b', controller: '#6db4ff', voyeur: '#f08484' },
+    cfg.chat?.nameColors || {}
+  );
 
   const body = `
     <h2>Chat / Webcam</h2>
-
-    <div class="card">
-      <h3>Chat</h3>
-      <p>
-        <label style="font-size:1.05rem"><input id="cw-chat-enable" type="checkbox" ${chatGlobalOn ? 'checked' : ''}> <strong>Enable chat for visitors</strong></label>
-      </p>
-      <p class="muted" style="font-size:0.95rem;margin:0">
-        Master switch. When off, all connected visitors lose chat — the input box is hidden and any send attempt is rejected.
-        <strong>You (the host) can always chat regardless.</strong> Per-participant overrides live in the Launchpad participant list (Ch column); revoked users stay revoked even if you flip this back on.
-      </p>
-    </div>
 
     <div class="card">
       <h3>Your display name</h3>
@@ -38,6 +31,34 @@ router.get('/chat-webcam', (_req, res) => {
         <button onclick="cwSaveName()">Save</button>
         <span class="muted" style="font-size:0.95rem">Saves automatically when you click out or hit Enter — Save button is optional. Shown in chat and in the browser tab title.</span>
       </p>
+    </div>
+
+    <div class="card">
+      <h3>Chat</h3>
+      <p>
+        <label style="font-size:1.05rem"><input id="cw-chat-enable" type="checkbox" ${chatGlobalOn ? 'checked' : ''}> <strong>Enable chat for visitors</strong></label>
+      </p>
+      <p class="muted" style="font-size:0.95rem;margin:0 0 16px">
+        Master switch. When off, all connected visitors lose chat — the input box is hidden and any send attempt is rejected.
+        <strong>You (the host) can always chat regardless.</strong> Per-participant overrides live in the Launchpad participant list (Ch column); revoked users stay revoked even if you flip this back on.
+      </p>
+      <h4 style="margin:14px 0 6px;font-size:0.95rem">Chat name colors</h4>
+      <p class="muted" style="font-size:0.9rem;margin:0 0 10px">Applied wherever a participant's nickname appears in chat. Changes take effect on the next chat message (host and visitor windows alike).</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px">
+        <label style="display:flex;align-items:center;gap:8px">
+          <input type="color" id="cw-color-host" value="${escape(chatColors.host)}" oninput="cwSaveChatColor('host', this.value)" style="width:36px;height:28px;border:0;background:none;cursor:pointer">
+          <span>Host name</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px">
+          <input type="color" id="cw-color-controller" value="${escape(chatColors.controller)}" oninput="cwSaveChatColor('controller', this.value)" style="width:36px;height:28px;border:0;background:none;cursor:pointer">
+          <span>Controller name</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px">
+          <input type="color" id="cw-color-voyeur" value="${escape(chatColors.voyeur)}" oninput="cwSaveChatColor('voyeur', this.value)" style="width:36px;height:28px;border:0;background:none;cursor:pointer">
+          <span>Voyeur name</span>
+        </label>
+        <button onclick="cwResetChatColors()" style="background:#2a2f3a;color:#e8e8e8">Reset to defaults</button>
+      </div>
     </div>
 
     <div class="card">
@@ -532,6 +553,25 @@ router.get('/chat-webcam', (_req, res) => {
         if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
         else flash(e.target.checked ? 'chat enabled for visitors' : 'chat disabled for visitors', 'ok');
       });
+      // Debounce color saves - the color input fires oninput on every drag tick.
+      const __colorTimers = {};
+      async function cwSaveChatColor(role, value) {
+        clearTimeout(__colorTimers[role]);
+        __colorTimers[role] = setTimeout(async () => {
+          const r = await fetch('/api/owner/chat', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ nameColors: { [role]: value } }) });
+          if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
+          else flash(role + ' name color saved', 'ok');
+        }, 300);
+      }
+      async function cwResetChatColors() {
+        const defaults = { host: '#6ddc9b', controller: '#6db4ff', voyeur: '#f08484' };
+        for (const [k, v] of Object.entries(defaults)) {
+          document.getElementById('cw-color-' + k).value = v;
+        }
+        const r = await fetch('/api/owner/chat', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ nameColors: defaults }) });
+        if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
+        else flash('chat name colors reset', 'ok');
+      }
       document.getElementById('cw-allow-ctrl-cam').addEventListener('change', async e => {
         const r = await fetch('/api/owner/camera', { method: 'PATCH', headers: {'content-type':'application/json'}, body: JSON.stringify({ allowControllerBroadcast: e.target.checked }) });
         if (!r.ok) { const d = await r.json(); flash(d.error || 'failed', 'bad'); }
@@ -653,9 +693,22 @@ router.patch('/api/owner/camera', (req, res) => {
 
 router.patch('/api/owner/chat', (req, res) => {
   try {
-    const enabled = req.body?.enabled;
-    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) required' });
-    const next = config.save({ chat: { enabled } });
+    const patch = {};
+    if (typeof req.body?.enabled === 'boolean') patch.enabled = req.body.enabled;
+    if (req.body?.nameColors && typeof req.body.nameColors === 'object') {
+      const inc = req.body.nameColors;
+      const isHex = v => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
+      const colors = {};
+      for (const k of ['host', 'controller', 'voyeur']) {
+        if (k in inc) {
+          if (!isHex(inc[k])) return res.status(400).json({ error: `${k} color must be a #rrggbb hex string` });
+          colors[k] = inc[k].toLowerCase();
+        }
+      }
+      if (Object.keys(colors).length) patch.nameColors = colors;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'no valid fields provided' });
+    const next = config.save({ chat: patch });
     emitState(session.getState());
     res.json({ chat: next.chat });
   } catch (e) { res.status(400).json({ error: e.message }); }
