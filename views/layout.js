@@ -96,14 +96,27 @@ function ownerLayout({ title, active, body }) {
      (current milestone + action buttons). Sidebar width pins to ~280px so the
      240px gauge fits with normal card padding; columns match each other. Collapses
      to a single stacked column below 1100px viewport. */
-  .lp-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px; gap: 16px; align-items: start; margin-bottom: 14px; }
+  /* Fixed-height grid: total height = viewport minus topbar+tabs+top-card
+     overhead (~240px). Columns stretch to fill; internal content scrolls
+     rather than growing the page. Chat-row inside center takes whatever
+     vertical space remains after the cam grid. */
+  .lp-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr) 280px; gap: 16px; align-items: stretch; margin-bottom: 14px; height: calc(100vh - 240px); }
   .lp-grid > .card { margin: 0; }
-  .lp-grid .lp-col-left  { display: flex; flex-direction: column; gap: 10px; }
-  .lp-grid .lp-col-right { display: flex; flex-direction: column; gap: 10px; }
-  .lp-grid .lp-col-left .session-controls { display: flex; flex-direction: column; gap: 8px; }
+  .lp-grid .lp-col-left  { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; }
+  .lp-grid .lp-col-right { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; min-height: 0; }
+  .lp-grid .lp-col-center { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .lp-grid .lp-col-center .cam-grid { flex: 0 0 auto; margin-bottom: 0; }
+  .lp-grid .lp-col-center .chat-row { flex: 1 1 0; min-height: 0; margin-top: 14px; }
+  .lp-grid .lp-col-center .chat-row > .card { display: flex; flex-direction: column; min-height: 0; }
+  .lp-grid .lp-col-center .chat-row .chat-log { flex: 1 1 0; min-height: 0; max-height: none; }
+  .lp-grid .lp-col-center .chat-row .participants-pane .p-list { max-height: none; flex: 1 1 0; min-height: 0; }
+  .lp-grid .lp-col-left .session-controls { display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
   .lp-grid .lp-col-left .session-controls button { width: 100%; padding: 10px 14px; font-size: 0.95rem; }
-  .lp-grid .lp-col-left .session-divider { height: 1px; background: var(--border); margin: 4px 0; }
-  .lp-grid .lp-col-left .lp-gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .lp-grid .lp-col-left .session-divider { height: 1px; background: var(--border); margin: 4px 0; flex: 0 0 auto; }
+  /* margin-top:auto pins the gauge cluster to the bottom of the column,
+     so it doesn't shift when session controls grow/shrink (Start vs Stop+
+     E-STOP+Standby states differ in button count). */
+  .lp-grid .lp-col-left .lp-gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: auto; flex: 0 0 auto; }
   .lp-grid .lp-col-right .lp-milestone-title { font-size: 1.2rem; font-weight: 700; margin: 0 0 4px; }
   .lp-grid .lp-col-right .lp-milestone-range { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 12px; }
   .lp-grid .lp-col-right .action-list { display: flex; flex-direction: column; gap: 6px; }
