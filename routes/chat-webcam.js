@@ -94,6 +94,17 @@ router.get('/chat-webcam', (_req, res) => {
       </p>
     </div>
 
+    <div class="card" id="cw-controls-card">
+      <h3 style="margin:0 0 6px">Camera adjustments</h3>
+      <p class="muted" style="font-size:0.9rem;margin:0 0 14px">Sliders only appear for controls your camera actually exposes. Most laptop webcams show 3–5; USB cameras (Logitech, EMEET, OBSBOT) typically expose far more. All changes apply at the camera and are visible to your viewers.</p>
+      <div id="cw-controls-empty" class="muted" style="font-size:0.95rem">Press <strong>Start camera</strong> to detect available controls.</div>
+      <div id="cw-controls" style="display:none;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px"></div>
+      <p id="cw-controls-actions" style="display:none;margin:14px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button onclick="cwResetControls()" style="background:#2a2f3a;color:#e8e8e8">Reset all to defaults</button>
+        <span class="muted" style="font-size:0.85rem">Saved per-browser. Re-applied automatically next time you start this camera.</span>
+      </p>
+    </div>
+
     <canvas id="cw-canvas" width="512" height="512" style="display:none"></canvas>
 
     <div id="cw-msg" style="position:fixed;bottom:20px;right:20px;max-width:380px;z-index:1100"></div>
@@ -158,6 +169,9 @@ router.get('/chat-webcam', (_req, res) => {
           // Labels are blank until camera permission is granted at least once
           // for this origin. Re-populate so the dropdown shows real names.
           cwPopulateDevices();
+          // Detect and render hardware camera controls (zoom, pan, brightness,
+          // etc. - whatever the camera exposes via MediaStreamTrack capabilities).
+          cwBuildControlsUI();
         } catch (e) {
           console.error('camera failed', e);
           let hint = '';
@@ -182,6 +196,134 @@ router.get('/chat-webcam', (_req, res) => {
       cwPopulateDevices();
       if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
         navigator.mediaDevices.addEventListener('devicechange', cwPopulateDevices);
+      }
+
+      // -------- Hardware camera controls (MediaStreamTrack capabilities) --------
+      // Per-camera tweaks (zoom, pan, brightness, etc.) come from
+      // track.getCapabilities() and apply via track.applyConstraints().
+      // Settings persist in localStorage keyed by deviceId so each cam
+      // remembers its own tuning across sessions.
+      const CONTROLS_KEY_PREFIX = 'pd-cam-controls:';
+      // Capability key -> { label, kind, unit }. We only render controls for
+      // capabilities the current camera actually advertises.
+      const CAPABILITY_META = {
+        zoom:                  { label: 'Zoom',                 kind: 'range' },
+        pan:                   { label: 'Pan',                  kind: 'range' },
+        tilt:                  { label: 'Tilt',                 kind: 'range' },
+        brightness:            { label: 'Brightness',           kind: 'range' },
+        contrast:              { label: 'Contrast',             kind: 'range' },
+        saturation:            { label: 'Saturation',           kind: 'range' },
+        sharpness:             { label: 'Sharpness',            kind: 'range' },
+        colorTemperature:      { label: 'Color temperature',    kind: 'range', unit: 'K' },
+        exposureCompensation:  { label: 'Exposure compensation',kind: 'range', unit: 'EV' },
+        exposureTime:          { label: 'Exposure time',        kind: 'range', unit: 'µs' },
+        iso:                   { label: 'ISO',                  kind: 'range' },
+        focusDistance:         { label: 'Focus distance',       kind: 'range' },
+        whiteBalanceMode:      { label: 'White balance',        kind: 'enum' },
+        exposureMode:          { label: 'Exposure mode',        kind: 'enum' },
+        focusMode:             { label: 'Focus mode',           kind: 'enum' },
+        torch:                 { label: 'Torch (LED)',          kind: 'bool' },
+      };
+      function _camKey() {
+        const id = localStorage.getItem(DEVICE_KEY) || 'default';
+        return CONTROLS_KEY_PREFIX + id;
+      }
+      function _loadSavedControls() {
+        try { return JSON.parse(localStorage.getItem(_camKey()) || '{}'); } catch { return {}; }
+      }
+      function _saveControl(key, value) {
+        const cur = _loadSavedControls();
+        if (value === null || value === undefined || value === '') delete cur[key];
+        else cur[key] = value;
+        localStorage.setItem(_camKey(), JSON.stringify(cur));
+      }
+      function _capabilityEscape(s) { return String(s).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+      async function cwBuildControlsUI() {
+        const wrap = document.getElementById('cw-controls');
+        const empty = document.getElementById('cw-controls-empty');
+        const actions = document.getElementById('cw-controls-actions');
+        if (!stream) return;
+        const track = stream.getVideoTracks()[0];
+        if (!track || !track.getCapabilities) {
+          empty.textContent = 'Your browser does not expose MediaStreamTrack capabilities (try Chrome or Edge).';
+          wrap.style.display = 'none'; actions.style.display = 'none';
+          return;
+        }
+        const caps = track.getCapabilities() || {};
+        const settings = track.getSettings() || {};
+        const saved = _loadSavedControls();
+        const rows = [];
+        for (const [key, meta] of Object.entries(CAPABILITY_META)) {
+          if (!(key in caps)) continue;
+          const cap = caps[key];
+          const current = (key in saved) ? saved[key] : settings[key];
+          if (meta.kind === 'range' && typeof cap === 'object' && 'min' in cap && 'max' in cap) {
+            const step = cap.step || ((cap.max - cap.min) / 100) || 1;
+            const val = (current != null) ? current : ((cap.max + cap.min) / 2);
+            rows.push(
+              '<div data-cap="' + key + '">' +
+              '<label style="display:flex;justify-content:space-between;font-size:0.95rem;margin-bottom:4px"><span>' + meta.label + '</span><span class="muted" id="cw-cap-val-' + key + '">' + (Number(val).toFixed(step < 1 ? 2 : 0)) + (meta.unit ? ' ' + meta.unit : '') + '</span></label>' +
+              '<input type="range" min="' + cap.min + '" max="' + cap.max + '" step="' + step + '" value="' + val + '" style="width:100%" oninput="cwApplyCapability(\\'' + key + '\\', Number(this.value), true)" onchange="cwApplyCapability(\\'' + key + '\\', Number(this.value))">' +
+              '</div>'
+            );
+          } else if (meta.kind === 'enum' && Array.isArray(cap)) {
+            const opts = cap.map(v => '<option value="' + _capabilityEscape(v) + '"' + (v === current ? ' selected' : '') + '>' + _capabilityEscape(v) + '</option>').join('');
+            rows.push(
+              '<div data-cap="' + key + '">' +
+              '<label style="display:block;font-size:0.95rem;margin-bottom:4px">' + meta.label + '</label>' +
+              '<select onchange="cwApplyCapability(\\'' + key + '\\', this.value)" style="width:100%">' + opts + '</select>' +
+              '</div>'
+            );
+          } else if (meta.kind === 'bool' && (cap === true || (Array.isArray(cap) && cap.includes(true)))) {
+            rows.push(
+              '<div data-cap="' + key + '">' +
+              '<label style="display:block;font-size:0.95rem"><input type="checkbox"' + (current ? ' checked' : '') + ' onchange="cwApplyCapability(\\'' + key + '\\', this.checked)"> ' + meta.label + '</label>' +
+              '</div>'
+            );
+          }
+        }
+        if (!rows.length) {
+          empty.textContent = 'This camera does not expose any adjustable controls via the browser. (Common for cheaper integrated webcams; USB cameras typically expose more.)';
+          wrap.style.display = 'none'; actions.style.display = 'none';
+          return;
+        }
+        wrap.innerHTML = rows.join('');
+        wrap.style.display = 'grid';
+        actions.style.display = 'flex';
+        empty.style.display = 'none';
+        // Re-apply persisted values so settings carry across browser sessions
+        // (the camera itself doesn't always remember).
+        if (Object.keys(saved).length) {
+          for (const [k, v] of Object.entries(saved)) {
+            try { await track.applyConstraints({ advanced: [{ [k]: v }] }); } catch {}
+          }
+        }
+      }
+      async function cwApplyCapability(key, value, liveUpdateOnly) {
+        if (!stream) return;
+        const track = stream.getVideoTracks()[0];
+        if (!track) return;
+        const valSpan = document.getElementById('cw-cap-val-' + key);
+        if (valSpan && typeof value === 'number') {
+          const meta = CAPABILITY_META[key] || {};
+          valSpan.textContent = value.toFixed(value < 10 && Math.abs(value) < 100 && (value % 1 !== 0 || Math.abs(value) < 5) ? 2 : 0) + (meta.unit ? ' ' + meta.unit : '');
+        }
+        if (liveUpdateOnly) return;  // oninput fires constantly; only persist + apply on change
+        try {
+          await track.applyConstraints({ advanced: [{ [key]: value }] });
+          _saveControl(key, value);
+        } catch (e) {
+          flash('failed to apply ' + key + ': ' + e.message, 'bad');
+        }
+      }
+      async function cwResetControls() {
+        if (!stream) return;
+        localStorage.removeItem(_camKey());
+        // Easiest way to fully reset: stop + restart the camera. The hardware
+        // returns to defaults and our saved overrides are now gone.
+        cwStopCam();
+        await cwStartCam();
+        flash('camera controls reset', 'ok');
       }
       function cwStopCam() {
         if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
