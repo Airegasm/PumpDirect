@@ -131,6 +131,25 @@ router.get('/system', (_req, res) => {
   res.type('html').send(ownerLayout({ title: 'System', active: 'system', body }));
 });
 
+// Restart: exit non-zero so systemd (Restart=on-failure) and NSSM (default
+// AppExit=Restart) both auto-restart. Under start.sh/start.bat there is no
+// supervisor, so the launcher will print the exit code and pause/exit.
+router.post('/api/system/restart', (_req, res) => {
+  log.warn('restart requested via UI');
+  res.json({ ok: true, message: 'restarting…' });
+  setTimeout(() => process.exit(1), 500).unref();
+});
+
+// Exit: clean exit. systemd Restart=on-failure stays down. NSSM defaults
+// will restart unless AppExit was reconfigured (the install script doesn't),
+// so on Windows Service this often ends up acting like Restart. To truly
+// stop the Windows Service, use Stop-Service PumpDirect in admin PowerShell.
+router.post('/api/system/exit', (_req, res) => {
+  log.warn('shutdown requested via UI');
+  res.json({ ok: true, message: 'shutting down…' });
+  setTimeout(() => process.exit(0), 500).unref();
+});
+
 function attachWebSocket(wss) {
   wss.on('connection', (ws) => {
     const snap = logger.snapshot();

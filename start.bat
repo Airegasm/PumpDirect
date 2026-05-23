@@ -11,6 +11,32 @@ echo   PumpDirect
 echo ========================================
 echo.
 
+REM Service conflict check - the OS-hardened PumpDirect service binds the same
+REM ports, so running this launcher alongside it would crash immediately with
+REM EADDRINUSE and the cmd window would close before the error is readable.
+sc query PumpDirect 2>nul | findstr /C:"RUNNING" >nul
+if not errorlevel 1 (
+    echo.
+    echo ========================================
+    echo   PumpDirect service is already RUNNING
+    echo ========================================
+    echo.
+    echo The OS-hardened Windows Service is already running PumpDirect, so
+    echo this launcher cannot start - port 3000/3001 are already bound.
+    echo.
+    echo Either:
+    echo   1^) Use the service directly - open http://localhost:3001 in a browser.
+    echo      To stop it:    Stop-Service PumpDirect    ^(admin PowerShell^)
+    echo      To restart it: Restart-Service PumpDirect ^(admin PowerShell^)
+    echo.
+    echo   2^) Or stop the service and re-run this launcher to take updates:
+    echo      Stop-Service PumpDirect
+    echo      start.bat
+    echo.
+    pause
+    exit /b 1
+)
+
 REM Node check
 where node >nul 2>nul
 if errorlevel 1 (
@@ -107,4 +133,18 @@ REM Open owner URL after a short delay
 start "" /b cmd /c "timeout /t 3 /nobreak >nul && start """" %OWNER_URL%"
 
 node server.js
+set NODE_EXIT=%errorlevel%
+if not "%NODE_EXIT%"=="0" (
+    echo.
+    echo ========================================
+    echo   PumpDirect exited with code %NODE_EXIT%
+    echo ========================================
+    echo.
+    echo Common causes:
+    echo   - Port 3000 or 3001 already in use ^(another launcher or the service^)
+    echo   - npm install never completed ^(delete node_modules and re-run^)
+    echo   - Code error ^(scroll up for the stack trace^)
+    echo.
+    pause
+)
 endlocal

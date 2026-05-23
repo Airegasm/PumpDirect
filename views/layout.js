@@ -251,6 +251,8 @@ function ownerLayout({ title, active, body }) {
   <h1>PumpDirect <span class="muted">— host console</span></h1>
   <div style="display:flex;gap:12px;align-items:center">
     <a id="session-indicator" href="/" class="session-pill idle" title="jump to Launchpad">○ idle</a>
+    <button onclick="hostRestart()" title="Restart the backend. Under the OS-hardened service or NSSM, the supervisor will bring it back. Under start.sh/start.bat the launcher will exit." style="background:#2a2f3a;color:#e8e8e8;border:1px solid #2a2f3a;border-radius:6px;padding:8px 14px;font-size:0.9rem;cursor:pointer">↻ Restart</button>
+    <button onclick="hostExit()" title="Shut down the backend. systemd stays down. Windows Service (NSSM default) may auto-restart — use Stop-Service PumpDirect from admin PowerShell to truly stop." style="background:#4a1b1b;color:#f0c674;border:1px solid #4a1b1b;border-radius:6px;padding:8px 14px;font-size:0.9rem;cursor:pointer">⏻ Exit</button>
     <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()" title="toggle light/dark">🌙</button>
   </div>
 </div>
@@ -270,6 +272,29 @@ function toggleTheme() {
   var btn = document.getElementById('theme-toggle');
   if (btn) btn.textContent = (document.documentElement.getAttribute('data-theme') === 'light') ? '☀️' : '🌙';
 })();
+async function hostRestart() {
+  if (!confirm('Restart the PumpDirect server?\\n\\nAny active session will be interrupted. The page will reload automatically once the backend is back.')) return;
+  try {
+    const r = await fetch('/api/system/restart', { method: 'POST' });
+    if (!r.ok) { alert('Restart request failed.'); return; }
+    document.body.style.opacity = '0.4';
+    document.body.style.pointerEvents = 'none';
+    var n = 0;
+    var poll = setInterval(async () => {
+      n++;
+      try { const p = await fetch('/api/launchpad/state', { cache: 'no-store' }); if (p.ok) { clearInterval(poll); location.reload(); return; } } catch {}
+      if (n > 30) { clearInterval(poll); alert('Server did not come back within 30s. You may need to start it manually.'); }
+    }, 1000);
+  } catch (e) { alert('Restart request failed: ' + e.message); }
+}
+async function hostExit() {
+  if (!confirm('Shut down the PumpDirect server?\\n\\nNote: if you installed the OS-hardened Windows Service, NSSM may auto-restart it. To truly stop on Windows, use:\\n  Stop-Service PumpDirect\\nin an admin PowerShell window.\\n\\nContinue?')) return;
+  try {
+    const r = await fetch('/api/system/exit', { method: 'POST' });
+    if (!r.ok) { alert('Shutdown request failed.'); return; }
+    document.body.innerHTML = '<div style="padding:60px;text-align:center;font-family:system-ui,sans-serif;color:#e8e8e8;background:#0f1115;min-height:100vh"><h2 style="font-size:1.6rem;margin:0 0 18px">PumpDirect is shutting down…</h2><p style="color:#9aa4b2;font-size:1.05rem;max-width:560px;margin:0 auto">If it comes back on its own, the OS-hardened service (systemd / NSSM) auto-restarted it. To truly stop on Windows: <code style="background:#161922;padding:2px 8px;border-radius:4px">Stop-Service PumpDirect</code> in admin PowerShell. On Linux: <code style="background:#161922;padding:2px 8px;border-radius:4px">sudo systemctl stop pumpdirect</code>.</p></div>';
+  } catch (e) { alert('Shutdown request failed: ' + e.message); }
+}
 (function() {
   const el = document.getElementById('session-indicator');
   if (!el) return;

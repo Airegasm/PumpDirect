@@ -11,6 +11,29 @@ echo "  PumpDirect"
 echo "========================================"
 echo ""
 
+# Service conflict check — the OS-hardened systemd service binds the same
+# ports, so running this launcher alongside it would crash immediately with
+# EADDRINUSE. Exit cleanly with a clear message instead.
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet pumpdirect.service 2>/dev/null; then
+  echo ""
+  echo "========================================"
+  echo "  pumpdirect.service is already RUNNING"
+  echo "========================================"
+  echo ""
+  echo "The OS-hardened systemd service is already running PumpDirect, so this"
+  echo "launcher cannot start — port 3000/3001 are already bound."
+  echo ""
+  echo "Either:"
+  echo "  1) Use the service directly — open http://localhost:3001 in a browser."
+  echo "     To stop it:    sudo systemctl stop pumpdirect"
+  echo "     To restart it: sudo systemctl restart pumpdirect"
+  echo ""
+  echo "  2) Or stop the service and re-run this launcher to take updates:"
+  echo "     sudo systemctl stop pumpdirect && ./start.sh"
+  echo ""
+  exit 1
+fi
+
 # Node check
 if ! command -v node >/dev/null 2>&1; then
   if [ -s "$HOME/.nvm/nvm.sh" ]; then
