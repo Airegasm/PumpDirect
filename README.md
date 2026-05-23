@@ -101,6 +101,29 @@ Every command round-trips through the vendor's API:
 
 > ⚠️ **Rate-limit warning — cloud-connected outlets.** Wyze, Govee, Tuya, and Home Assistant send every on/off through a cloud (or REST) API. Those APIs **throttle, delay, or temporarily block** clients that send commands too quickly — and a pump session fires rapid, repeated on/off steps. A throttled or delayed command on a *pump* is a safety problem, not just an annoyance. PumpDirect ships a built-in rate limiter (tune it on the **System** tab) that defaults to **1 command / 2 s per cloud device** versus **2 commands / 1 s for LAN devices** — but it cannot raise the vendor's ceiling, and the cloud round-trip always adds latency. **Use a local outlet (Kasa or Tapo) for the pump itself**, and keep a hardware disconnect within arm's reach regardless — see the safety warning in the Terms of Service.
 
+## Prerequisites
+
+You need **Git** and **Node.js 20+** before running the launcher. The launcher installs the rest (Node deps, optional Python venv, `cloudflared` via the in-app wizard).
+
+**Windows** (run in PowerShell — no admin needed for these):
+```powershell
+winget install --id Git.Git -e --accept-source-agreements --accept-package-agreements
+winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
+```
+Close and reopen PowerShell after install so `PATH` picks up the new binaries. Verify with `git --version; node --version; npm --version`. (If you only have GitHub Desktop, its bundled git is **not** on PATH — install Git for Windows above so PowerShell/cmd can find it. Our `update.ps1` helper probes the GitHub Desktop path as a fallback, but the launcher scripts do not.)
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt update && sudo apt install -y git nodejs npm
+```
+The Ubuntu 22.04/24.04 `nodejs` package is Node 18/20 respectively. If your distro ships an older version, use [NodeSource](https://github.com/nodesource/distributions) or [nvm](https://github.com/nvm-sh/nvm) to get Node 20+.
+
+**Linux (Fedora/RHEL):** `sudo dnf install -y git nodejs npm`
+**Arch:** `sudo pacman -S git nodejs npm`
+**macOS** (with [Homebrew](https://brew.sh)): `brew install git node`
+
+*(Python 3.10+ is optional — only needed for Tapo / Wyze / Matter outlet protocols. The launcher auto-builds a venv if `python3` is present.)*
+
 ## Quick start
 
 ```bash
