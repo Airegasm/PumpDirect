@@ -116,6 +116,7 @@ router.get('/templates', (req, res) => {
           ${profileOptions}
         </select>
         <button onclick="tplNewProfile()">+ New profile</button>
+        <button onclick="tplDuplicateProfile('${escape(activeProfile.id)}', '${escape(activeProfile.name)}')" style="background:#2a8a6d">Copy</button>
         ${activeProfile.isFactory
           ? '<span class="pill warn">factory — immutable name/milestones</span>'
           : `<button onclick="tplRenameProfile('${escape(activeProfile.id)}', '${escape(activeProfile.name)}')">Rename</button>
@@ -219,6 +220,13 @@ router.get('/templates', (req, res) => {
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
         location.search = '';
+      }
+      async function tplDuplicateProfile(id, name) {
+        const r = await fetch('/api/templates/profiles/' + id + '/duplicate', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('copied "' + name + '" → "' + d.profile.name + '"', 'ok');
+        location.search = '?profile=' + encodeURIComponent(d.profile.id);
       }
 
       // ---- always-available ----
@@ -608,6 +616,10 @@ router.get('/api/templates/profiles/:id', (req, res) => {
 });
 router.post('/api/templates/profiles', (req, res) => {
   try { res.json({ profile: templates.createProfile(req.body || {}) }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+router.post('/api/templates/profiles/:id/duplicate', (req, res) => {
+  try { res.json({ profile: templates.duplicateProfile(req.params.id) }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 router.patch('/api/templates/profiles/:id', (req, res) => {

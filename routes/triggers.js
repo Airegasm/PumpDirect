@@ -58,6 +58,7 @@ router.get('/triggers', (req, res) => {
          ${data.triggerTemplates.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('')}
        </select>
        <button onclick="ttRename()">Rename</button>
+       <button onclick="ttDuplicate()" style="background:#2a8a6d">Copy</button>
        <button onclick="ttDelete()">Delete</button>`
     : '<span class="muted">No trigger templates yet.</span>';
 
@@ -237,6 +238,14 @@ router.get('/triggers', (req, res) => {
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
         location.search = '';
+      }
+      async function ttDuplicate() {
+        if (!ACTIVE_TPL_ID) return flash('Select a template first', 'bad');
+        const r = await fetch('/api/triggers/templates/' + ACTIVE_TPL_ID + '/duplicate', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('copied → "' + d.template.name + '"', 'ok');
+        location.search = '?template=' + encodeURIComponent(d.template.id);
       }
 
       // ---- Trigger rows inside the active template ----
@@ -1255,6 +1264,10 @@ router.get('/api/triggers/templates/:id', (req, res) => {
 });
 router.post('/api/triggers/templates', (req, res) => {
   try { res.json({ template: triggers.createTemplate(req.body || {}) }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+router.post('/api/triggers/templates/:id/duplicate', (req, res) => {
+  try { res.json({ template: triggers.duplicateTemplate(req.params.id) }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 router.patch('/api/triggers/templates/:id', (req, res) => {

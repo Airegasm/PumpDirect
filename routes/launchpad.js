@@ -183,6 +183,7 @@ router.get('/', (req, res) => {
         </select>
         <button onclick="lpOpenSettings()">⚙ Settings</button>
         <button onclick="lpNewProfile()">+ New</button>
+        <button onclick="lpDuplicateProfile()" style="background:#2a8a6d">Copy</button>
         ${profile.isFactory
           ? '<span class="pill warn">factory — cannot rename/delete</span>'
           : `<button onclick="lpRenameProfile()">Rename</button> <button onclick="lpDeleteProfile()">Delete</button>`}
@@ -651,6 +652,13 @@ router.get('/', (req, res) => {
         const d = await r.json();
         if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
         location.search = '';
+      }
+      async function lpDuplicateProfile() {
+        const r = await fetch('/api/launchpad/profiles/' + PROFILE_ID + '/duplicate', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) return flash(d.error || 'failed', 'bad');
+        flash('copied → "' + d.profile.name + '"', 'ok');
+        location.search = '?profile=' + encodeURIComponent(d.profile.id);
       }
 
       function lpOpenSettings() {
@@ -1475,6 +1483,10 @@ router.get('/api/launchpad/profiles/:id', (req, res) => {
 });
 router.post('/api/launchpad/profiles', (req, res) => {
   try { res.json({ profile: session.createProfile(req.body || {}) }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+router.post('/api/launchpad/profiles/:id/duplicate', (req, res) => {
+  try { res.json({ profile: session.duplicateProfile(req.params.id) }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 router.patch('/api/launchpad/profiles/:id', (req, res) => {

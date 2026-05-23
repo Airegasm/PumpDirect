@@ -351,6 +351,25 @@ function createTemplate({ name }) {
   save(data);
   return template;
 }
+// Deep-clone a trigger template with a fresh id and a unique "(copy)" suffix.
+function duplicateTemplate(id) {
+  const data = load();
+  const src = data.triggerTemplates.find(t => t.id === id);
+  if (!src) throw new Error('trigger template not found');
+  let candidate = src.name + ' (copy)';
+  let i = 2;
+  while (data.triggerTemplates.some(t => t.name === candidate)) {
+    candidate = src.name + ' (copy ' + i + ')';
+    i++;
+  }
+  const dup = JSON.parse(JSON.stringify(src));
+  dup.id = randomUUID();
+  dup.name = candidate;
+  data.triggerTemplates.push(dup);
+  save(data);
+  return dup;
+}
+
 function updateTemplate(id, patch) {
   const data = load();
   const idx = data.triggerTemplates.findIndex(t => t.id === id);
@@ -447,6 +466,6 @@ module.exports = {
   listSubActionKinds, VALID_TRIGGER_TYPES, TEXT_OVERLAY_ANCHORS,
   listActions, getAction, createAction, updateAction, deleteAction,
   listGroups, getGroup, createGroup, updateGroup, deleteGroup,
-  listTemplates, getTemplate, createTemplate, updateTemplate, deleteTemplate,
+  listTemplates, getTemplate, createTemplate, duplicateTemplate, updateTemplate, deleteTemplate,
   addTrigger, updateTrigger, deleteTrigger,
 };

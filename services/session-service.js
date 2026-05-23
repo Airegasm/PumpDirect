@@ -79,6 +79,27 @@ function createProfile({ name, templateProfileId }) {
   save(data);
   return profile;
 }
+// Deep-clone a session profile with a fresh id and a "(copy)"/"(copy 2)"/...
+// suffix until the name is unique. The clone is never a factory profile.
+function duplicateProfile(id) {
+  const data = load();
+  const src = data.sessionProfiles.find(p => p.id === id);
+  if (!src) throw new Error('profile not found');
+  let candidate = src.name + ' (copy)';
+  let i = 2;
+  while (data.sessionProfiles.some(p => p.name === candidate)) {
+    candidate = src.name + ' (copy ' + i + ')';
+    i++;
+  }
+  const dup = JSON.parse(JSON.stringify(src));
+  dup.id = randomUUID();
+  dup.name = candidate;
+  dup.isFactory = false;
+  data.sessionProfiles.push(dup);
+  save(data);
+  return dup;
+}
+
 function updateProfile(id, patch) {
   const data = load();
   const idx = data.sessionProfiles.findIndex(p => p.id === id);
@@ -403,7 +424,7 @@ function isSessionFullyStarted() {
 module.exports = {
   FACTORY_SESSION_PROFILE_ID,
   load,
-  listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
+  listProfiles, getProfile, createProfile, duplicateProfile, updateProfile, deleteProfile,
   getState, _setLive, startSession, stopSession, emergencyStop, setPaused,
   updateParticipantFlags, setParticipantTarget, setTargetState,
   acceptStart, isSessionFullyStarted,

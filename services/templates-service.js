@@ -323,6 +323,28 @@ function createProfile({ name }) {
   return profile;
 }
 
+// Deep-clone a profile with a fresh id and a "(copy)" / "(copy 2)" / ...
+// suffix until the resulting name is unique. The clone is never a factory.
+function duplicateProfile(id) {
+  const data = load();
+  const src = data.templateProfiles.find(p => p.id === id);
+  if (!src) throw new Error('profile not found');
+  let base = src.name + ' (copy)';
+  let candidate = base;
+  let i = 2;
+  while (data.templateProfiles.some(p => p.name === candidate)) {
+    candidate = src.name + ' (copy ' + i + ')';
+    i++;
+  }
+  const dup = JSON.parse(JSON.stringify(src));
+  dup.id = randomUUID();
+  dup.name = candidate;
+  dup.isFactory = false;
+  data.templateProfiles.push(dup);
+  save(data);
+  return dup;
+}
+
 function updateProfile(id, patch) {
   const data = load();
   const idx = data.templateProfiles.findIndex(p => p.id === id);
@@ -442,7 +464,7 @@ module.exports = {
   load,
   listActions, createAction, updateAction, deleteAction, reorderActions,
   listWheels, getWheel, createWheel, updateWheel, deleteWheel,
-  listProfiles, getProfile, createProfile, updateProfile, deleteProfile,
+  listProfiles, getProfile, createProfile, duplicateProfile, updateProfile, deleteProfile,
   addMilestone, updateMilestone, deleteMilestone,
   validateSteps, normalizeSteps,
 };
