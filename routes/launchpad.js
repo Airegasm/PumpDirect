@@ -139,15 +139,6 @@ router.get('/', (req, res) => {
   const sessionReady = calibratedReady && allAllowedEmails.length > 0;
   const ownerDisplayName = cfg.owner?.displayName || '';
   const ownerNameForTitle = ownerDisplayName || (cfg.cloudflare?.ownerEmail?.split('@')[0]) || 'owner';
-  // Configured camera resolution → aspect ratio for the local-tile placeholder
-  // so an offline host cam slot reserves the right space (16:9 vs 1:1 vs
-  // whatever the owner picked) instead of rendering as a big 1:1 square that
-  // then snaps narrower when the stream lands.
-  const _camRes = cfg.owner?.camera?.resolution || { width: 1280, height: 720 };
-  const _ownerCamAspect = (_camRes.width === 'native' || !Number.isFinite(Number(_camRes.width)))
-    ? (16 / 9)
-    : (Number(_camRes.width) / Number(_camRes.height));
-  const ownerCamAspectStr = _ownerCamAspect.toFixed(4);
 
   const body = `
     <style>
@@ -341,12 +332,12 @@ router.get('/', (req, res) => {
           </div>
         </div>
 
-        <!-- CENTER: cam grid + chat-row (chat-row is moved here on load) -->
+        <!-- CENTER: cam grid (chat-row sits below the whole lp-grid) -->
         <div class="lp-col-center">
           <div class="cam-grid">
             <div class="cam-slot" id="cam-controller-slot"></div>
-            <div class="cam-slot" id="cam-owner-slot" style="--cam-aspect:${ownerCamAspectStr}">
-              <div id="local-tile" class="cam-tile" style="--cam-aspect:${ownerCamAspectStr};display:grid;place-items:center;color:#7a8597;font-size:0.95rem">
+            <div class="cam-slot" id="cam-owner-slot">
+              <div id="local-tile" class="cam-tile" style="display:grid;place-items:center;color:#7a8597;font-size:0.95rem">
                 <button class="placeholder-cam-btn" onclick="lpToggleCam()">📹 Start camera</button>
               </div>
             </div>
