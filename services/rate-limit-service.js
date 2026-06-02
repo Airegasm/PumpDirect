@@ -31,14 +31,30 @@ const DEFAULTS = {
   pump:     { dutyPct: 70, windowMs: 5 * 60_000, hardCapMs: 5 * 60_000 }, // 70% of 5min, max 5min continuous
 };
 
+// Per-session override for the pump safety, set by session-service on
+// start/stop. `null` means "no active session policy — use config defaults".
+// { enabled, hardCapMs, windowMs }. enabled:false disables both the hard cap
+// and the duty-cycle cooldown for the duration of the session.
+let pumpPolicy = null;
+
+function setPumpPolicy(policy) {
+  pumpPolicy = policy || null;
+}
+
 function _cfg() {
   const c = config.load();
   const rl = c.rateLimits || {};
+  const pump = { enabled: true, ...DEFAULTS.pump, ...(rl.pump || {}) };
+  if (pumpPolicy) {
+    pump.enabled = pumpPolicy.enabled !== false;
+    if (pumpPolicy.hardCapMs) pump.hardCapMs = pumpPolicy.hardCapMs;
+    if (pumpPolicy.windowMs)  pump.windowMs  = pumpPolicy.windowMs;
+  }
   return {
     cloud:    { ...DEFAULTS.cloud,    ...(rl.cloud    || {}) },
     lan:      { ...DEFAULTS.lan,      ...(rl.lan      || {}) },
     template: { ...DEFAULTS.template, ...(rl.template || {}) },
-    pump:     { ...DEFAULTS.pump,     ...(rl.pump     || {}) },
+    pump,
     perDevice:   rl.perDevice   || {},
     perTemplate: rl.perTemplate || {},
   };
@@ -148,6 +164,7 @@ function recordPumpOff() {
  */
 function checkPumpStart() {
   const c = _cfg();
+  if (c.pump.enabled === false) return { ok: true };
   const now = Date.now();
 
   if (pumpOnSince && now - pumpOnSince >= c.pump.hardCapMs) {
@@ -172,6 +189,7 @@ function continuousRuntimeMs() {
 /** Used by the safety watchdog: should we force-off right now? */
 function shouldForceOff() {
   const c = _cfg();
+  if (c.pump.enabled === false) return false;
   return pumpOnSince ? (Date.now() - pumpOnSince) >= c.pump.hardCapMs : false;
 }
 
@@ -198,6 +216,7 @@ function reset() {
   pumpOnSince = null;
   buckets.clear();
   templateLog.clear();
+  pumpPolicy = null;
 }
 
 module.exports = {
@@ -205,6 +224,7 @@ module.exports = {
   checkDevice,
   checkTemplate,
   checkPumpStart,
+  setPumpPolicy,
   recordPumpOn,
   recordPumpOff,
   continuousRuntimeMs,

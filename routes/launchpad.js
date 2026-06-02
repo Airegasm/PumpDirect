@@ -697,6 +697,13 @@ router.get('/', (req, res) => {
             + '</div>'
             + '<p><label><input type="checkbox" id="m-chat"' + (p.settings.chatroomEnabled ? ' checked' : '') + '> Enable chatroom</label></p>'
             + '<p><label><input type="checkbox" id="m-d100"' + (p.settings.disableControlAt100 ? ' checked' : '') + '> Disable device control at 100% capacity</label></p>'
+            + '<div style="margin:10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-3)">'
+            +   '<label><input type="checkbox" id="m-pump-safety"' + (p.settings.pumpSafetyEnabled !== false ? ' checked' : '') + ' onchange="document.getElementById(\\'m-pump-safety-rows\\').style.display = this.checked ? \\'block\\' : \\'none\\'"> <strong>Pump runtime safety</strong></label>'
+            +   '<div class="muted" style="font-size:0.85rem;margin:2px 0 0 22px">Force the pump off after a max continuous on-time and cool down between runs. Turn off to remove the cap and the cooldown entirely.</div>'
+            +   '<div id="m-pump-safety-rows" style="display:' + (p.settings.pumpSafetyEnabled !== false ? 'block' : 'none') + ';margin:8px 0 0 22px">'
+            +     '<label>Max continuous on-time <input type="number" id="m-pump-maxsec" min="5" max="3600" value="' + (p.settings.pumpMaxContinuousSec || 300) + '" style="width:90px"> seconds</label>'
+            +   '</div>'
+            + '</div>'
             + '<p style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
             +   '<label><input type="checkbox" id="m-ib-en"' + (ib.enabled ? ' checked' : '') + ' onchange="document.getElementById(\\'m-ib-rows\\').style.display = this.checked ? \\'block\\' : \\'none\\'"> Enable Session Intro Button</label>'
             +   '<span class="muted" style="font-size:0.85rem">(Pump Action Control Panel is disabled on Session start and enabled as soon as the intro trigger completes.)</span>'
@@ -742,6 +749,8 @@ router.get('/', (req, res) => {
                   chatroomEnabled: document.getElementById('m-chat').checked,
                   disableControlAt100: document.getElementById('m-d100').checked,
                   allowVisitorControllersInDual: document.getElementById('m-allow-vc-dual').checked,
+                  pumpSafetyEnabled: document.getElementById('m-pump-safety').checked,
+                  pumpMaxContinuousSec: parseInt(document.getElementById('m-pump-maxsec').value, 10) || 300,
                 },
                 introButton: {
                   enabled: ibEnabled,

@@ -5,6 +5,7 @@ const { createLogger } = require('../utils/logger');
 const { writeAtomicSync, ensureDirSync } = require('../utils/atomic-write');
 const { loadJsonOrSeed } = require('../utils/safe-load');
 const templates = require('./templates-service');
+const rateLimit = require('./rate-limit-service');
 const { emitState } = require('./event-bus');
 
 const logger = createLogger('Session');
@@ -28,6 +29,11 @@ const SEED = {
         chatroomEnabled: true,
         disableControlAt100: false,
         allowVisitorControllersInDual: false,
+        // Pump runtime safety: when enabled, the pump is force-off after
+        // pumpMaxContinuousSec of uninterrupted on-time and a matching
+        // duty-cycle cooldown applies. When disabled, neither is enforced.
+        pumpSafetyEnabled: true,
+        pumpMaxContinuousSec: 300,
       },
       allowedParticipants: [],  // populated when owner adds guests
     },
@@ -72,7 +78,7 @@ function createProfile({ name, templateProfileId }) {
     aboutMe: '',
     templateProfileId: templateProfileId || templates.FACTORY_PROFILE_ID,
     mode: 'single-target',
-    settings: { chatroomEnabled: true, disableControlAt100: false, allowVisitorControllersInDual: false },
+    settings: { chatroomEnabled: true, disableControlAt100: false, allowVisitorControllersInDual: false, pumpSafetyEnabled: true, pumpMaxContinuousSec: 300 },
     allowedParticipants: [],
   };
   data.sessionProfiles.push(profile);
@@ -149,6 +155,12 @@ function updateProfile(id, patch) {
     if (typeof patch.settings.chatroomEnabled === 'boolean') profile.settings.chatroomEnabled = patch.settings.chatroomEnabled;
     if (typeof patch.settings.disableControlAt100 === 'boolean') profile.settings.disableControlAt100 = patch.settings.disableControlAt100;
     if (typeof patch.settings.allowVisitorControllersInDual === 'boolean') profile.settings.allowVisitorControllersInDual = patch.settings.allowVisitorControllersInDual;
+    if (typeof patch.settings.pumpSafetyEnabled === 'boolean') profile.settings.pumpSafetyEnabled = patch.settings.pumpSafetyEnabled;
+    if (patch.settings.pumpMaxContinuousSec != null) {
+      const n = Math.round(Number(patch.settings.pumpMaxContinuousSec));
+      // Clamp to a sane band: at least 5s, at most 1h of continuous on-time.
+      if (Number.isFinite(n)) profile.settings.pumpMaxContinuousSec = Math.min(3600, Math.max(5, n));
+    }
   }
   if (patch.mode != null) {
     // Dual mode allows a second person's device to be operated alongside the host's.
@@ -267,6 +279,15 @@ function startSession(profileId) {
   // Live mode mirror so endpoints can branch without re-loading the profile.
   sessionState.mode = profile.mode === 'dual-target' ? 'dual-target' : 'single-target';
   sessionState.allowVisitorControllersInDual = !!profile.settings?.allowVisitorControllersInDual;
+  // Push this profile's pump-safety policy into the rate limiter for the life
+  // of the session. enabled:false disables both the hard cap and the
+  // duty-cycle cooldown; the duty window scales with the max on-time so the
+  // cooldown never locks out earlier than the configured duration implies.
+  {
+    const safetyOn = profile.settings?.pumpSafetyEnabled !== false;
+    const maxSec = Math.min(3600, Math.max(5, Number(profile.settings?.pumpMaxContinuousSec) || 300));
+    rateLimit.setPumpPolicy({ enabled: safetyOn, hardCapMs: maxSec * 1000, windowMs: maxSec * 1000 });
+  }
   // Enforce mutex on profile.canTarget at start time too: pick the first
   // profile-T-flagged participant and clear the rest.
   let claimedTarget = false;
@@ -309,6 +330,9 @@ function stopSession() {
   sessionState.hostStartAccepted = false;
   sessionState.targetStartAccepted = false;
   _targetTokens.clear();
+  // Drop the session's pump-safety override so the global config defaults
+  // govern any out-of-session device use.
+  rateLimit.setPumpPolicy(null);
   logger.info('session stopped');
   emitState(getState());
   return getState();
